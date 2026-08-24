@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 캡처·인코딩·입력 주입 등 Host 공통 로직. Windows 전용. -->
+  <PropertyGroup>
+    <TargetFramework>$(WindowsTfm)</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RemoteAssist.Protocol\RemoteAssist.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="SIPSorcery" />
+    <PackageReference Include="SIPSorceryMedia.FFmpeg" />
+    <PackageReference Include="Vortice.Direct3D11" />
+    <PackageReference Include="Vortice.DXGI" />
+  </ItemGroup>
+
+</Project>

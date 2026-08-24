@@ -1,0 +1,24 @@
+# coturn (STUN/TURN).
+#
+# 포트는 전역 개발 포트 대역을 지킨다: UDP 27001~27199.
+#   27001         : STUN/TURN listening
+#   27100~27199   : 릴레이 포트 범위
+#
+# 운영 배포 시에는 realm·자격증명·TLS를 실제 값으로 바꾸고,
+# 세션마다 서버가 시간제한 자격증명(HMAC)을 발급하도록 한다(T4.2).
+
+services:
+  coturn:
+    image: coturn/coturn:latest
+    network_mode: host
+    command:
+      - --listening-port=27001
+      - --min-port=27100
+      - --max-port=27199
+      - --realm=remoteassist.local
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=devuser:devpass
+      - --no-cli
+      - --log-file=stdout
+    restart: unless-stopped

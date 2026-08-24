@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!--
+    Session 0 / SYSTEM 권한으로 도는 Windows 서비스.
+    캡처·인코딩·입력 주입·데스크톱 전환·WebRTC를 전담한다.
+
+    주의: PublishSingleFile을 켜지 않는다.
+    SIPSorceryMedia.FFmpeg와 FFmpeg는 LGPL-2.1-only 이므로 교체 가능한
+    별도 DLL로 유지해야 한다 — 계획서 T0.2 / T6.1 참고.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(WindowsTfm)</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>remoteassist-host-service</UserSecretsId>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RemoteAssist.Host.Core\RemoteAssist.Host.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+  </ItemGroup>
+
+</Project>

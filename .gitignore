@@ -427,3 +427,21 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+
+##############################
+# RemoteAssist 프로젝트 추가분
+##############################
+
+# 동봉 FFmpeg 바이너리는 커밋하지 않는다(LGPL 고지·소스 제공은 별도로 관리).
+# README.md 만 추적한다.
+third_party/ffmpeg/*
+!third_party/ffmpeg/README.md
+
+# Go 빌드 산출물
+server/signaling/signaling
+server/signaling/signaling.exe
+
+# 웹 뷰어
+web/viewer/node_modules/
+web/viewer/dist/

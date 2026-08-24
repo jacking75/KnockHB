@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Host 파이프라인 확인용 개발 도구 (T1.4).
+    캡처 → H.264 인코딩 → WebRTC 송신을 실제로 돌려 본다.
+    동의 게이트가 아직 없으므로(T3.2) 개발 중에만 쓴다.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(WindowsTfm)</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RemoteAssist.Host.Core\RemoteAssist.Host.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+  </ItemGroup>
+
+</Project>

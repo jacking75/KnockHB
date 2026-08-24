@@ -1,0 +1,24 @@
+<Project>
+
+  <!-- 중앙 패키지 버전 관리. 버전 근거는 docs/stack.md 참고. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WebRTC. net10.0을 TargetFrameworks에 명시 지원. -->
+    <PackageVersion Include="SIPSorcery" Version="10.0.16" />
+    <!-- H.264 인코딩. 네이티브 FFmpeg 8.1 shared lib를 별도 동봉해야 한다(third_party/ffmpeg). -->
+    <PackageVersion Include="SIPSorceryMedia.FFmpeg" Version="10.0.16" />
+    <!-- DXGI Desktop Duplication / D3D11 -->
+    <PackageVersion Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageVersion Include="Vortice.DXGI" Version="3.8.3" />
+    <!-- 로깅 추상화 (Host.Core가 직접 참조) -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <!-- Windows 서비스 호스팅 -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>

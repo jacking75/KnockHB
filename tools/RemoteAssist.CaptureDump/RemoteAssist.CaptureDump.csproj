@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    화면 캡처 확인용 개발 도구. 배포본에 들어가지 않는다.
+    PNG 인코딩은 WPF의 PngBitmapEncoder를 쓴다(추가 NuGet 의존성 없음).
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(WindowsTfm)</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <UseWPF>true</UseWPF>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RemoteAssist.Host.Core\RemoteAssist.Host.Core.csproj" />
+  </ItemGroup>
+
+</Project>

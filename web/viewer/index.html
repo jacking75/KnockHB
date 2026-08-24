@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RemoteAssist Viewer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <main id="join">
+    <h1>RemoteAssist</h1>
+    <p class="lead">대상자에게 받은 세션 코드와 PIN을 입력하세요.</p>
+
+    <form id="join-form" autocomplete="off">
+      <label for="code">세션 코드</label>
+      <input id="code" inputmode="numeric" placeholder="418-207-935" maxlength="11">
+
+      <label for="pin">PIN</label>
+      <input id="pin" inputmode="numeric" placeholder="6042" maxlength="6">
+
+      <button type="submit">접속</button>
+    </form>
+
+    <p id="status" role="status"></p>
+  </main>
+
+  <section id="session" hidden>
+    <header class="bar">
+      <span class="badge">● 원격 화면 · E2E 암호화</span>
+      <span id="stats"></span>
+      <button id="hangup" type="button">세션 종료</button>
+    </header>
+
+    <video id="screen" autoplay playsinline muted></video>
+  </section>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
