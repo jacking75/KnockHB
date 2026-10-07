@@ -1,8 +1,15 @@
 # RemoteAssist — 프로젝트 가이드
 
-동의 기반 Windows 원격 지원(트러블슈팅) 도구. 상세 설계는 `remote-pc-control-design.html`,
-단계별 태스크는 `원격제어-구현계획.md`를 따른다. 두 문서가 단일 진실 공급원이며,
-설계와 어긋나는 구현을 하기 전에 문서를 먼저 갱신한다.
+동의 기반 Windows 원격 지원(트러블슈팅) 도구. 개발자 문서는 [docs/README.md](docs/README.md)에서 시작한다.
+구조·설계는 [아키텍처](docs/architecture.md)와 [기술 사양](docs/technical-specification.md),
+와이어 포맷은 [protocol.md](docs/protocol.md), 단계별 태스크는 [구현계획](원격제어-구현계획.md)을 기준으로 한다.
+설계와 어긋나는 구현을 하기 전에 해당 기준 문서를 먼저 갱신한다.
+
+## 문서 저장 위치
+
+- `docs/`: 아키텍처·기술 사양·프로토콜·개발자 가이드 등 지속적으로 유지하는 기준 문서.
+- `docs_working/`: 개발 과정에서 임시로 만드는 리뷰·조사·분석·작업 메모·태스크 리스크 문서. 앞으로 새 임시 개발 문서는 여기에 작성한다.
+- 루트의 `원격제어-구현계획.md`는 기존 위치를 유지한다.
 
 ## 설계 원칙 (모든 기능 결정에 우선)
 
@@ -15,17 +22,22 @@
 
 ## 아키텍처
 
-세 구성요소. 시그널링(SDP/ICE)만 서버를 거치고, 화면·입력은 P2P 우선 · 실패 시 TURN 폴백.
+현재 실행 경로는 **HostRun 콘솔 + Go 시그널링 + 웹 Viewer의 화면 공유 PoC**다.
+Service/Tray는 골격이며 입력·동의·TURN은 미구현이다. 아래는 목표 책임 경계다.
+시그널링(SDP/ICE)과 미디어를 분리하고, 미디어는 P2P 우선·TURN 폴백을 목표로 한다.
 
-- **Host Agent** (대상 PC) — 2프로세스 구조
-  - `Host.Service`: Session 0 · SYSTEM 권한. 화면 캡처·인코딩, `SendInput` 주입, 데스크톱 전환, WebRTC PeerConnection
+- **Host Agent** (대상 PC) — 서비스·사용자 UI 분리 + 사용자 세션 실행 헬퍼 설계
+  - `Host.Service`: Session 0 · SYSTEM 권한. 세션·권한·헬퍼 수명 감독
   - `Host.Tray`: 사용자 세션 · 일반 권한. 동의 대화상자, 세션 코드/PIN 표시, 접속 중 배지, 종료 버튼
-  - 둘은 로컬 IPC(Named Pipe)로 통신
+  - 사용자 세션의 캡처·입력 헬퍼와 인증된 로컬 IPC로 통신한다. 인코딩·WebRTC 실행 위치와 IPC 세부는 T2.4에서 확정한다
 - **Viewer** (지원자) — 웹 SPA(브라우저 내장 WebRTC). 설치 불필요가 핵심 이점
 - **Signaling + Relay** (클라우드) — 세션/룸 관리, SDP·ICE 중계, coturn(STUN/TURN), 감사 로그. 미디어 원본은 저장하지 않는다
 
 ### 왜 SYSTEM 서비스인가
-관리자 권한 조작이 핵심 요구사항이다. 일반 권한 프로세스는 (1) UIPI로 승격 창에 입력을 넣을 수 없고, (2) UAC·SAS·잠금화면의 보안 데스크톱을 캡처/조작할 수 없으며, (3) Session 0 격리 때문에 사용자 데스크톱으로 명시 전환이 필요하다. 이 제약이 2프로세스 구조를 강제하므로 프로토타입 단계부터 서비스 기반으로 설계한다.
+관리자 권한 조작에는 일반 입력과 별도 승인·실행 경계가 필요하다. SYSTEM 서비스도 Session 0에서
+사용자 세션으로 자동 이동하지 않는다. 서비스는 감독을 맡고 캡처·입력은 대상 사용자 세션의 실행
+경로에서 처리하도록 설계한다. `SetThreadDesktop`만으로 Windows 세션 경계를 넘을 수 없다.
+일반 제어 동의가 관리자 UI 조작 권한으로 확대되지 않도록 한다. 상세는 아키텍처 문서와 리뷰 G03을 따른다.
 
 ## 기술 스택 (영역별로 더 나은 언어를 쓴다)
 
@@ -45,14 +57,14 @@ Host가 C#인 이유는 WinRT(Windows.Graphics.Capture)·DXGI COM·`SendInput`·
 | Host UI | WPF |
 | 시그널링 | **Go** + `net/http` + `coder/websocket` (TCP 25001) |
 | TURN | coturn (docker) — 직접 구현하지 않는다 |
-| Viewer | 웹 SPA (Node.js 빌드) |
+| Viewer | 정적 HTML/CSS/바닐라 JS (현재 Node.js 빌드 단계 없음) |
 
 ## 프로젝트 구조
 
 ```
-RemoteAssist.sln
+RemoteAssist.slnx
 ├─ src/
-│  ├─ RemoteAssist.Host.Service/   # Windows 서비스(SYSTEM): 캡처·입력·WebRTC
+│  ├─ RemoteAssist.Host.Service/   # Windows 서비스 골격, 목표는 세션·권한 감독
 │  ├─ RemoteAssist.Host.Tray/      # 트레이 UI(WPF): 동의·상태
 │  ├─ RemoteAssist.Host.Core/      # 공통 로직(캡처/인코딩/입력/프로토콜)
 │  └─ RemoteAssist.Protocol/       # 데이터채널 메시지 C# DTO
@@ -66,9 +78,13 @@ RemoteAssist.sln
    └─ protocol.md                  # 와이어 포맷 단일 기준
 ```
 
-`RemoteAssist.sln`에는 C# 프로젝트만 넣는다. Go 모듈은 `go build ./...`로 따로 빌드한다.
+`RemoteAssist.slnx`에는 C# 프로젝트와 진단 도구만 넣는다. Go 모듈은 `go build ./...`로 따로 빌드한다.
+실제 화면 공유 실행은 `tools/RemoteAssist.HostRun`, 캡처 확인은 `tools/RemoteAssist.CaptureDump`다.
 
 ## 데이터 채널 프로토콜
+
+아래는 목표 채널 구성이다. 현재 Host/Viewer는 데이터채널을 생성하지 않는다.
+입력 key/button 전이의 신뢰성과 좌표 규약은 리뷰 G02에 따라 구현 전에 확정한다.
 
 언어가 둘이므로 **공유 DTO를 코드로 나눌 수 없다.** 와이어 포맷의 기준은 `docs/protocol.md` 하나이고,
 C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것을 구현한다. 스키마 변경은 **항상 문서 → 양쪽 코드** 순서로 한다.
@@ -125,7 +141,7 @@ C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것�
 | FFmpeg ABI 버전 불일치 | 8.1 고정, 동봉 경로 명시 로드 |
 | H.264 HW 인코더 부재·드라이버 편차 | HW 우선 + `libopenh264` SW 폴백, GPU 다른 머신 2대 이상 + VM에서 검증 |
 | C#·Go 간 스키마 드리프트 | 기준은 `docs/protocol.md` 하나. 통합 테스트에 왕복 파싱 케이스 포함 |
-| C# H.264 HW 인코딩 파이프라인 | VP8로 시작, H.264는 백로그로 분리 |
+| C# H.264 HW 인코딩 파이프라인 | FFmpeg H.264로 구현. 초기화 실패 폴백·키프레임·포맷 변경은 리뷰 R01/R02/R13에서 보완 |
 | 백신·SmartScreen 오탐 | 코드 서명, 벤더 화이트리스트, 조기 스캔 테스트 |
 | TURN 대역폭 비용 | P2P 성공률 모니터링, 리전별 coturn 배치 |
 | 오남용·사회공학 | 동의 화면에 접속자 신원 강조, 대역 외 코드, 배포 통제 |

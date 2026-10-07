@@ -2,7 +2,8 @@
 
   <!--
     Session 0 / SYSTEM 권한으로 도는 Windows 서비스.
-    캡처·인코딩·입력 주입·데스크톱 전환·WebRTC를 전담한다.
+    현재는 골격이다. 목표는 세션·권한·사용자 세션 헬퍼의 감독이다.
+    캡처·입력 실행 위치와 IPC 설계는 docs/architecture.md 및 T2.4를 따른다.
 
     주의: PublishSingleFile을 켜지 않는다.
     SIPSorceryMedia.FFmpeg와 FFmpeg는 LGPL-2.1-only 이므로 교체 가능한

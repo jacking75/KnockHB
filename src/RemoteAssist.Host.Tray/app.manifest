@@ -4,7 +4,7 @@
   <!--
     트레이 UI는 반드시 "일반 사용자 권한"으로 돈다(asInvoker).
     특권 작업은 전부 SYSTEM 서비스가 맡고, 이쪽은 동의 대화상자와 상태 표시만 한다.
-    최소 권한 원칙(설계서 9장)이므로 requireAdministrator로 바꾸지 말 것.
+    최소 권한 원칙(docs/architecture.md)이므로 requireAdministrator로 바꾸지 말 것.
   -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>

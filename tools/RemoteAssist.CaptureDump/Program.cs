@@ -86,7 +86,7 @@ finally
     capture?.Dispose();
 }
 
-// 기본은 WGC. DXGI는 명시했을 때만 쓴다 — 설계서 5장의 우선순위와 같다.
+// 기본은 WGC. DXGI는 명시하거나 WGC 미지원일 때 쓴다 — docs/technical-specification.md 참고.
 static IScreenCapture CreateCapture(Options opts)
 {
     switch (opts.Backend)

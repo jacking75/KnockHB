@@ -1,10 +1,10 @@
 namespace RemoteAssist.Host.Core.Capture;
 
 /// <summary>
-/// 화면 캡처 추상화. DXGI Desktop Duplication을 1차 구현으로 두고,
-/// Windows Graphics Capture를 폴백/대안으로 붙인다 — 계획서 T1.2 참고.
+/// 화면 캡처 추상화. Windows Graphics Capture를 기본으로 두고,
+/// 미지원 시 DXGI Desktop Duplication을 선택한다 — docs/technical-specification.md 참고.
 ///
-/// UAC 보안 데스크톱(Winlogon) 대응은 SYSTEM 서비스에서 데스크톱을 전환해야 가능하다.
+/// UAC 보안 데스크톱(Winlogon) 대응은 대상 사용자 세션의 승인된 특권 실행 경로가 필요하다.
 /// Phase 5(T5.1)에서 다룬다. 그 전까지 승격 창은 검은 화면이거나 캡처가 끊기는 것이 정상이다.
 /// </summary>
 public interface IScreenCapture : IDisposable
