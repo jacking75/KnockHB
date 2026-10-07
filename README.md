@@ -12,5 +12,5 @@
 | [기능별 워크플로우](docs/workflows.md) | 현재 기능과 예정 기능의 Mermaid 흐름도 |
 | [실행·검증 가이드](docs/development-guide.md) | 로컬 PoC 실행, 두 머신 검증, 문제 해결 |
 | [프로토콜](docs/protocol.md) | 와이어 포맷의 단일 기준 |
-| [구현계획](원격제어-구현계획.md) | 단계별 태스크와 완료 조건 |
+| [통합 구현계획](원격제어-구현계획.md) | E01~E41 구현·F01~F12 최종 E2E, 기존 T 대응·과거 기록 |
 | [리뷰·태스크 리스크](docs_working/code-review-task-risks-2026-10-07.md) | 발견된 결함, 수정 방법, 회귀 검증 |
