@@ -1,10 +1,12 @@
 # 아키텍처
 
+2026-10-08 구현 결정은 [제품 계약](product-contract.md)을 따른다. 단일 콘솔 사용자·별도 경로 pairing 신원·독립 권한·종료 최종 상태·시그널링 상실 fail-closed가 기준이다. 이후 코드 변경의 현재 상태는 루트 구현계획에서 관리한다.
+
 [문서 안내](README.md) · [기술 사양](technical-specification.md) · [주요 로직](core-logic.md) · [워크플로우](workflows.md)
 
 ## 1. 제품 목표와 현재 실행 구조
 
-RemoteAssist의 목표는 대상자가 허용한 범위 안에서 화면 보기, 원격 조작, 진단 작업을 제공하는 것이다. 현재는 그중 **화면을 캡처해 브라우저에 표시하는 경로**만 구현되어 있다.
+RemoteAssist의 목표는 대상자가 허용한 범위 안에서 화면 보기, 원격 조작, 진단 작업을 제공하는 것이다. 현재는 HostRun 콘솔에서 화면 보기만 명시 승인받는 경로와 시그널링/Viewer 기반이 구현되어 있다. 서비스·Tray의 제품 동의 UI와 원격 제어는 미구현이다.
 
 아래 그림은 현재 코드의 프로세스 경계다. Host.Service와 Host.Tray는 이 데이터 흐름에 아직 참여하지 않는다. STUN 서버는 주소 후보 수집을 돕고, Go 서버는 코드 발급과 협상 메시지를 처리한다.
 
@@ -51,7 +53,7 @@ Host와 Viewer를 같은 PC에서 실행하는 루프백 PoC도 가능하다. �
 ## 2. 저장소와 프로젝트 의존성
 
 ```text
-RemoteAssist.slnx                     C# 프로젝트 6개
+RemoteAssist.slnx                     C# 프로젝트 8개
 Directory.Build.props                공통 TFM·컴파일 옵션
 Directory.Packages.props             NuGet 버전 중앙 관리
 src/
@@ -65,6 +67,8 @@ src/
 tools/
   RemoteAssist.HostRun/              실제 화면 공유 PoC 실행 진입점
   RemoteAssist.CaptureDump/          캡처를 PNG로 확인하는 진단 도구
+  RemoteAssist.SessionProbe/         사용자 세션·desktop 읽기 전용 진단
+tests/RemoteAssist.Host.Core.Tests/  순수 회귀 실행 하네스
 server/signaling/                    독립 Go 모듈과 테스트
 web/viewer/                          index.html, app.js, app.css
 deploy/                             signaling Dockerfile, coturn compose
@@ -97,30 +101,17 @@ flowchart TB
 | 구성요소 | 책임 | 맡지 않는 일 / 현재 한계 |
 |---|---|---|
 | HostRun | 옵션 해석, 세션 시작, 코드/PIN 표시, Ctrl+C 종료 | 설치형 제품 UI나 동의 창이 아님 |
-| ScreenShareSession | 시그널링과 PC 생성, 캡처 스레드, 송신 파이프라인 | 세션 상태 머신·권한 게이트가 아직 불완전 |
+| ScreenShareSession | 시그널링과 PC 생성, 캡처 스레드, 송신 파이프라인 | 화면 승인 게이트·종료 최종 상태; 서비스 기능은 미연결 |
 | SignalingClient | HTTP 발급, Host join, JSON WebSocket 송수신 | TURN 발급·재접속·UI 처리 없음 |
 | 캡처 클래스 | 지정 출력에서 BGRA 프레임 획득 | 인코딩·네트워크·사용자 동의 판단을 하지 않음 |
-| FFmpegH264Encoder | 허용 H.264 후보 선택, BGRA 인코딩 | 실제 초기화 실패 후 폴백·강제 키프레임 보완 필요 |
+| FFmpegH264Encoder | 허용 H.264 후보 선택, BGRA 인코딩 | 후보별 Configure/출력 폴백·forceKeyframe/PLI/FIR |
 | Go Room Manager | 코드별 룸, 자격정보, 슬롯, 만료 정리 | DB·분산 룸·영구 세션 기록 없음 |
 | Go signaling | HTTP/WS 접수, 인증 호출, 피어 메시지 전달 | 미디어 디코딩·보관 없음 |
-| Viewer | 코드/PIN 입력, answer 생성, 영상·통계 표시 | 원격 입력·동의 요청·파일/채팅 없음 |
+| Viewer | 이름·코드/PIN 입력, 승인 뒤 answer, 영상·통계 표시 | 원격 입력·동의 요청·파일/채팅 없음 |
 
 ## 3. 데이터와 자원의 소유권
 
-현재 세션당 Host 객체는 `SignalingClient`와 `RTCPeerConnection` 각각 하나를 의도한다. 캡처가 시작되면 전용 `Thread`에서 캡처 객체와 인코더를 생성·사용·정리한다. 네트워크 callback과 이 스레드 사이에는 공유 필드가 있으므로, callback 하나가 독립적으로 세션을 다시 시작하거나 폐기해도 안전하다고 가정하면 안 된다.
-
-```mermaid
-flowchart LR
-    gpu["GPU 캡처 texture"] --> stage["CPU 읽기용 staging texture"]
-    stage --> bgra["재사용 BGRA 배열"]
-    bgra --> convert["FFmpeg 색상 변환 / H.264 인코딩"]
-    convert --> rtp["SIPSorcery SendVideo"]
-    rtp --> browser["브라우저 디코더 / video"]
-```
-
-이 파이프라인은 GPU에서 인코더까지 texture를 직접 전달하는 zero-copy 구조가 아니다. CPU readback과 배열 복사가 존재한다. `CapturedFrame.Bgra`는 소유권을 넘겨받은 새 배열이 아니라 캡처 객체의 내부 버퍼를 가리키므로, 다른 스레드에 장기 보관하려면 복사나 명확한 버퍼 반환 계약이 필요하다.
-
-서버 룸은 프로세스 메모리에만 존재한다. 재시작하면 코드와 참가 상태가 사라진다. 여러 시그널링 인스턴스 사이의 룸 공유·라우팅은 구현되지 않았다. 로드밸런서만 추가해 수평 확장할 수 있는 상태가 아니다.
+현재 자원·작업·승인·종료의 상세는 [주요 로직](core-logic.md)을 따른다. Host 세션이 bounded 직렬 이벤트 큐, 수신/heartbeat/deadline Task와 캡처 스레드를 소유한다. 캡처·인코더는 같은 스레드에서 생성/사용/폐기한다. 로컬 승인 전에 PeerConnection과 캡처를 만들지 않는다. 종료는 최종 송신과 직렬화해 권한을 먼저 폐기한다. native hang의 헬퍼 프로세스 격리 감독은 미구현이다.
 
 ## 4. 목표 Host 구조 — 아직 미구현
 

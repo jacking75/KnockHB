@@ -1,185 +1,97 @@
-using FFmpeg.AutoGen;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using SIPSorceryMedia.Abstractions;
-using SIPSorceryMedia.FFmpeg;
 
 namespace RemoteAssist.Host.Core.Media;
 
-/// <summary>
-/// FFmpeg 기반 H.264 인코더. 화면 공유의 실사용 코덱이다.
-///
-/// <para>
-/// <b>인코더를 명시적으로 고르는 것이 이 클래스의 핵심이다</b>(T1.3b). 코덱 ID만 주고
-/// 기본값에 맡기면 FFmpeg가 알아서 고르는데, 그건 두 가지 문제를 동시에 일으킨다.
-/// </para>
-/// <list type="number">
-///   <item><b>성능</b> — SW 인코더로 떨어지면 1080p를 실시간으로 못 따라간다.</item>
-///   <item><b>라이선스</b> — 기본값이 <c>libx264</c>(GPL)일 수 있다. 그런 빌드를 동봉하면
-///         제품 전체가 GPL 조건에 걸린다.</item>
-/// </list>
-/// <para>
-/// 그래서 HW 인코더를 우선순위대로 시도하고, 전부 없으면 <c>libopenh264</c>(BSD)로만
-/// 폴백한다. <see cref="EncoderName"/> 을 로그·뷰어 상태바에 노출해 현장에서 확인할 수 있게 한다.
-/// </para>
-/// </summary>
+/// <summary>후보별 실제 초기화·시험 출력을 통과한 인코더만 선택한다. 호출은 소유 스레드 하나로 제한한다.</summary>
 public sealed class FFmpegH264Encoder : IVideoEncoder
 {
-    /// <summary>
-    /// 시도 순서. 앞쪽이 우선이다.
-    ///
-    /// nvenc(NVIDIA) → qsv(Intel) → amf(AMD) → mf(Media Foundation 범용) → openh264(SW).
-    /// <b>libx264는 목록에 없다. 넣지 말 것</b> — GPL이다.
-    /// </summary>
-    private static readonly (string Name, bool Hardware)[] Candidates =
-    [
-        ("h264_nvenc", true),
-        ("h264_qsv", true),
-        ("h264_amf", true),
-        ("h264_mf", true),
-        ("libopenh264", false),
-    ];
-
+    public static IReadOnlyList<string> AllowedEncoders { get; } = Array.AsReadOnly(new[] { "h264_nvenc", "h264_qsv", "h264_amf", "h264_mf", "libopenh264" });
+    private readonly string? _preferred;
     private readonly ILogger _log;
-    private readonly FFmpegVideoEncoder _encoder = null!;
+    private readonly IEncoderCandidateFactory _factory;
+    private IEncoderCandidate? _encoder;
+    private int _width, _height;
     private bool _disposed;
+    private H264ParameterSets _parameterSets = new();
+    public string EncoderName { get; private set; } = "(미선택)";
+    public bool IsHardware => EncoderName != "libopenh264" && _encoder is not null;
 
-    public string EncoderName { get; }
-    public bool IsHardware { get; }
-
-    private int _width;
-    private int _height;
-    private int _fps;
-
-    /// <param name="preferred">특정 인코더를 강제할 때 지정. null이면 우선순위대로 자동 선택.</param>
     public FFmpegH264Encoder(string? preferred = null, ILogger<FFmpegH264Encoder>? log = null)
+        : this(preferred, log, new NativeEncoderCandidateFactory()) { }
+
+    internal FFmpegH264Encoder(string? preferred, ILogger<FFmpegH264Encoder>? log, IEncoderCandidateFactory factory)
     {
+        if (preferred is not null && !AllowedEncoders.Contains(preferred)) throw new ArgumentException("허용하지 않는 인코더다.", nameof(preferred));
+        _preferred = preferred;
         _log = (ILogger?)log ?? NullLogger.Instance;
-        FFmpegLoader.Initialise(log: _log);
-
-        var order = preferred is null
-            ? Candidates
-            : [.. Candidates.Where(c => c.Name == preferred), .. Candidates.Where(c => c.Name != preferred)];
-
-        foreach (var (name, hardware) in order)
-        {
-            // 옵션은 생성자에도 넘긴다. SetCodec에만 주면 avcodec_open2까지 닿지 않아
-            // nvenc의 delay 기본값(INT_MAX)이 그대로 남고 십수 프레임이 밀린다.
-            var options = Options(name);
-            var candidate = new FFmpegVideoEncoder(options, AVHWDeviceType.AV_HWDEVICE_TYPE_NONE);
-
-            if (!TrySelect(candidate, name, options))
-            {
-                candidate.Dispose();
-                _log.LogDebug("인코더 사용 불가: {Encoder}", name);
-                continue;
-            }
-
-            _encoder = candidate;
-            EncoderName = name;
-            IsHardware = hardware;
-            _log.LogInformation("H.264 인코더 선택: {Encoder} ({Kind})", name, hardware ? "하드웨어" : "소프트웨어");
-            return;
-        }
-
-        throw new InvalidOperationException(
-            "쓸 수 있는 H.264 인코더가 없습니다. 동봉한 FFmpeg 빌드에 " +
-            "h264_nvenc/h264_qsv/h264_amf/h264_mf/libopenh264 중 하나가 있어야 합니다.");
+        _factory = factory;
     }
-
-    private bool TrySelect(FFmpegVideoEncoder encoder, string codecName, Dictionary<string, string> options)
-    {
-        try
-        {
-            return encoder.SetCodec(AVCodecID.AV_CODEC_ID_H264, codecName, options);
-        }
-        catch (Exception ex)
-        {
-            _log.LogDebug(ex, "인코더 {Encoder} 선택 실패", codecName);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 화면 공유에 맞춘 인코더 옵션.
-    ///
-    /// 지연을 최소화하고(프레임 재정렬·B프레임 없음), 정적 화면이 많은 특성상
-    /// 키프레임을 자주 넣지 않는다. 키프레임이 잦으면 아무 변화가 없어도 대역폭을 먹는다.
-    /// </summary>
-    private static Dictionary<string, string> Options(string codecName) => codecName switch
-    {
-        "h264_nvenc" => new()
-        {
-            ["preset"] = "p1",          // 가장 빠른 프리셋
-            ["tune"] = "ull",           // ultra low latency
-            ["rc"] = "cbr",
-            ["delay"] = "0",            // 출력 지연 0 — 넣지 않으면 십수 프레임을 물고 있는다
-            ["zerolatency"] = "1",
-        },
-        "h264_qsv" => new()
-        {
-            ["preset"] = "veryfast",
-            ["low_power"] = "1",
-            ["async_depth"] = "1",
-        },
-        "h264_amf" => new()
-        {
-            ["usage"] = "ultralowlatency",
-            ["quality"] = "speed",
-        },
-        "h264_mf" => new()
-        {
-            ["hw_encoding"] = "true",
-            ["low_latency"] = "true",
-        },
-        "libopenh264" => new()
-        {
-            ["allow_skip_frames"] = "1",
-        },
-        _ => [],
-    };
 
     public void Configure(int width, int height, int fps, int bitrateKbps)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        _width = width;
-        _height = height;
-        _fps = fps;
-
-        // 비트레이트를 먼저 걸고 인코더를 연다. 순서가 바뀌면 무시된다.
-        _encoder.SetBitrate(bitrateKbps * 1000L, null, null, null);
-        _encoder.InitialiseEncoder(AVCodecID.AV_CODEC_ID_H264, width, height, fps);
-
-        _log.LogInformation("인코더 설정: {W}x{H} @{Fps}fps, {Kbps}kbps ({Encoder})",
-            width, height, fps, bitrateKbps, EncoderName);
+        FrameLayout.ValidateDimensions(width, height);
+        if ((width & 1) != 0 || (height & 1) != 0) throw new ArgumentException("H.264 출력 크기는 짝수여야 한다.");
+        if (fps is < 1 or > 60 || bitrateKbps is < 100 or > 50000) throw new ArgumentOutOfRangeException(nameof(fps));
+        _factory.Prepare(_log);
+        _encoder?.Dispose(); _encoder = null; EncoderName = "(미선택)";
+        var errors = new List<string>();
+        var probe = new byte[checked(width * height * 4)];
+        foreach (var name in _preferred is null ? AllowedEncoders : new[] { _preferred })
+        {
+            IEncoderCandidate? candidate = null;
+            try
+            {
+                var options = Options(name);
+                candidate = _factory.Create(name, options);
+                candidate.Configure(width, height, fps, bitrateKbps);
+                var deadline = Environment.TickCount64 + 2000;
+                var emitted = false;
+                var parameterSets = new H264ParameterSets();
+                for (var i = 0; i < 8 && Environment.TickCount64 < deadline; i++)
+                {
+                    probe[0] = (byte)i;
+                    var output = candidate.Encode(width, height, probe);
+                    if (output is { Length: > 0 }) { parameterSets.Process(output); emitted = true; break; }
+                }
+                if (!emitted) throw new InvalidOperationException("시험 인코딩 출력이 없다.");
+                // The pinned SetCodec API binds an AVCodec pointer by encoder name.
+                // GetCodecName returns the codec ID name ("h264"), not the encoder name.
+                candidate.ForceKeyFrame();
+                _encoder = candidate; candidate = null;
+                _parameterSets = parameterSets;
+                EncoderName = name; _width = width; _height = height;
+                _log.LogInformation("H.264 실제 초기화·출력 성공: {Encoder}, {W}x{H}, {Fps}fps", name, width, height, fps);
+                return;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{name}: {ex.Message}");
+                _log.LogWarning("H.264 초기화 실패: {Encoder}", name);
+            }
+            finally { candidate?.Dispose(); }
+        }
+        throw new InvalidOperationException("H.264 초기화 후보가 모두 실패했다. " + string.Join(" | ", errors));
     }
 
+    private static Dictionary<string, string> Options(string name) => name switch
+    {
+        "h264_nvenc" => new() { ["preset"] = "p1", ["tune"] = "ull", ["rc"] = "cbr", ["delay"] = "0", ["zerolatency"] = "1", ["forced-idr"] = "1" },
+        "h264_qsv" => new() { ["preset"] = "veryfast", ["low_power"] = "1", ["async_depth"] = "1" },
+        "h264_amf" => new() { ["usage"] = "ultralowlatency", ["quality"] = "speed" },
+        "h264_mf" => new() { ["hw_encoding"] = "true", ["low_latency"] = "true" },
+        "libopenh264" => new() { ["allow_skip_frames"] = "1" },
+        _ => throw new ArgumentException("허용하지 않는 인코더다.")
+    };
     public ReadOnlyMemory<byte> Encode(ReadOnlyMemory<byte> bgraFrame, bool forceKeyframe)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (_width == 0)
-        {
-            throw new InvalidOperationException($"{nameof(Configure)} 를 먼저 호출해야 합니다.");
-        }
-
-        // BGRA → I420 변환은 SIPSorceryMedia.FFmpeg 안에서 swscale이 처리한다.
-        // 이 CPU 왕복이 지금 파이프라인의 가장 큰 비용이다. GPU 텍스처를 인코더에
-        // 직접 넘기는 zero-copy 경로는 T6.3에서 다룬다.
-        var encoded = _encoder.EncodeVideo(
-            _width, _height,
-            bgraFrame.ToArray(),
-            VideoPixelFormatsEnum.Bgra,
-            VideoCodecsEnum.H264);
-
-        return encoded ?? ReadOnlyMemory<byte>.Empty;
+        if (_encoder is null) throw new InvalidOperationException("Configure를 먼저 호출해야 한다.");
+        if (bgraFrame.Length != checked(_width * _height * 4)) throw new ArgumentException("BGRA 길이가 인코더 크기와 다르다.");
+        if (forceKeyframe) _encoder.ForceKeyFrame();
+        var encoded = _encoder.Encode(_width, _height, bgraFrame.ToArray());
+        return encoded is { Length: > 0 } ? _parameterSets.Process(encoded) : ReadOnlyMemory<byte>.Empty;
     }
-
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _encoder.Dispose();
-    }
+    public void Dispose() { if (_disposed) return; _disposed = true; _encoder?.Dispose(); _encoder = null; }
 }

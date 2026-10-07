@@ -10,6 +10,14 @@ namespace RemoteAssist.Protocol;
 /// </summary>
 public sealed record SignalMsg
 {
+    [JsonPropertyName("v")] public int Version { get; init; } = 1;
+    [JsonPropertyName("sessionId")] public string? SessionId { get; init; }
+    [JsonPropertyName("connectionId")] public string? ConnectionId { get; init; }
+    [JsonPropertyName("generation")] public int Generation { get; init; }
+    [JsonPropertyName("permissionGeneration")] public int PermissionGeneration { get; init; }
+    [JsonPropertyName("permissions")] public string[]? Permissions { get; init; }
+    [JsonPropertyName("displayName")] public string? DisplayName { get; init; }
+    [JsonPropertyName("iceServers")] public IceServerInfo[]? IceServers { get; init; }
     /// <summary>join | joined | peer-joined | peer-left | offer | answer | ice | bye | error</summary>
     [JsonPropertyName("type")] public string Type { get; init; } = "";
 
@@ -45,4 +53,11 @@ public sealed record IceCandidate
     [JsonPropertyName("candidate")] public string Candidate { get; init; } = "";
     [JsonPropertyName("sdpMid")] public string? SdpMid { get; init; }
     [JsonPropertyName("sdpMLineIndex")] public int? SdpMLineIndex { get; init; }
+}
+
+public sealed record IceServerInfo
+{
+    [JsonPropertyName("urls")] public string[] Urls {get;init;}=[];
+    [JsonPropertyName("username")] public string? Username {get;init;}
+    [JsonPropertyName("credential")] public string? Credential {get;init;}
 }

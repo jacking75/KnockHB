@@ -8,5 +8,9 @@
   <Folder Name="/tools/">
     <Project Path="tools/RemoteAssist.CaptureDump/RemoteAssist.CaptureDump.csproj" />
     <Project Path="tools/RemoteAssist.HostRun/RemoteAssist.HostRun.csproj" />
+    <Project Path="tools/RemoteAssist.SessionProbe/RemoteAssist.SessionProbe.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RemoteAssist.Host.Core.Tests/RemoteAssist.Host.Core.Tests.csproj" />
   </Folder>
 </Solution>

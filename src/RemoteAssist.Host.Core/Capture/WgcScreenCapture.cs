@@ -6,6 +6,8 @@ using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
+using Windows.Graphics.DirectX.Direct3D11;
+using RemoteAssist.Host.Core.Media;
 
 namespace RemoteAssist.Host.Core.Capture;
 
@@ -42,6 +44,10 @@ public sealed class WgcScreenCapture : IScreenCapture
     private int _width;
     private int _height;
     private bool _disposed;
+    private bool _closed;
+    private IDirect3DDevice? _rtDevice;
+    private ComApartment? _com;
+    private long _generation=1;
 
     public MonitorInfo Monitor { get; private set; }
 
@@ -58,10 +64,19 @@ public sealed class WgcScreenCapture : IScreenCapture
         }
     }
 
-    public WgcScreenCapture(int monitorIndex = 0, ILogger<WgcScreenCapture>? log = null)
+    public WgcScreenCapture(int monitorIndex = 0, ILogger<WgcScreenCapture>? log = null) : this(Monitors.Get(monitorIndex),log) { }
+
+    public WgcScreenCapture(MonitorInfo target, ILogger<WgcScreenCapture>? log = null)
     {
         _log = (ILogger?)log ?? NullLogger.Instance;
-        Monitor = Monitors.Get(monitorIndex);
+        Monitor = target;
+        if(!Monitors.Enumerate().Any(m=>m.Handle==target.Handle&&m.DeviceName==target.DeviceName))throw new InvalidOperationException("승인한 모니터가 제거됐다.");
+        try { Initialize(); } catch { Dispose(); throw; }
+    }
+
+    private void Initialize()
+    {
+        _com=new ComApartment();
 
         if (!IsSupported())
         {
@@ -80,16 +95,17 @@ public sealed class WgcScreenCapture : IScreenCapture
             out _device!, out _context!).CheckError();
 
         using var dxgiDevice = _device.QueryInterface<IDXGIDevice>();
-        var rtDevice = WgcInterop.CreateDirect3DDevice(dxgiDevice.NativePointer);
+        _rtDevice = WgcInterop.CreateDirect3DDevice(dxgiDevice.NativePointer);
 
         _item = WgcInterop.CreateItemForMonitor(Monitor.Handle);
+        _item.Closed += ItemClosed;
         _width = _item.Size.Width;
         _height = _item.Size.Height;
 
         // CreateFreeThreaded 를 쓰면 DispatcherQueue 없이 폴링만으로 프레임을 받을 수 있다.
-        // 서비스(Session 0)에는 메시지 펌프가 없으므로 이 선택이 중요하다.
+        // 사용자 세션 헬퍼의 전용 캡처 스레드에는 메시지 펌프가 없다. Session 0 캡처는 허용하지 않는다.
         _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(
-            rtDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _item.Size);
+            _rtDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _item.Size);
 
         _session = _pool.CreateCaptureSession(_item);
         _session.StartCapture();
@@ -101,6 +117,7 @@ public sealed class WgcScreenCapture : IScreenCapture
 
     private void AllocateBuffers()
     {
+        FrameLayout.ValidateDimensions(_width,_height);
         _staging?.Dispose();
         _staging = _device.CreateTexture2D(new Texture2DDescription
         {
@@ -116,12 +133,14 @@ public sealed class WgcScreenCapture : IScreenCapture
             MiscFlags = ResourceOptionFlags.None,
         });
 
-        _buffer = new byte[(long)_width * _height * 4];
+        Array.Clear(_buffer);
+        _buffer = new byte[checked(_width * _height * 4)];
     }
 
     public bool TryGetFrame(TimeSpan timeout, out CapturedFrame frame)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if(Volatile.Read(ref _closed))throw new InvalidOperationException("승인한 캡처 대상이 종료됐다.");
         frame = default;
 
         var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
@@ -157,9 +176,11 @@ public sealed class WgcScreenCapture : IScreenCapture
 
             _width = size.Width;
             _height = size.Height;
+            _generation++;
+            Monitor=Monitor with {Width=_width,Height=_height};
             AllocateBuffers();
             _pool.Recreate(
-                WgcInterop.CreateDirect3DDevice(_device.QueryInterface<IDXGIDevice>().NativePointer),
+                _rtDevice!,
                 DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
             return false;
         }
@@ -182,7 +203,8 @@ public sealed class WgcScreenCapture : IScreenCapture
         // WGC는 변경 영역을 주지 않는다. DXGI 경로에서만 얻을 수 있는 정보다.
         frame = new CapturedFrame(
             _buffer, _width, _height, _width * 4,
-            accumulatedFrames: 1, dirtyRectCount: -1, dirtyBounds: Rect.Empty);
+            accumulatedFrames: 1, dirtyRectCount: -1, dirtyBounds: Rect.Empty,
+            monitorIdentity:Monitor.DeviceName,generation:_generation);
         return true;
     }
 
@@ -190,6 +212,7 @@ public sealed class WgcScreenCapture : IScreenCapture
     {
         var rowBytes = _width * 4;
         var pitch = (int)map.RowPitch;
+        if(pitch<rowBytes)throw new InvalidDataException("WGC RowPitch가 잘못됐다.");
 
         if (pitch == rowBytes)
         {
@@ -212,8 +235,13 @@ public sealed class WgcScreenCapture : IScreenCapture
 
         _session?.Dispose();
         _pool?.Dispose();
+        if(_item is not null)_item.Closed-=ItemClosed;
+        _rtDevice?.Dispose();
         _staging?.Dispose();
         _context?.Dispose();
         _device?.Dispose();
+        Array.Clear(_buffer);
+        _com?.Dispose();
     }
+    private void ItemClosed(GraphicsCaptureItem item, object sender) => Volatile.Write(ref _closed,true);
 }

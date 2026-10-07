@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>$(WindowsTfm)</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/RemoteAssist.Host.Core/RemoteAssist.Host.Core.csproj" /></ItemGroup>
+  <ItemGroup><None Include="../fixtures/signals.json" Link="signals.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+</Project>

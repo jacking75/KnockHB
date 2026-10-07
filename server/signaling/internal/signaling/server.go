@@ -12,11 +12,17 @@ package signaling
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -40,9 +46,17 @@ const (
 
 // Msg 는 시그널링 메시지다. 필드명 기준은 docs/protocol.md.
 type Msg struct {
-	Type string `json:"type"`
-	Room string `json:"room,omitempty"`
-	Role string `json:"role,omitempty"`
+	ICEServers           []ICEServer `json:"iceServers,omitempty"`
+	Version              int         `json:"v"`
+	SessionID            string      `json:"sessionId,omitempty"`
+	ConnectionID         string      `json:"connectionId,omitempty"`
+	Generation           int         `json:"generation,omitempty"`
+	PermissionGeneration int         `json:"permissionGeneration,omitempty"`
+	Permissions          []string    `json:"permissions,omitempty"`
+	DisplayName          string      `json:"displayName,omitempty"`
+	Type                 string      `json:"type"`
+	Room                 string      `json:"room,omitempty"`
+	Role                 string      `json:"role,omitempty"`
 
 	// 참가 인증용. 절대 반대편으로 릴레이하지 않는다.
 	PIN   string `json:"pin,omitempty"`
@@ -71,13 +85,23 @@ type Config struct {
 	SessionTTL time.Duration
 	// OriginPatterns 는 브라우저 뷰어의 허용 Origin이다. 비우면 동일 호스트만 허용된다.
 	OriginPatterns []string
+	TURNURLs       []string
+	TURNSecret     string
 }
 
 // Server 는 시그널링 서버다.
 type Server struct {
-	rooms *room.Manager
-	cfg   Config
-	log   *slog.Logger
+	rooms             *room.Manager
+	cfg               Config
+	log               *slog.Logger
+	mu                sync.Mutex
+	connections       map[*websocket.Conn]struct{}
+	stopping          bool
+	pending           int
+	issuance          *requestLimiter
+	beforeACK         func(*room.Peer) // deterministic barrier, nil outside tests
+	readLease         time.Duration
+	heartbeatInterval time.Duration
 }
 
 // New 는 서버를 만든다.
@@ -89,9 +113,13 @@ func New(cfg Config, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	return &Server{
-		rooms: room.NewManager(cfg.SessionTTL),
-		cfg:   cfg,
-		log:   log,
+		rooms:             room.NewManager(cfg.SessionTTL),
+		cfg:               cfg,
+		log:               log,
+		connections:       make(map[*websocket.Conn]struct{}),
+		issuance:          newLimiter(10, time.Minute, 4096),
+		readLease:         15 * time.Second,
+		heartbeatInterval: 5 * time.Second,
 	}
 }
 
@@ -107,9 +135,10 @@ func (s *Server) StartSweeper(ctx context.Context) {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("POST /session", s.handleCreateSession)
 	mux.HandleFunc("GET /ws", s.handleWS)
-	return mux
+	return SecurityHeaders(mux)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -118,6 +147,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 type createSessionResponse struct {
+	SessionID string `json:"sessionId"`
 	Code      string `json:"code"`
 	PIN       string `json:"pin"`
 	HostToken string `json:"hostToken"`
@@ -129,18 +159,31 @@ type createSessionResponse struct {
 // TODO(T3.1): 발급 자체에 대한 인증·레이트 리밋. 지금은 누구나 코드를 받을 수 있다.
 // 코드만으로는 아무것도 못 하지만(참가에 PIN/토큰이 필요하다), 남용 방지는 필요하다.
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		http.Error(w, "Origin 거부", http.StatusForbidden)
+		return
+	}
+	if !s.issuance.Allow(remoteIP(r)) {
+		http.Error(w, "발급 요청 상한", http.StatusTooManyRequests)
+		return
+	}
 	rm, err := s.rooms.Create()
 	if err != nil {
 		s.log.Error("세션 생성 실패", "err", err)
-		http.Error(w, "세션 생성 실패", http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, room.ErrCapacity) {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, "세션 생성 실패", status)
 		return
 	}
 
-	s.log.Info("세션 생성", "code", rm.Code, "ttl", s.cfg.SessionTTL)
+	s.log.Info("세션 생성", "sessionId", rm.SessionID, "ttl", s.cfg.SessionTTL)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(createSessionResponse{
+		SessionID: rm.SessionID,
 		Code:      rm.Code,
 		PIN:       rm.PIN,
 		HostToken: rm.HostToken,
@@ -163,6 +206,10 @@ func newWSConn(c *websocket.Conn) *wsConn {
 }
 
 func (w *wsConn) WriteJSON(ctx context.Context, v any) error {
+	if m, ok := v.(Msg); ok {
+		m.Version = 1
+		v = m
+	}
 	select {
 	case w.mu <- struct{}{}:
 		defer func() { <-w.mu }()
@@ -176,13 +223,35 @@ func (w *wsConn) WriteJSON(ctx context.Context, v any) error {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	if s.stopping || len(s.connections)+s.pending >= 2000 {
+		s.mu.Unlock()
+		http.Error(w, "접속 상한", http.StatusServiceUnavailable)
+		return
+	}
+	s.pending++
+	s.mu.Unlock()
+	// Capacity is reserved; slow upgrade never holds the server mutex.
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: s.cfg.OriginPatterns,
 	})
 	if err != nil {
+		s.mu.Lock()
+		s.pending--
+		s.mu.Unlock()
 		s.log.Warn("WebSocket 수락 실패", "err", err)
 		return
 	}
+	s.mu.Lock()
+	s.pending--
+	if s.stopping {
+		s.mu.Unlock()
+		_ = c.CloseNow()
+		return
+	}
+	s.connections[c] = struct{}{}
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.connections, c); s.mu.Unlock() }()
 	defer c.CloseNow() //nolint:errcheck // 정상 종료 경로에서는 이미 닫혀 있다
 
 	c.SetReadLimit(readLimit)
@@ -192,7 +261,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// 1) 첫 메시지는 반드시 join 이다.
 	joinCtx, cancel := context.WithTimeout(ctx, joinTimeout)
 	var first Msg
-	err = wsjson.Read(joinCtx, c, &first)
+	err = readMsg(joinCtx, c, &first)
 	cancel()
 	if err != nil {
 		s.closeWith(c, websocket.StatusPolicyViolation, "join 대기 시간 초과")
@@ -204,19 +273,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2) 룸 확인과 참가 인증.
-	rm, err := s.rooms.Get(first.Room)
+	if !decimalField(first.Room, 9) || (first.Role == room.RoleViewer && (!decimalField(first.PIN, 4) || !validDisplayName(first.DisplayName))) {
+		s.reject(ctx, conn, c, "bad-request", "참가 필드 오류")
+		return
+	}
+	peer := &room.Peer{ID: peerID(r), Role: first.Role, DisplayName: first.DisplayName, Conn: conn}
+	rm, err := s.rooms.Reserve(first.Room, first.Role, first.PIN, first.Token, peer)
 	if err != nil {
-		s.reject(ctx, conn, c, errCode(err), err.Error())
-		return
-	}
-	if err := rm.Authorize(first.Role, first.PIN, first.Token); err != nil {
-		s.log.Warn("참가 인증 실패", "code", rm.Code, "role", first.Role, "err", err)
-		s.reject(ctx, conn, c, errCode(err), err.Error())
-		return
-	}
-
-	peer := &room.Peer{ID: peerID(r), Role: first.Role, Conn: conn}
-	if err := rm.Join(peer); err != nil {
 		s.reject(ctx, conn, c, errCode(err), err.Error())
 		return
 	}
@@ -225,35 +288,88 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// 3) 참가 알림.
 	other := rm.Other(peer)
 	present := other != nil
+	if s.beforeACK != nil {
+		s.beforeACK(peer)
+	}
 	if err := conn.WriteJSON(ctx, Msg{
 		Type: "joined", Room: rm.Code, Role: peer.Role, PeerPresent: &present,
+		SessionID: rm.SessionID, ConnectionID: peer.ID, Generation: 1,
+		ICEServers: s.iceServers(rm.SessionID, peer.ID, time.Now()),
 	}); err != nil {
+		return
+	}
+	other, err = s.rooms.Activate(rm, peer)
+	if err != nil {
 		return
 	}
 	if other != nil {
 		// 기존 참가자에게 알린다. Host는 이 신호를 받고 offer를 만든다.
-		_ = other.Conn.WriteJSON(ctx, Msg{Type: "peer-joined", Role: peer.Role})
+		if err := other.Conn.WriteJSON(ctx, Msg{Type: "peer-joined", Role: peer.Role, DisplayName: peer.DisplayName, ConnectionID: peer.ID, SessionID: rm.SessionID, Generation: 1}); err != nil {
+			return
+		}
+		if !present || peer.Role == room.RoleHost {
+			if err := conn.WriteJSON(ctx, Msg{Type: "peer-joined", Role: other.Role, DisplayName: other.DisplayName, ConnectionID: other.ID, SessionID: rm.SessionID, Generation: 1}); err != nil {
+				return
+			}
+		}
 	}
 
-	s.log.Info("참가", "code", rm.Code, "role", peer.Role, "peerPresent", present)
+	s.log.Info("참가", "sessionId", rm.SessionID, "role", peer.Role, "peerPresent", present)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go func() {
+		t := time.NewTicker(s.heartbeatInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-t.C:
+				if err := conn.WriteJSON(heartbeatCtx, Msg{Type: "ping"}); err != nil {
+					_ = c.CloseNow()
+					return
+				}
+			}
+		}
+	}()
 
 	// 4) 릴레이 루프.
 	for {
 		var m Msg
-		if err := wsjson.Read(ctx, c, &m); err != nil {
+		readCtx, cancelRead := context.WithTimeout(ctx, s.readLease)
+		err := readMsg(readCtx, c, &m)
+		cancelRead()
+		if err != nil {
 			return // 정상 종료·연결 끊김 모두 여기로 온다. defer가 정리한다.
 		}
 
 		switch m.Type {
-		case "offer", "answer", "ice", "bye":
+		case "ping":
+			if err := conn.WriteJSON(ctx, Msg{Type: "pong"}); err != nil {
+				return
+			}
+		case "pong":
+		case "offer", "answer", "ice", "bye", "consent", "consent-pending", "consent-denied":
+			if (m.Type == "offer" || m.Type == "consent" || m.Type == "consent-pending" || m.Type == "consent-denied") && peer.Role != room.RoleHost {
+				return
+			}
+			if m.Type == "answer" && peer.Role != room.RoleViewer {
+				return
+			}
+			if len(m.SDP) > 96<<10 || (m.ICE != nil && len(m.ICE.Candidate) > 8192) {
+				return
+			}
 			if p := rm.Other(peer); p != nil {
 				// 인증 필드(pin/token)를 떼고 필요한 것만 넘긴다.
-				_ = p.Conn.WriteJSON(ctx, Msg{
-					Type: m.Type,
-					Room: rm.Code,
-					SDP:  m.SDP,
-					ICE:  m.ICE,
-				})
+				if err := p.Conn.WriteJSON(ctx, Msg{
+					Type:      m.Type,
+					Room:      rm.Code,
+					SDP:       m.SDP,
+					ICE:       m.ICE,
+					SessionID: rm.SessionID, Generation: 1, PermissionGeneration: m.PermissionGeneration, Permissions: m.Permissions,
+				}); err != nil {
+					return
+				}
 			}
 			if m.Type == "bye" {
 				return
@@ -261,17 +377,40 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "join":
 			_ = conn.WriteJSON(ctx, errMsg("bad-request", "이미 참가한 연결입니다"))
 		default:
-			_ = conn.WriteJSON(ctx, errMsg("bad-request", "알 수 없는 type: "+m.Type))
+			s.reject(ctx, conn, c, "bad-request", "알 수 없는 메시지")
+			return
 		}
 	}
+}
+
+func decimalField(value string, size int) bool {
+	if len(value) != size {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+func validDisplayName(value string) bool {
+	if strings.TrimSpace(value) != value || value == "" || len(utf16.Encode([]rune(value))) > 80 {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
 }
 
 // leave 는 피어를 룸에서 빼고, 남은 쪽에 알리고, 빈 룸을 지운다.
 //
 // 이 함수가 룸 누수를 막는 유일한 지점이다. 어떤 경로로 끊기든 반드시 지나가야 한다.
 func (s *Server) leave(rm *room.Room, p *room.Peer) {
-	other := rm.Other(p)
-	rm.Leave(p)
+	other := s.rooms.Leave(rm, p)
 
 	if other != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
@@ -280,8 +419,7 @@ func (s *Server) leave(rm *room.Room, p *room.Peer) {
 	}
 
 	if rm.Empty() {
-		s.rooms.Remove(rm.Code)
-		s.log.Info("룸 정리", "code", rm.Code, "남은 룸", s.rooms.Count())
+		s.log.Info("룸 정리", "sessionId", rm.SessionID, "남은 룸", s.rooms.Count())
 	}
 }
 
@@ -314,6 +452,12 @@ func errCode(err error) string {
 		return "bad-role"
 	case errors.Is(err, room.ErrSlotTaken):
 		return "slot-taken"
+	case errors.Is(err, room.ErrConsumed):
+		return "consumed"
+	case errors.Is(err, room.ErrLocked):
+		return "locked"
+	case errors.Is(err, room.ErrCapacity):
+		return "capacity"
 	default:
 		return "bad-request"
 	}
@@ -321,5 +465,23 @@ func errCode(err error) string {
 
 // peerID 는 로그용 식별자다. 보안 목적이 아니다.
 func peerID(r *http.Request) string {
-	return r.RemoteAddr
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("OS random source unavailable")
+	}
+	return hex.EncodeToString(b)
+}
+
+// Shutdown closes hijacked WebSockets, which http.Server.Shutdown does not own.
+func (s *Server) Shutdown() {
+	s.mu.Lock()
+	s.stopping = true
+	peers := make([]*websocket.Conn, 0, len(s.connections))
+	for c := range s.connections {
+		peers = append(peers, c)
+	}
+	s.mu.Unlock()
+	for _, c := range peers {
+		_ = c.CloseNow()
+	}
 }

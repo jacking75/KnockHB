@@ -22,25 +22,21 @@ internal static class WgcInterop
     /// <summary>HMONITOR로 캡처 대상을 만든다.</summary>
     public static GraphicsCaptureItem CreateItemForMonitor(nint hMonitor)
     {
-        EnsureComInitialized();
-
         var factory = (IGraphicsCaptureItemInterop)GetActivationFactory(
             "Windows.Graphics.Capture.GraphicsCaptureItem", IidGraphicsCaptureItemInterop);
 
-        var iid = IidGraphicsCaptureItem;
-        var itemPtr = factory.CreateForMonitor(hMonitor, ref iid);
-        if (itemPtr == nint.Zero)
-        {
-            throw new InvalidOperationException("GraphicsCaptureItem 생성 실패 (HMONITOR)");
-        }
-
+        var itemPtr=nint.Zero;
         try
         {
+            var iid = IidGraphicsCaptureItem;
+            itemPtr = factory.CreateForMonitor(hMonitor, ref iid);
+            if(itemPtr==nint.Zero)throw new InvalidOperationException("GraphicsCaptureItem 생성 실패 (HMONITOR)");
             return MarshalInspectable<GraphicsCaptureItem>.FromAbi(itemPtr);
         }
         finally
         {
-            Marshal.Release(itemPtr);
+            if(itemPtr!=nint.Zero)Marshal.Release(itemPtr);
+            Marshal.ReleaseComObject(factory);
         }
     }
 
@@ -104,23 +100,6 @@ internal static class WgcInterop
     /// RoGetActivationFactory 는 스레드의 COM이 초기화돼 있어야 한다.
     /// .NET은 순수 P/Invoke 경로에서는 알아서 초기화해 주지 않으므로 직접 부른다.
     /// </summary>
-    private static void EnsureComInitialized()
-    {
-        const int RpcEChangedMode = unchecked((int)0x80010106);
-        var hr = CoInitializeEx(nint.Zero, CoinitMultithreaded);
-
-        // S_FALSE(이미 초기화됨)와 RPC_E_CHANGED_MODE(STA로 이미 초기화됨)는 정상이다.
-        if (hr < 0 && hr != RpcEChangedMode)
-        {
-            Marshal.ThrowExceptionForHR(hr);
-        }
-    }
-
-    private const uint CoinitMultithreaded = 0x0;
-
-    [DllImport("ole32.dll")]
-    private static extern int CoInitializeEx(nint reserved, uint coInit);
-
     [DllImport("combase.dll", CharSet = CharSet.Unicode)]
     private static extern int WindowsCreateString(string sourceString, int length, out nint hstring);
 

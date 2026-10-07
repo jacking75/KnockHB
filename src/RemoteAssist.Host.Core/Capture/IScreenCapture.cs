@@ -34,7 +34,8 @@ public readonly struct CapturedFrame
 {
     public CapturedFrame(
         ReadOnlyMemory<byte> bgra, int width, int height, int stride,
-        int accumulatedFrames, int dirtyRectCount, Rect dirtyBounds)
+        int accumulatedFrames, int dirtyRectCount, Rect dirtyBounds,
+        string monitorIdentity = "", long generation = 1)
     {
         Bgra = bgra;
         Width = width;
@@ -43,9 +44,12 @@ public readonly struct CapturedFrame
         AccumulatedFrames = accumulatedFrames;
         DirtyRectCount = dirtyRectCount;
         DirtyBounds = dirtyBounds;
+        MonitorIdentity=monitorIdentity;Generation=generation;
     }
 
     public ReadOnlyMemory<byte> Bgra { get; }
+    public string MonitorIdentity {get;}
+    public long Generation {get;}
     public int Width { get; }
     public int Height { get; }
 

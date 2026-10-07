@@ -1,0 +1,33 @@
+{
+    "files":  [
+                  {
+                      "sha256":  "d4132114a352e7a903ce179a666cab717825c3f3cda3b7dd009fbc143b5d713f",
+                      "name":  "avcodec-62.dll"
+                  },
+                  {
+                      "sha256":  "09025773ec9aa8845db3a1164c4cbbc9eabd1581bbf5e32086bed336158ae5a1",
+                      "name":  "avdevice-62.dll"
+                  },
+                  {
+                      "sha256":  "08aede057c46a0dce875fcf69fce653e3c9088b8d576587ab6461b81998d4376",
+                      "name":  "avfilter-11.dll"
+                  },
+                  {
+                      "sha256":  "221595d22cc91085a4b376b28b28f6eb700e04f3d8f9032c56fe87e2183e34de",
+                      "name":  "avformat-62.dll"
+                  },
+                  {
+                      "sha256":  "6a5bf39e472d2ab67341c581de2522dfc0082e1649c7040ebd0e60f7fb2c922d",
+                      "name":  "avutil-60.dll"
+                  },
+                  {
+                      "sha256":  "9aced19819f68c8950b9ac34514294d4a533f83601818a81c929e98c53be5993",
+                      "name":  "swresample-6.dll"
+                  },
+                  {
+                      "sha256":  "76acd05ae4869b5afde9367370ddf11ee2f963e9cc9e13a0f6b9edb4d510f235",
+                      "name":  "swscale-9.dll"
+                  }
+              ],
+    "archiveSha256":  "30fdaaeb116730fdd6432c2663af0e9ecdf1d6cc387ac085cc1faf8494942510"
+}

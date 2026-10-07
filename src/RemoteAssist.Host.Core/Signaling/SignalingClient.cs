@@ -1,6 +1,5 @@
 using System.Net.Http.Json;
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -29,22 +28,34 @@ public sealed class SignalingClient : IAsyncDisposable
     private readonly ILogger _log;
     private readonly ClientWebSocket _socket = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task? _heartbeat;
+    private int _disposed;
+    public SignalMsg? JoinedAck {get;private set;}
 
-    public SignalingClient(Uri httpBase, ILogger<SignalingClient>? log = null)
+    public SignalingClient(Uri httpBase, ILogger<SignalingClient>? log = null,bool allowLoopbackHttp=false)
     {
+        ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         _httpBase = httpBase;
         _log = (ILogger?)log ?? NullLogger.Instance;
     }
 
     /// <summary>서버에서 세션 코드·PIN·host 토큰을 발급받는다.</summary>
-    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default)
+    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default,bool allowLoopbackHttp=false)
     {
+        ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));ct=deadline.Token;
         using var http = new HttpClient();
-        using var response = await http.PostAsync(new Uri(httpBase, "/session"), null, ct);
+        using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(httpBase,"/session"));
+        using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
         response.EnsureSuccessStatusCode();
-
-        return await response.Content.ReadFromJsonAsync<SessionCredentials>(Json, ct)
+        await response.Content.LoadIntoBufferAsync(SignalingFraming.MaxBytes,ct);
+        var credentials=await response.Content.ReadFromJsonAsync<SessionCredentials>(Json, ct)
             ?? throw new InvalidOperationException("세션 발급 응답을 해석할 수 없습니다.");
+        if(credentials.Code.Length!=9||credentials.Code.Any(c=>c is <'0' or >'9')||credentials.Pin.Length!=4||credentials.Pin.Any(c=>c is <'0' or >'9')||
+           credentials.HostToken.Length!=32||credentials.SessionId.Length!=32||credentials.ExpiresIn is <30 or >1800)
+            throw new InvalidDataException("세션 발급 계약과 다른 응답이다.");
+        return credentials;
     }
 
     /// <summary>WebSocket에 붙어 host 역할로 참가한다. 반대편이 이미 있으면 true.</summary>
@@ -77,12 +88,19 @@ public sealed class SignalingClient : IAsyncDisposable
             throw new InvalidOperationException($"예상치 못한 응답: {ack.Type}");
         }
 
+        if (ack.SessionId != session.SessionId || ack.Generation != 1) throw new InvalidDataException("다른 세션의 ACK다.");
+        JoinedAck=ack;
+        _heartbeat = HeartbeatAsync(_lifetime.Token);
         return ack.PeerPresent ?? false;
     }
 
     public async Task SendAsync(SignalMsg msg, CancellationToken ct = default)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(msg, Json);
+        if (bytes.Length > SignalingFraming.MaxBytes) throw new InvalidDataException("메시지 크기 상한 초과다.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        ct = timeout.Token;
 
         await _sendLock.WaitAsync(ct);
         try
@@ -98,41 +116,34 @@ public sealed class SignalingClient : IAsyncDisposable
     /// <summary>메시지 하나를 받는다. 연결이 닫히면 null.</summary>
     public async Task<SignalMsg?> ReceiveAsync(CancellationToken ct = default)
     {
-        var buffer = new ArraySegment<byte>(new byte[64 * 1024]);
-        var sb = new StringBuilder();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        return await SignalingFraming.ReceiveAsync(_socket, deadline.Token);
+    }
 
-        while (true)
+    private async Task HeartbeatAsync(CancellationToken ct)
+    {
+        try
         {
-            WebSocketReceiveResult result;
-            try
-            {
-                result = await _socket.ReceiveAsync(buffer, ct);
-            }
-            catch (WebSocketException ex)
-            {
-                _log.LogInformation("시그널링 연결 종료: {Message}", ex.Message);
-                return null;
-            }
-
-            if (result.MessageType == WebSocketMessageType.Close)
-            {
-                return null;
-            }
-
-            sb.Append(Encoding.UTF8.GetString(buffer.Array!, 0, result.Count));
-            if (result.EndOfMessage) break;
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            while (await timer.WaitForNextTickAsync(ct)) await SendAsync(new SignalMsg { Type = "ping" }, ct);
         }
-
-        return JsonSerializer.Deserialize<SignalMsg>(sb.ToString(), Json);
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception) { _socket.Abort(); }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _lifetime.Cancel();
         try
         {
             if (_socket.State == WebSocketState.Open)
             {
-                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                await _sendLock.WaitAsync(deadline.Token);
+                try { await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", deadline.Token); }
+                finally { _sendLock.Release(); }
             }
         }
         catch
@@ -140,14 +151,19 @@ public sealed class SignalingClient : IAsyncDisposable
             // 이미 끊긴 연결을 닫으려다 나는 예외는 무시한다.
         }
 
+        _socket.Abort();
+        if (_heartbeat is not null) await _heartbeat;
         _socket.Dispose();
-        _sendLock.Dispose();
+        JoinedAck=null;
+        // Concurrent sends may still own the semaphore; managed wait handles are GC-owned.
+        _lifetime.Dispose();
     }
 }
 
 /// <summary>POST /session 응답.</summary>
 public sealed record SessionCredentials
 {
+    public string SessionId { get; init; } = "";
     public string Code { get; init; } = "";
     public string Pin { get; init; } = "";
     public string HostToken { get; init; } = "";

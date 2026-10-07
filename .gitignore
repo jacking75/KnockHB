@@ -437,6 +437,9 @@ FodyWeavers.xsd
 # README.md 만 추적한다.
 third_party/ffmpeg/*
 !third_party/ffmpeg/README.md
+!third_party/ffmpeg/supply.json
+!third_party/ffmpeg/libraries.json
+!third_party/ffmpeg/notices/
 
 # Go 빌드 산출물
 server/signaling/signaling
@@ -445,3 +448,4 @@ server/signaling/signaling.exe
 # 웹 뷰어
 web/viewer/node_modules/
 web/viewer/dist/
+.playwright-cli/

@@ -18,7 +18,9 @@ using RemoteAssist.Host.Core.Capture;
 const nint DpiAwarenessContextPerMonitorAwareV2 = -4;
 SetProcessDpiAwarenessContext(DpiAwarenessContextPerMonitorAwareV2);
 
-var opts = ParseArgs(args);
+Options opts;
+try { opts = ParseArgs(args); }
+catch(Exception ex) { Console.Error.WriteLine($"설정 오류: {ex.Message}");return 1; }
 
 if (opts.List)
 {
@@ -47,7 +49,7 @@ try
     var attempts = 0;
     var sw = Stopwatch.StartNew();
 
-    while (saved < opts.Frames && attempts < opts.Frames * 100)
+    while (saved < opts.Frames && attempts < opts.Frames * 100 && sw.Elapsed<TimeSpan.FromSeconds(60))
     {
         attempts++;
 
@@ -69,11 +71,12 @@ try
     Console.WriteLine($"완료: {saved}장 저장, 시도 {attempts}회, {sw.Elapsed.TotalSeconds:F1}초 " +
                       $"({saved / Math.Max(sw.Elapsed.TotalSeconds, 0.001):F1} fps)");
 
-    return saved == 0 ? 2 : 0;
+    return saved == opts.Frames ? 0 : 2;
 }
 catch (Exception ex)
 {
     Console.Error.WriteLine($"캡처 실패: {ex.Message.Split('\n')[0]}");
+    if(opts.Verbose)Console.Error.WriteLine(ex);
     Console.Error.WriteLine();
     Console.Error.WriteLine("흔한 원인:");
     Console.Error.WriteLine("  - DXGI: 하이브리드 GPU 노트북에서 Desktop Duplication 미지원 (--backend wgc 사용)");
@@ -131,7 +134,7 @@ static void SavePng(CapturedFrame frame, string path)
     var encoder = new PngBitmapEncoder();
     encoder.Frames.Add(BitmapFrame.Create(bmp));
 
-    using var fs = File.Create(path);
+    using var fs = new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None);
     encoder.Save(fs);
 }
 
@@ -160,8 +163,12 @@ static Options ParseArgs(string[] args)
             case "--backend" or "-b" when i + 1 < args.Length:
                 o.Backend = args[++i].ToLowerInvariant();
                 break;
+            case "--verbose":o.Verbose=true;break;
+            default:throw new ArgumentException("알 수 없는 옵션 또는 값 누락이다: "+args[i]);
         }
     }
+    if(o.Frames is <1 or >1000 || o.Monitor<0 || o.Backend is not ("auto" or "wgc" or "dxgi"))throw new ArgumentException("frames/monitor/backend 값이 잘못됐다.");
+    Monitors.Get(o.Monitor);
     return o;
 }
 
@@ -170,6 +177,7 @@ static extern bool SetProcessDpiAwarenessContext(nint value);
 
 internal sealed class Options
 {
+    public bool Verbose {get;set;}
     public bool List { get; set; }
     public int Monitor { get; set; }
     public int Frames { get; set; } = 3;

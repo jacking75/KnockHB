@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SIPSorceryMedia.FFmpeg;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace RemoteAssist.Host.Core.Media;
 
@@ -55,11 +57,29 @@ public static class FFmpegLoader
                 throw new DirectoryNotFoundException($"FFmpeg 경로가 없습니다: {path}");
             }
 
+            path = Path.GetFullPath(path);
+            ValidateBundle(path);
             FFmpegInit.Initialise(FfmpegLogLevelEnum.AV_LOG_ERROR, path, log);
 
             _initialized = true;
             LoadedFrom = path;
             log.LogInformation("FFmpeg 로드: {Path}", path);
+        }
+    }
+
+    public static void ValidateBundle(string path)
+    {
+        using var manifest = typeof(FFmpegLoader).Assembly.GetManifestResourceStream("RemoteAssist.FFmpeg.Libraries")
+            ?? throw new InvalidDataException("FFmpeg 공급 manifest가 없다.");
+        using var doc = JsonDocument.Parse(manifest);
+        foreach (var file in doc.RootElement.GetProperty("files").EnumerateArray())
+        {
+            var name = file.GetProperty("name").GetString()!;
+            if (Path.GetFileName(name) != name) throw new InvalidDataException("잘못된 DLL 이름이다.");
+            var candidate = Path.Combine(path, name);
+            using var bytes = File.OpenRead(candidate);
+            var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            if (hash != file.GetProperty("sha256").GetString()) throw new InvalidDataException($"FFmpeg DLL 변조 또는 다른 공급본이다: {name}");
         }
     }
 

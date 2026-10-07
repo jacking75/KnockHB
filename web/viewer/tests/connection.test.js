@@ -1,0 +1,99 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ViewerConnection, parseSignal } from '../connection.js';
+
+class Socket {
+  constructor() { this.readyState = 0; this.sent = []; this.closeCount = 0; }
+  send(data) { assert.equal(this.readyState, 1); this.sent.push(JSON.parse(data)); }
+  close() { this.closeCount++; this.readyState = 3; this.onclose?.(); }
+  open() { this.readyState = 1; this.onopen?.(); }
+  message(message) { this.onmessage?.({ data: JSON.stringify({ v: 1, ...message }) }); }
+}
+const joined = { type: 'joined', sessionId: 'sid', connectionId: 'cid', generation: 1 };
+const consent = { type: 'consent', sessionId: 'sid', generation: 1, permissions: ['screen'], permissionGeneration: 1 };
+function fixture(overrides = {}) {
+  const socket = new Socket(); const end = []; const timers = [];
+  const peer = { connectionState: 'connected', candidates: [], async setRemoteDescription() {}, async createAnswer() { return { sdp: 'answer' }; },
+    async setLocalDescription() {}, async addIceCandidate(value) { this.candidates.push(value); }, close() { this.closed = true; }, async getStats() { return new Map(); } };
+  const connection = new ViewerConnection({ base: 'http://localhost:25001', code: '123456789', pin: '1234', displayName: 'tester',
+    createSocket: () => socket, createPeer: () => peer, onEnd: (...args) => end.push(args),
+    setTimer: fn => { timers.push(fn); return fn; }, clearTimer: () => {}, ...overrides });
+  socket.open(); socket.message(joined);
+  return { connection, socket, peer, end, timers };
+}
+test('ICE preceding offer is retained and applied after SDP', async () => {
+  const f = fixture(); f.socket.message({ type: 'ice', ice: { candidate: 'candidate:1' } });
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
+  assert.equal(f.peer.candidates.length, 1); assert.equal(f.socket.sent.at(-1).type, 'answer'); f.connection.end();
+});
+test('PIN failure survives socket close', async () => {
+  const f = fixture(); f.socket.message({ type: 'error', code: 'bad-pin' }); f.socket.onclose();
+  assert.deepEqual(f.end, [['PIN이 올바르지 않다.', true]]);
+});
+test('cancel during remote SDP prevents answer and late track', async () => {
+  let release; let entered; const started = new Promise(resolve => { entered = resolve; }); let tracks = 0;
+  const f = fixture({ onTrack: () => tracks++ });
+  f.peer.setRemoteDescription = () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await started;
+  f.connection.end(); release(); await f.connection.messageChain;
+  f.peer.ontrack({ streams: [] }); assert.equal(tracks, 0); assert.equal(f.socket.sent.some(m => m.type === 'answer'), false);
+});
+test('previous socket callbacks cannot alter new connection', () => {
+  let current; let old; old = fixture({ isCurrent: () => !old || current === old.connection }); current = old.connection;
+  old.connection.end(); const next = fixture(); current = next.connection;
+  old.socket.onopen(); old.socket.message({ type: 'peer-left' }); old.socket.onclose();
+  assert.equal(next.connection.closed, false); assert.equal(next.socket.closeCount, 0); next.connection.end();
+});
+test('CONNECTING socket is closed on cancellation', () => {
+  const socket = new Socket(); const c = new ViewerConnection({ base: 'http://localhost', createSocket: () => socket,
+    setTimer: () => 1, clearTimer: () => {} }); c.end(); assert.equal(socket.closeCount, 1); socket.onopen(); assert.equal(socket.sent.length, 0);
+});
+test('offer without local Host consent fails closed', async () => {
+  const f = fixture(); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
+  assert.equal(f.connection.closed, true); assert.equal(f.connection.pc, null);
+});
+test('old stats promise cannot mutate UI after teardown', async () => {
+  let release; let updates = 0; const f = fixture({ onStats: () => updates++ });
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
+  f.peer.getStats = () => new Promise(resolve => { release = resolve; }); const pending = f.timers.at(-1)();
+  f.connection.end(); release(new Map()); await pending; assert.equal(updates, 0);
+});
+test('heartbeat deadline closes blackholed signaling', () => {
+  let now = 0; const f = fixture({ now: () => now }); now = 15000; f.timers[0](); assert.equal(f.connection.closed, true);
+});
+test('both sides of selected pair determine relay path', async () => {
+  let stats; const f = fixture({ onStats: text => { stats = text; } });
+  f.peer.getStats = async () => new Map([['transport', { type: 'transport', selectedCandidatePairId: 'pair' }],
+    ['pair', { localCandidateId: 'local', remoteCandidateId: 'remote' }], ['local', { candidateType: 'host' }], ['remote', { candidateType: 'relay' }]]);
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain; await f.timers.at(-1)();
+  assert.equal(stats, '경로: Relay'); f.connection.end();
+});
+test('duplicate keys, old versions and non-text are rejected', () => {
+  for (const text of ['{"v":1,"v":1,"type":"ping"}', '{"v":1,"type":"ice","ice":{"a":1,"a":2}}', '{"type":"ping"}', '{"v":0,"type":"ping"}', null])
+    assert.throws(() => parseSignal(text));
+  assert.equal(parseSignal('{"v":1,"type":"error","reason":"한글 😀"}').reason, '한글 😀');
+});
+test('stalled SDP has an independent negotiation deadline', async () => {
+  let now = 0; let entered; let release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const f = fixture({ now: () => now }); f.peer.connectionState = 'connecting';
+  f.peer.setRemoteDescription = () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await started;
+  now = 30000; f.timers[1]();
+  assert.equal(f.connection.closed, true); assert.equal(f.end[0][0], 'WebRTC 협상 시간 초과다.');
+  release(); await f.connection.messageChain;
+  assert.equal(f.socket.sent.some(message => message.type === 'answer'), false);
+});
+test('pending protocol work has a bounded queue', async () => {
+  const f = fixture();
+  for (let i = 0; i < 129; i++) f.socket.message({ type: 'consent-pending' });
+  assert.equal(f.connection.closed, true);
+  await f.connection.messageChain;
+  assert.equal(f.connection.queuedMessages, 0);
+});
+test('duplicate offer terminates rather than starting a second peer', async () => {
+  let peers = 0; const f = fixture({ createPeer: () => { peers++; return f.peer; } });
+  f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
+  f.socket.message({ type: 'offer', sdp: 'offer2' }); await f.connection.messageChain;
+  assert.equal(peers, 1); assert.equal(f.connection.closed, true);
+});

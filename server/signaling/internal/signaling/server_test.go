@@ -21,6 +21,7 @@ import (
 func newTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	s := New(Config{SessionTTL: time.Minute}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.issuance = newLimiter(1000, time.Minute, 4096)
 	ts := httptest.NewServer(s.Routes())
 	t.Cleanup(ts.Close)
 	return s, ts
@@ -58,6 +59,10 @@ func dial(t *testing.T, ts *httptest.Server) *websocket.Conn {
 
 func write(t *testing.T, c *websocket.Conn, m Msg) {
 	t.Helper()
+	m.Version = 1
+	if m.Type == "join" && m.Role == "viewer" && m.DisplayName == "" {
+		m.DisplayName = "test viewer"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := wsjson.Write(ctx, c, m); err != nil {
@@ -232,7 +237,7 @@ func TestJoinRejections(t *testing.T) {
 		wantCode string
 	}{
 		{"없는 코드", Msg{Type: "join", Room: "000000000", Role: "viewer", PIN: sess.PIN}, "not-found"},
-		{"틀린 PIN", Msg{Type: "join", Room: sess.Code, Role: "viewer", PIN: "0000"}, "bad-pin"},
+		{"틀린 PIN", Msg{Type: "join", Room: sess.Code, Role: "viewer", PIN: wrongPIN(sess.PIN)}, "bad-pin"},
 		{"틀린 토큰", Msg{Type: "join", Room: sess.Code, Role: "host", Token: "nope"}, "bad-token"},
 		{"이상한 role", Msg{Type: "join", Room: sess.Code, Role: "admin", PIN: sess.PIN}, "bad-role"},
 		{"첫 메시지가 join이 아님", Msg{Type: "offer", SDP: "x"}, "bad-request"},

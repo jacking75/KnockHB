@@ -24,7 +24,7 @@
 ## 아키텍처
 
 현재 실행 경로는 **HostRun 콘솔 + Go 시그널링 + 웹 Viewer의 화면 공유 PoC**다.
-Service/Tray는 골격이며 입력·동의·TURN은 미구현이다. 아래는 목표 책임 경계다.
+Service/Tray는 골격이며 제품 입력·동의 UI는 미구현이다. HostRun은 콘솔 화면 승인 뒤에만 캡처하며 TURN credential 발급·설정 전달은 존재하나 실제 allocation·갱신·복구는 미검증이다. 아래는 목표 책임 경계다.
 시그널링(SDP/ICE)과 미디어를 분리하고, 미디어는 P2P 우선·TURN 폴백을 목표로 한다.
 
 - **Host Agent** (대상 PC) — 서비스·사용자 UI 분리 + 사용자 세션 실행 헬퍼 설계
@@ -92,7 +92,8 @@ C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것�
 
 | 채널 | 신뢰성/순서 | 용도 |
 |---|---|---|
-| `input` | unreliable · ordered | 마우스·키보드 (최신성 우선) |
+| `input` | reliable · ordered | key/button/wheel/text/reset 전이 |
+| `pointer` | unreliable · ordered · maxRetransmits=0 | 마우스 move 최신 값 |
 | `control` | reliable · ordered | 세션 제어, 모니터 전환, 품질 조절 |
 | `file` | reliable · ordered | 파일 전송(≈16KB 청크, 백프레셔 적용) |
 | `chat` | reliable · ordered | 텍스트 채팅, 시스템 정보 |

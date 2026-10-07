@@ -1,7 +1,10 @@
+using System.Diagnostics;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Host.Core.Media;
+using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Signaling;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
@@ -9,320 +12,275 @@ using SIPSorceryMedia.Abstractions;
 
 namespace RemoteAssist.Host.Core;
 
-/// <summary>화면 공유 세션 설정.</summary>
-public sealed record ScreenShareOptions
-{
-    public Uri SignalingUri { get; init; } = new("http://localhost:25001");
-    public int MonitorIndex { get; init; }
-    public int TargetFps { get; init; } = 30;
-    public int BitrateKbps { get; init; } = 4000;
+public sealed record SessionOutcome(string Reason, bool Failed);
 
-    /// <summary>특정 H.264 인코더 강제. null이면 자동 선택.</summary>
-    public string? PreferredEncoder { get; init; }
-
-    /// <summary>STUN 서버. Phase 4에서 자체 coturn으로 바꾼다.</summary>
-    public string[] StunServers { get; init; } = ["stun:stun.l.google.com:19302"];
-}
-
-/// <summary>
-/// 캡처 → 인코딩 → WebRTC 송신을 잇는 Host 쪽 세션 (T1.4).
-///
-/// <para>
-/// 아직 <b>동의 게이트가 없다.</b> Phase 3(T3.2)에서 붙기 전까지 이 클래스는
-/// 시작하자마자 화면을 내보낸다. 개발·검증 용도로만 쓴다.
-/// </para>
-/// </summary>
+/// <summary>로컬 동의 전에는 캡처·PeerConnection을 만들지 않는다. 모든 협상 이벤트는 직렬화한다.</summary>
 public sealed class ScreenShareSession : IAsyncDisposable
 {
     private readonly ScreenShareOptions _options;
-    private readonly ILogger _log;
     private readonly ILoggerFactory? _loggerFactory;
-
+    private readonly ILogger _log;
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly PermissionGate _permissions = new();
+    private readonly Channel<Func<Task>> _events = Channel.CreateBounded<Func<Task>>(128);
+    private readonly TaskCompletionSource<SessionOutcome> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _endGate = new();
     private SignalingClient? _signaling;
     private RTCPeerConnection? _pc;
-    private IScreenCapture? _capture;
-    private FFmpegH264Encoder? _encoder;
-
-    private CancellationTokenSource? _cts;
-    private Task? _signalingLoop;
     private Thread? _captureThread;
-
+    private Task? _receiveTask, _eventTask;
+    private Task? _pairingTask, _negotiationTask;
+    private CancellationTokenRegistration _callerCancellation;
+    private int _started, _ended, _disposed;
+    private readonly KeyframeRequests _keyframes = new();
+    private string _encoderName = "(미선택)";
+    private MonitorInfo _monitor;
+    private bool _answerApplied;
+    private readonly Queue<IceCandidate> _remoteIce = new();
     public SessionCredentials? Credentials { get; private set; }
-    public string EncoderName => _encoder?.EncoderName ?? "(미선택)";
-    public MonitorInfo Monitor => _capture?.Monitor ?? default;
-
-    /// <summary>프레임을 하나 보낼 때마다 호출된다. 상태 표시·통계용.</summary>
-    public event Action<int, int>? FrameSent; // (전송 프레임 수, 마지막 프레임 바이트)
+    public Task<SessionOutcome> Completion => _completion.Task;
+    public string EncoderName => Volatile.Read(ref _encoderName);
+    public MonitorInfo Monitor => _monitor;
+    public event Action<int, int>? FrameSent;
+    public event Action<string>? StateChanged;
+    public Func<SupporterIdentity, CancellationToken, Task<Capability>>? RequestLocalConsent { get; set; }
 
     public ScreenShareSession(ScreenShareOptions options, ILoggerFactory? loggerFactory = null)
     {
-        _options = options;
-        _loggerFactory = loggerFactory;
+        _options = options; _loggerFactory = loggerFactory;
         _log = (ILogger?)loggerFactory?.CreateLogger<ScreenShareSession>() ?? NullLogger.Instance;
     }
-
-    /// <summary>세션 코드를 발급받고 시그널링에 붙는다. 아직 화면은 나가지 않는다.</summary>
     public async Task<SessionCredentials> StartAsync(CancellationToken ct = default)
     {
-        Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, ct);
-        _log.LogInformation("세션 코드 {Code} / PIN {Pin}", Credentials.DisplayCode, Credentials.Pin);
-
-        _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>());
-        var peerPresent = await _signaling.ConnectAsync(Credentials, ct);
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _signalingLoop = Task.Run(() => RunSignalingLoopAsync(_cts.Token), _cts.Token);
-
-        if (peerPresent)
+        if(Volatile.Read(ref _ended)!=0)throw new InvalidOperationException("종료한 세션은 시작할 수 없다.");
+        if (Interlocked.Exchange(ref _started, 1) != 0) throw new InvalidOperationException("세션은 한 번만 시작할 수 있다.");
+        try
         {
-            // 이미 붙어 있었다면 바로 협상을 건다.
-            await NegotiateAsync(_cts.Token);
+            var monitors=Monitors.Enumerate();
+            _options.Validate(monitors.Count);
+            _monitor=monitors[_options.MonitorIndex];
+            _callerCancellation=ct.Register(() => EndSession("호출자 취소", false));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token,_options.AllowLoopbackHttp);
+            _log.LogInformation("세션 생성: {SessionId}", Credentials.SessionId);
+            _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>(),_options.AllowLoopbackHttp);
+            await _signaling.ConnectAsync(Credentials, deadline.Token);
+            _lifetime.Token.ThrowIfCancellationRequested();
+            _eventTask = ProcessEventsAsync();
+            _receiveTask = ReceiveLoopAsync();
+            _pairingTask=WatchPairingAsync(Credentials.ExpiresIn);
+            NotifyState("지원자 참가 대기");
+            return Credentials;
         }
-
-        return Credentials;
+        catch { EndSession("세션 시작 실패", true); throw; }
     }
-
-    /// <summary>시그널링 메시지를 계속 처리한다.</summary>
-    private async Task RunSignalingLoopAsync(CancellationToken ct)
+    private async Task ProcessEventsAsync()
     {
         try
         {
-            while (!ct.IsCancellationRequested)
+            await foreach (var action in _events.Reader.ReadAllAsync(_lifetime.Token))
             {
-                var msg = await _signaling!.ReceiveAsync(ct);
-                if (msg is null) break;
-
-                switch (msg.Type)
-                {
-                    case "peer-joined":
-                        _log.LogInformation("지원자 접속 — 협상 시작");
-                        await NegotiateAsync(ct);
-                        break;
-
-                    case "answer" when msg.Sdp is not null:
-                        HandleAnswer(msg.Sdp);
-                        break;
-
-                    case "ice" when msg.Ice is not null:
-                        _pc?.addIceCandidate(new RTCIceCandidateInit
-                        {
-                            candidate = msg.Ice.Candidate,
-                            sdpMid = msg.Ice.SdpMid,
-                            sdpMLineIndex = (ushort)(msg.Ice.SdpMLineIndex ?? 0),
-                        });
-                        break;
-
-                    case "peer-left":
-                    case "bye":
-                        _log.LogInformation("지원자 연결 종료");
-                        StopStreaming();
-                        break;
-
-                    case "error":
-                        _log.LogError("시그널링 오류: {Code} - {Reason}", msg.Code, msg.Reason);
-                        break;
-                }
+                if (Volatile.Read(ref _ended) != 0) return;
+                await action();
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { _log.LogError(ex, "세션 상태 전이 실패"); EndSession("협상 또는 상태 처리 실패", true); }
+    }
+    private void Enqueue(Func<Task> action)
+    {
+        if (Volatile.Read(ref _ended) == 0 && !_events.Writer.TryWrite(action)) EndSession("이벤트 큐 상한 초과", true);
+    }
+    private async Task ReceiveLoopAsync()
+    {
+        try
         {
-            // 정상 종료
+            while (!_lifetime.IsCancellationRequested)
+            {
+                var msg = await _signaling!.ReceiveAsync(_lifetime.Token);
+                if (msg is null) { EndSession("시그널링 연결 종료", true); return; }
+                if (msg.SessionId is not null && msg.SessionId != Credentials!.SessionId) throw new InvalidDataException("다른 세션 메시지다.");
+                if (msg.Generation is not (0 or 1)) throw new InvalidDataException("잘못된 연결 세대다.");
+                if (msg.Type == "ping") { await _signaling.SendAsync(new SignalMsg { Type = "pong" }, _lifetime.Token); continue; }
+                if (msg.Type == "pong") continue;
+                // Termination bypasses a pending local consent or SDP operation.
+                if (msg.Type is "peer-left" or "bye" or "error") { EndSession(msg.Code ?? "지원자 연결 종료", msg.Type == "error"); return; }
+                Enqueue(() => HandleMessageAsync(msg));
+            }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { _log.LogWarning(ex, "시그널링 수신 실패"); EndSession("시그널링 수신 실패", true); }
+    }
+    private async Task HandleMessageAsync(SignalMsg msg)
+    {
+        switch (msg.Type)
         {
-            _log.LogError(ex, "시그널링 루프 오류");
+            case "peer-joined": await NegotiateAsync(msg); break;
+            case "answer":
+                if (_pc is null || _answerApplied || string.IsNullOrEmpty(msg.Sdp)) throw new InvalidDataException("예상하지 않은 answer다.");
+                if (_pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = msg.Sdp }) != SetDescriptionResultEnum.OK)
+                    throw new InvalidDataException("answer 적용 실패다.");
+                _answerApplied = true;
+                while (_remoteIce.TryDequeue(out var candidate)) ApplyIce(candidate);
+                break;
+            case "ice" when msg.Ice is not null:
+                if (msg.Ice.Candidate.Length > 8192 || msg.Ice.SdpMLineIndex is < 0 or > 65535) throw new InvalidDataException("잘못된 ICE다.");
+                if (!_answerApplied) { if (_remoteIce.Count >= 256) throw new InvalidDataException("ICE 대기 상한 초과다."); _remoteIce.Enqueue(msg.Ice); }
+                else ApplyIce(msg.Ice);
+                break;
+            default: throw new InvalidDataException("예상하지 않은 시그널링 메시지다.");
         }
     }
+    private void ApplyIce(IceCandidate candidate) => _pc!.addIceCandidate(new RTCIceCandidateInit
+    { candidate = candidate.Candidate, sdpMid = candidate.SdpMid, sdpMLineIndex = (ushort)(candidate.SdpMLineIndex ?? 0) });
 
-    private async Task NegotiateAsync(CancellationToken ct)
+    private async Task NegotiateAsync(SignalMsg peer)
     {
-        if (_pc is not null)
+        if (_pc is not null) return;
+        if (string.IsNullOrEmpty(peer.ConnectionId)) throw new InvalidDataException("지원자 바인딩이 없다.");
+        NotifyState("로컬 동의 대기");
+        await _signaling!.SendAsync(new SignalMsg { Type = "consent-pending" }, _lifetime.Token);
+        using var consentDeadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        consentDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var capability = RequestLocalConsent is null ? Capability.None :
+            await RequestLocalConsent(new SupporterIdentity(peer.ConnectionId, peer.DisplayName ?? "이름 미제공"), consentDeadline.Token).WaitAsync(consentDeadline.Token);
+        if (_lifetime.IsCancellationRequested || capability == Capability.None) { EndSession("대상자가 승인을 거절했다", false); return; }
+        // Only implemented capabilities can be granted. Future features stay denied.
+        if ((capability & ~(Capability.Screen)) != 0) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
+        var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, TimeSpan.FromHours(2));
+        await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = ["screen"], PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
+        var iceServers = _options.StunServers.Select(url => new RTCIceServer {urls=url}).ToList();
+        foreach(var server in _signaling.JoinedAck?.IceServers ?? [])
+            foreach(var url in server.Urls)iceServers.Add(new RTCIceServer{urls=url,username=server.Username,credential=server.Credential});
+        if(_options.ForceRelay&&!iceServers.Any(server=>server.urls.StartsWith("turn:",StringComparison.Ordinal)||server.urls.StartsWith("turns:",StringComparison.Ordinal)))throw new InvalidOperationException("relay 강제 모드에 TURN 설정이 없다.");
+        _pc = new RTCPeerConnection(new RTCConfiguration
+        { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all });
+        var pc = _pc;
+        pc.OnReceiveReport += (_, media, report) =>
         {
-            _log.LogWarning("이미 협상된 연결이 있다. 무시한다.");
-            return;
-        }
-
-        _pc = CreatePeerConnection();
-
-        var offer = _pc.createOffer(null);
-        await _pc.setLocalDescription(offer);
-
-        await _signaling!.SendAsync(new SignalMsg
-        {
-            Type = "offer",
-            Room = Credentials!.Code,
-            Sdp = offer.sdp,
-        }, ct);
-
-        _log.LogInformation("offer 전송");
-    }
-
-    private RTCPeerConnection CreatePeerConnection()
-    {
-        var config = new RTCConfiguration
-        {
-            iceServers = [.. _options.StunServers.Select(u => new RTCIceServer { urls = u })],
+            if (Volatile.Read(ref _ended) == 0) _keyframes.Observe(media, report);
         };
-
-        var pc = new RTCPeerConnection(config);
-
-        // H.264 단일 포맷. packetization-mode=1 은 브라우저 호환에 필요하다.
-        var format = new VideoFormat(VideoCodecsEnum.H264, 102, 90000, "packetization-mode=1");
-        pc.addTrack(new MediaStreamTrack(format, MediaStreamStatusEnum.SendOnly));
-
+        pc.addTrack(new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.H264, 102, 90000, "packetization-mode=1"), MediaStreamStatusEnum.SendOnly));
         pc.onicecandidate += candidate =>
         {
-            if (candidate is null || _cts is null || _cts.IsCancellationRequested) return;
-
-            _ = _signaling!.SendAsync(new SignalMsg
-            {
-                Type = "ice",
-                Room = Credentials!.Code,
-                Ice = new Protocol.IceCandidate
-                {
-                    Candidate = candidate.candidate,
-                    SdpMid = candidate.sdpMid,
-                    SdpMLineIndex = candidate.sdpMLineIndex,
-                },
-            }, _cts.Token);
+            if (candidate is null) return;
+            Enqueue(() => _signaling.SendAsync(new SignalMsg { Type = "ice", Room = Credentials.Code,
+                Ice = new IceCandidate { Candidate = candidate.candidate, SdpMid = candidate.sdpMid, SdpMLineIndex = candidate.sdpMLineIndex } }, _lifetime.Token));
         };
-
         pc.onconnectionstatechange += state =>
         {
-            _log.LogInformation("연결 상태: {State}", state);
-
-            if (state == RTCPeerConnectionState.connected)
-            {
-                StartStreaming();
-            }
-            else if (state is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed
-                     or RTCPeerConnectionState.disconnected)
-            {
-                StopStreaming();
-            }
+            if (state is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected)
+                EndSession("WebRTC 연결 종료: " + state, state != RTCPeerConnectionState.closed);
+            else if (state == RTCPeerConnectionState.connected)
+                Enqueue(() => { if (_captureThread is null && _permissions.Allows(Capability.Screen, grant.Generation)) StartStreaming(grant.Generation); return Task.CompletedTask; });
         };
-
-        return pc;
+        // ICE callbacks enqueue behind this operation; offer therefore precedes candidates.
+        var offer = pc.createOffer(null);
+        await pc.setLocalDescription(offer);
+        _lifetime.Token.ThrowIfCancellationRequested();
+        await _signaling.SendAsync(new SignalMsg { Type = "offer", Room = Credentials.Code, Sdp = offer.sdp }, _lifetime.Token);
+        NotifyState("WebRTC 협상 중");
+        _negotiationTask = WatchNegotiationAsync(pc);
     }
-
-    private void HandleAnswer(string sdp)
+    private async Task WatchNegotiationAsync(RTCPeerConnection pc)
     {
-        var result = _pc!.setRemoteDescription(new RTCSessionDescriptionInit
-        {
-            type = RTCSdpType.answer,
-            sdp = sdp,
-        });
-
-        if (result != SetDescriptionResultEnum.OK)
-        {
-            _log.LogError("answer 적용 실패: {Result}", result);
-            return;
-        }
-
-        _log.LogInformation("answer 적용 완료");
+        try { await Task.Delay(TimeSpan.FromSeconds(30), _lifetime.Token); if (pc.connectionState != RTCPeerConnectionState.connected) EndSession("협상 시간 초과", true); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
     }
-
-    private void StartStreaming()
+    private async Task WatchPairingAsync(int expiresIn)
     {
-        if (_captureThread is not null) return;
-
-        _captureThread = new Thread(CaptureLoop)
-        {
-            Name = "RemoteAssist 캡처",
-            IsBackground = true,
-        };
+        try {await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(expiresIn,1,1800)),_lifetime.Token);if(_pc is null)EndSession("참가 코드 유효기간 종료",false);}
+        catch(OperationCanceledException)when(_lifetime.IsCancellationRequested){}
+    }
+    private void StartStreaming(long generation)
+    {
+        _captureThread = new Thread(() => CaptureLoop(generation)) { Name = "RemoteAssist capture", IsBackground = true };
         _captureThread.Start();
     }
-
-    private void StopStreaming()
+    private void CaptureLoop(long permissionGeneration)
     {
-        _cts?.Cancel();
-    }
-
-    /// <summary>
-    /// 캡처 → 인코딩 → 송신 루프. 캡처와 인코더는 스레드 안전하지 않으므로
-    /// 반드시 이 스레드 하나에서만 만들고 쓴다.
-    /// </summary>
-    private void CaptureLoop()
-    {
-        var ct = _cts!.Token;
-        var interval = TimeSpan.FromMilliseconds(1000.0 / _options.TargetFps);
-        var durationRtpUnits = (uint)(90000 / _options.TargetFps);
-
         try
         {
-            _capture = WgcScreenCapture.IsSupported()
-                ? new WgcScreenCapture(_options.MonitorIndex, _loggerFactory?.CreateLogger<WgcScreenCapture>())
-                : new DxgiScreenCapture(_options.MonitorIndex, _loggerFactory?.CreateLogger<DxgiScreenCapture>());
-
-            _encoder = new FFmpegH264Encoder(_options.PreferredEncoder, _loggerFactory?.CreateLogger<FFmpegH264Encoder>());
-            _encoder.Configure(_capture.Monitor.Width, _capture.Monitor.Height, _options.TargetFps, _options.BitrateKbps);
-
-            _log.LogInformation("스트리밍 시작: {W}x{H} @{Fps}fps, 인코더 {Encoder}",
-                _capture.Monitor.Width, _capture.Monitor.Height, _options.TargetFps, _encoder.EncoderName);
-
-            var sent = 0;
+            using var capture = WgcScreenCapture.IsSupported() ? (IScreenCapture)new WgcScreenCapture(_monitor) : new DxgiScreenCapture(_monitor);
+            _monitor = capture.Monitor;
+            using var encoder = new FFmpegH264Encoder(_options.PreferredEncoder, _loggerFactory?.CreateLogger<FFmpegH264Encoder>());
             ReadOnlyMemory<byte> lastFrame = default;
-
-            while (!ct.IsCancellationRequested)
+            var width = 0; var height = 0; var sent = 0;
+            var clock = Stopwatch.StartNew(); var previousSend = TimeSpan.Zero;
+            NotifyState("승인한 화면 공유 중");
+            while (!_lifetime.IsCancellationRequested && _permissions.Allows(Capability.Screen, permissionGeneration))
             {
-                var tick = Environment.TickCount64;
-
-                // 새 프레임이 없으면(정적 화면) 직전 프레임을 그대로 다시 인코딩한다.
-                // 캡처 버퍼는 재사용되지만 새 프레임이 없으면 내용이 그대로라 안전하다.
-                if (_capture.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
+                var tick = clock.Elapsed;
+                if (capture.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
                 {
-                    lastFrame = frame.Bgra;
+                    FrameLayout.Validate(frame.Bgra, frame.Width, frame.Height, frame.Stride);
+                    if (frame.Width != width || frame.Height != height)
+                    {
+                        lastFrame = default;
+                        width = frame.Width; height = frame.Height;
+                        encoder.Configure(width, height, _options.TargetFps, _options.BitrateKbps);
+                        Volatile.Write(ref _encoderName, encoder.EncoderName);
+                        _keyframes.Request();
+                    }
+                    lastFrame = frame.Stride == width * 4 ? frame.Bgra : FrameLayout.Pack(frame.Bgra, width, height, frame.Stride);
                 }
-
                 if (!lastFrame.IsEmpty)
                 {
-                    var encoded = _encoder.Encode(lastFrame, forceKeyframe: false);
+                    var encoded = encoder.Encode(lastFrame, _keyframes.Consume());
                     if (!encoded.IsEmpty)
                     {
-                        _pc?.SendVideo(durationRtpUnits, encoded.ToArray());
-                        sent++;
-                        FrameSent?.Invoke(sent, encoded.Length);
+                        // End and the final send are serialized, without disposing a live encoder from another thread.
+                        lock (_endGate)
+                        {
+                            if (Volatile.Read(ref _ended) != 0 || !_permissions.Allows(Capability.Screen, permissionGeneration)) break;
+                            var now = clock.Elapsed;
+                            var delta = previousSend == TimeSpan.Zero ? 1.0 / _options.TargetFps : (now - previousSend).TotalSeconds;
+                            _pc!.SendVideo((uint)Math.Max(1, Math.Round(delta * 90000)), encoded.ToArray());
+                            previousSend = now;
+                        }
+                        FrameSent?.Invoke(++sent, encoded.Length);
                     }
                 }
-
-                var elapsed = Environment.TickCount64 - tick;
-                var wait = (int)(interval.TotalMilliseconds - elapsed);
-                if (wait > 0) Thread.Sleep(wait);
+                var wait = TimeSpan.FromSeconds(1.0 / _options.TargetFps) - (clock.Elapsed - tick);
+                if (wait > TimeSpan.Zero) _lifetime.Token.WaitHandle.WaitOne(wait);
             }
-
-            _log.LogInformation("스트리밍 종료: {Sent}프레임 전송", sent);
+            if (!_lifetime.IsCancellationRequested) EndSession("권한 유효기간 종료", false);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogError(ex, "캡처 루프 오류");
-        }
-        finally
-        {
-            _encoder?.Dispose();
-            _capture?.Dispose();
-            _encoder = null;
-            _capture = null;
-        }
+        catch (Exception ex) { _log.LogError(ex, "미디어 파이프라인 실패"); EndSession("미디어 파이프라인 실패", true); }
     }
-
+    public void EndSession(string reason = "로컬 종료", bool failed = false)
+    {
+        lock (_endGate)
+        {
+            if (Interlocked.Exchange(ref _ended, 1) != 0) return;
+            _permissions.End();
+            try {_lifetime.Cancel();}catch(AggregateException){_log.LogWarning("취소 관찰자 오류다. 기능 권한은 이미 폐기했다.");}
+            _events.Writer.TryComplete();
+            _completion.TrySetResult(new SessionOutcome(reason, failed));
+        }
+        NotifyState(reason);
+    }
+    private void NotifyState(string state)
+    {
+        foreach(var observer in StateChanged?.GetInvocationList()??[])
+            try{((Action<string>)observer)(state);}catch(Exception){_log.LogWarning("상태 관찰자 오류다.");}
+    }
     public async ValueTask DisposeAsync()
     {
-        _cts?.Cancel();
-
-        if (_captureThread is not null && _captureThread.IsAlive)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        EndSession();
+        var clock = Stopwatch.StartNew();
+        if (_captureThread is { IsAlive: true } thread)
         {
-            _captureThread.Join(TimeSpan.FromSeconds(3));
+            var stopped = await Task.Run(() => thread.Join(TimeSpan.FromSeconds(3)));
+            if (!stopped) throw new TimeoutException("네이티브 캡처가 정지하지 않았다. 살아 있는 스레드의 자원은 해제하지 않는다. 헬퍼 감독 종료가 필요하다.");
         }
-
-        if (_signalingLoop is not null)
-        {
-            try { await _signalingLoop.WaitAsync(TimeSpan.FromSeconds(3)); }
-            catch { /* 종료 중 예외는 무시 */ }
-        }
-
-        _pc?.close();
         if (_signaling is not null) await _signaling.DisposeAsync();
-        _cts?.Dispose();
+        var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask }.OfType<Task>();
+        await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(Math.Max(.1, 5 - clock.Elapsed.TotalSeconds)));
+        _pc?.close(); _pc?.Dispose();
+        _callerCancellation.Dispose();
+        _lifetime.Dispose();
     }
 }

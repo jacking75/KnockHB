@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RemoteAssist Viewer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -13,11 +14,13 @@
     <p class="lead">대상자에게 받은 세션 코드와 PIN을 입력하세요.</p>
 
     <form id="join-form" autocomplete="off">
+      <label for="name">지원자 이름 (자기 신고이며 별도 확인이 필요하다)</label>
+      <input id="name" maxlength="80" required>
       <label for="code">세션 코드</label>
       <input id="code" inputmode="numeric" placeholder="418-207-935" maxlength="11">
 
       <label for="pin">PIN</label>
-      <input id="pin" inputmode="numeric" placeholder="6042" maxlength="6">
+      <input id="pin" type="password" inputmode="numeric" placeholder="6042" maxlength="4" autocomplete="off">
 
       <button type="submit">접속</button>
     </form>
