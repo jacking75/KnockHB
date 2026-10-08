@@ -67,10 +67,13 @@ public sealed class LocalIpcChannel(Stream stream) : IAsyncDisposable
                 !body.TryGetProperty("role",out var role)||role.ValueKind!=JsonValueKind.String||role.GetString()!=expectedRole)
                 throw new UnauthorizedAccessException("IPC 상대 인증 실패다.");
         }
-        catch
+        catch(Exception failure)
         {
             await DisposeAsync();
-            try{await incoming;}catch{}
+            try{await incoming;}catch(Exception readFailure)
+            {
+                if(failure is ObjectDisposedException)System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(readFailure).Throw();
+            }
             throw;
         }
     }

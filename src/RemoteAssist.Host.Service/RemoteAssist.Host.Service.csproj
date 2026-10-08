@@ -2,12 +2,12 @@
 
   <!--
     Session 0 / SYSTEM 권한으로 도는 Windows 서비스.
-    현재는 골격이다. 목표는 세션·권한·사용자 세션 헬퍼의 감독이다.
+    사용자 세션·계정·인증 IPC·UI/헬퍼 수명을 감독한다.
     캡처·입력 실행 위치와 IPC 설계는 docs/architecture.md 및 T2.4를 따른다.
 
     주의: PublishSingleFile을 켜지 않는다.
-    SIPSorceryMedia.FFmpeg와 FFmpeg는 LGPL-2.1-only 이므로 교체 가능한
-    별도 DLL로 유지해야 한다 — 계획서 T0.2 / T6.1 참고.
+    네이티브 FFmpeg의 LGPL 조건에 따라 교체 가능한 별도 DLL로 유지한다.
+    실제 공급 고지와 소스 자료는 third_party/ffmpeg 및 E02/E36을 따른다.
   -->
   <PropertyGroup>
     <TargetFramework>$(WindowsTfm)</TargetFramework>

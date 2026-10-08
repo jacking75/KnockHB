@@ -1,5 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using RemoteAssist.Host.Core.Capture;
+using RemoteAssist.Host.Core.Input;
+using RemoteAssist.Host.Core.Security;
+using RemoteAssist.Protocol;
 
 namespace RemoteAssist.BoundaryProbe;
 
@@ -36,6 +41,7 @@ internal static class InputProbe
         var window=CreateWindowEx(0x8,name,"RemoteAssist E05 — 격리된 입력 시험 창",0x10CF0000,100,100,640,280,0,0,instance,0);
         if(window==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         uint mouseSent=0,keySent=0;
+        InputSession? remoteInput=null;
         try
         {
             ShowWindow(window,5);SetForegroundWindow(window);
@@ -47,19 +53,35 @@ internal static class InputProbe
             if(GetForegroundWindow()!=window)return new {kind="input",foreground=false,mouseSent,keySent,clicks,keys};
             if(!GetWindowRect(window,out var rect))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             var x=(rect.Left+rect.Right)/2;var y=(rect.Top+rect.Bottom)/2;
-            var nx=(int)Math.Round((x-GetSystemMetrics(76))*65535d/Math.Max(1,GetSystemMetrics(78)-1));
-            var ny=(int)Math.Round((y-GetSystemMetrics(77))*65535d/Math.Max(1,GetSystemMetrics(79)-1));
-            mouseSent=SendInput(1,[new Input {Type=0,Mouse=new MouseInput {X=nx,Y=ny,Flags=0xC001}}],Marshal.SizeOf<Input>());
+            var monitor=Monitors.Enumerate().Single(m=>x>=m.X&&x<m.X+m.Width&&y>=m.Y&&y<m.Y+m.Height);
+            var permissions=new PermissionGate();permissions.Grant("local-input-probe","owned-test-window",Capability.Screen|Capability.Control,TimeSpan.FromMinutes(1));
+            var measured=new MeasuredBackend();remoteInput=new InputSession(permissions,monitor,1,measured);
+            var move=new InputMsg {T="mouse",A="move",SessionId="local-input-probe",Id="probe",Generation=1,PermissionGeneration=1,Sequence=1,
+                TopologyGeneration=1,InputEpoch=1,MonitorIdentity=monitor.DeviceName,X=(x-monitor.X)/(double)(monitor.Width-1),Y=(y-monitor.Y)/(double)(monitor.Height-1)};
+            remoteInput.Dispatch("pointer",JsonSerializer.SerializeToUtf8Bytes(move));
             Pump();
             if(GetForegroundWindow()==window && WindowFromPoint(new Point {X=x,Y=y})==window)
-                mouseSent+=SendInput(2,[new Input {Mouse=new MouseInput {Flags=2}},new Input {Mouse=new MouseInput {Flags=4}}],Marshal.SizeOf<Input>());
+            {
+                remoteInput.Dispatch("input",JsonSerializer.SerializeToUtf8Bytes(move with {A="down",Btn="left",Sequence=1}));
+                remoteInput.Dispatch("input",JsonSerializer.SerializeToUtf8Bytes(move with {A="up",Btn="left",Sequence=2}));
+            }
             Pump();
             if(GetForegroundWindow()==window)
-                keySent=SendInput(2,[new Input {Type=1,Keyboard=new KeyboardInput {VirtualKey=0x7B}},new Input {Type=1,Keyboard=new KeyboardInput {VirtualKey=0x7B,Flags=2}}],Marshal.SizeOf<Input>());
+            {
+                remoteInput.Dispatch("input",JsonSerializer.SerializeToUtf8Bytes(move with {T="key",A="down",Vk=0x7B,Sequence=3}));
+                remoteInput.Dispatch("input",JsonSerializer.SerializeToUtf8Bytes(move with {T="key",A="up",Vk=0x7B,Sequence=4}));
+            }
+            mouseSent=measured.Mouse;keySent=measured.Key;
             clock.Restart();while(clock.Elapsed<TimeSpan.FromMilliseconds(500)){Pump();Thread.Sleep(10);}
-            return new {utc=DateTimeOffset.UtcNow,kind="input",foreground=GetForegroundWindow()==window,mouseSent,keySent,clicks,keys,success=mouseSent==3&&keySent==2&&clicks==1&&keys==1};
+            return new {utc=DateTimeOffset.UtcNow,kind="input",backend="product-input-session",foreground=GetForegroundWindow()==window,mouseSent,keySent,clicks,keys,success=mouseSent==5&&keySent==2&&clicks==1&&keys==1};
         }
-        finally {DestroyWindow(window);UnregisterClass(name,instance);if(previous!=0)SetForegroundWindow(previous);}
+        finally {try{remoteInput?.Stop();}finally{DestroyWindow(window);UnregisterClass(name,instance);if(previous!=0)SetForegroundWindow(previous);}}
+    }
+    sealed class MeasuredBackend:IInputBackend
+    {
+        readonly WindowsInputBackend native=new();public uint Mouse,Key;
+        public int Send(IReadOnlyList<InputStroke> strokes)
+        {var sent=native.Send(strokes);foreach(var stroke in strokes.Take(sent)){if(stroke.Kind is StrokeKind.Key or StrokeKind.Unicode)Key++;else Mouse++;}return sent;}
     }
     static void Pump(){while(PeekMessage(out var message,0,0,0,1)){TranslateMessage(ref message);DispatchMessage(ref message);}}
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct WindowClass {public uint Size,Style;public nint Procedure;public int ClassExtra,WindowExtra;public nint Instance,Icon,Cursor,Background;public string? MenuName,ClassName;public nint SmallIcon;}

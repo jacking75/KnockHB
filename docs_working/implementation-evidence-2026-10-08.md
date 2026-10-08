@@ -2,6 +2,24 @@
 
 ## 후속 활성 콘솔 실증
 
+### 제품 서비스·Tray의 실제 통합 시험
+
+로컬 checkpoint `893565e` 이후 변경을 포함한 `.artifacts/product-20261008-105827` 시험에서 보호된 92개 파일 배치와 `RemoteAssistHost` SYSTEM 서비스→Session 1 일반 권한 WPF Tray/Helper의 인증 연결을 확인했다. 사용자 UI의 시작 버튼으로만 일회성 코드/PIN을 만들었다. 첫 실행 실패는 PowerShell UTF-8 BOM 설정 파서와 SYSTEM 프로세스 조회 권한 문제였고 각각 회귀 시험과 SCM 기반 서비스 신원 검증으로 수정했다. 클라이언트는 커널 pipe PID/Session, SCM 서비스 PID/LocalSystem/고정 보호 경로, nonce/역할을 확인한다. 일반 사용자 권한을 승격하거나 SYSTEM 프로세스 조회 권한을 넓히지 않았다.
+
+브라우저 참가 후 실제 대상자 UI의 로컬 동의 대기 상태와 videoWidth=0을 확인했다. 거부 버튼을 누르자 영상은 0으로 유지됐고 UI 코드/PIN이 지워져 새 코드 발급 버튼이 활성화됐다. 새 코드로 `화면 보기`만 승인한 뒤 Chrome에서 1920×1012, readyState=4, 실제 decoded 증가와 P2P 경로를 확인했다. 표시 26fps의 한 시점 통계는 60초 성능 수용으로 처리하지 않는다.
+
+UIAutomation에서 실제 종료 버튼의 IsOffscreen=false와 창 내부 배치를 확인했다. 즉시 종료 버튼 호출부터 소유 Helper 프로세스 소멸까지 185.0825ms였고 브라우저 영상은 0으로 해제됐다. 새로 승인한 세션에서 Tray 강제 종료부터 Helper 소멸까지 228.4242ms였다. cleanup.json의 serviceAbsent/stageAbsent=true와 브라우저 연결 종료를 확인했다. 원본 화면·코드/PIN·부트스트랩은 ignored artifact에만 둔다.
+
+C# 로컬 회귀 21개 그룹이 통과했다. 실제 Windows pipe의 PID/Session 조회, UTF-8 단편·순번 재생·잘린 프레임·nonce 불일치와 동의 actor가 막힌 동안 3회의 heartbeat/긴급 종료가 처리되는 시험을 포함한다. 권한별 후속 기능·UI 만료·전체 장애 주입이 아직 남아 있으므로 E14~E17/E24 전체 완료로 처리하지 않는다.
+
+### 경계와 미디어 기반 실증
+
+후속 제품 시험 `.artifacts/product-20261008-111114`에서는 동의 만료와 동의 창 닫기를 검사했다. 모두 영상 크기 0, 코드/PIN 해제, 새 코드 발급 가능 상태로 종료됐다. 승인 뒤 UAC를 열었을 때 일반 권한 화면 공유가 종료돼 보안 데스크톱의 송신을 차단했다. 주입 전후의 native Default input desktop 확인과 active 콘솔/protocol/SID 검사를 추가했다. 서비스와 배치는 cleanup.json에서 제거를 확인했다.
+
+입력 기반은 필수 inputEpoch·채널별 독립 순번·reset barrier·정규 좌표 변환·권한 실행 게이트·성공한 key/button/Unicode prefix 추적으로 보완했다. `.artifacts/boundary-20261008-113109`에서 이 제품 InputSession/WindowsInputBackend를 실제 일반/SYSTEM 소유 시험 창에 적용했다. 두 경로 모두 mouseSent=5/keySent=2, 실제 clicks=1/keys=1, success=true를 확인했다. 클릭 전이마다 자체 최종 위치를 적용하므로 기존 primitive probe의 mouseSent=3과 구분한다. 시험 서비스/배치는 제거됐다. 브라우저 데이터채널과 강제 종료 시 키 복원 감독은 아직 연결하지 않았으며 이 결과를 E23 완료로 처리하지 않는다.
+
+추가 C# 회귀는 24개 그룹, Node 회귀는 21개가 통과했다. pointer가 먼저 도착해도 reliable button을 버리지 않는 순서, reset 이전 pointer 폐기, 음수 원점/세로 모니터, 거부·철회·partial Unicode down의 up 복원, blocked actor와 무관한 IPC 중단 감독을 포함한다. 전체 solution 빌드는 경고/오류 0개였다.
+
 후속 작업의 기준 HEAD는 로컬 commit `96a621e530b813e6537d1d8bd036f007e5e316c3`이며 아래 결과는 그 위의 변경을 포함한다. 09:28 KST부터 processSession=consoleSession=1, Default input desktop, 실제 DXGI 출력과 두 모니터를 확인했다. 이전 세션의 환경 차단은 이 시점에 해소됐다.
 
 WGC 4096×2160와 DXGI 세로 2160×3840의 PNG를 각각 2장 얻어 방향을 확인했다. 화면 원본은 ignored `.artifacts/local-console-20261008`에만 두며 저장소에 추가하지 않는다. 실제 HostRun 승인→Chrome 협상에서 native ICE 문자열의 `candidate:` 접두사가 빠져 Chrome이 OperationError를 반환하는 결함을 발견했다. 와이어 정규화와 실제 native fixture를 추가한 뒤 P2P 영상 수신이 성공했다. 4K 송신·표시는 30fps에 못 미쳐 성능 완료로 처리하지 않았다. 기본 출력 상한과 재사용 swscale/BGRA 버퍼를 추가한 뒤 1920×1012 실제 수신을 확인했으나 60초 평균 기준은 후속 측정 대상이다.

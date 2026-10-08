@@ -31,7 +31,8 @@ public static class ProtocolJson
         using var document=Parse(bytes,32*1024);
         var message=JsonSerializer.Deserialize<InputMsg>(bytes.Span)??throw new InvalidDataException("빈 입력이다.");
         if(message.Generation<1||message.PermissionGeneration<1||message.Sequence<1||message.Sequence>9007199254740991L||
-           message.SessionId.Length is <1 or >64||message.Id.Length is <1 or >64||message.TopologyGeneration<1||message.MonitorIdentity.Length is <1 or >128)
+           message.SessionId is null||message.SessionId.Length is <1 or >64||message.Id is null||message.Id.Length is <1 or >64||message.TopologyGeneration<1||
+           message.InputEpoch is <1 or >9007199254740991L||message.MonitorIdentity is null||message.MonitorIdentity.Length is <1 or >128)
             throw new InvalidDataException("입력 바인딩/세대/순번 오류다.");
         switch(message.T)
         {

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>$(WindowsTfm)</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../RemoteAssist.Host.Core/RemoteAssist.Host.Core.csproj" /></ItemGroup>
+</Project>

@@ -5,8 +5,19 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RemoteAssist.Host.Tray"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-
-    </Grid>
+        Title="RemoteAssist — 대상자 지원" Height="430" Width="490" MinHeight="430" MinWidth="490"
+        WindowStartupLocation="CenterScreen" Background="#F4F7FB">
+    <Border x:Name="SessionBorder" BorderThickness="4" BorderBrush="#94A3B8" Padding="24">
+        <StackPanel>
+            <TextBlock Text="RemoteAssist" FontSize="26" FontWeight="Bold" Foreground="#0F172A"/>
+            <TextBlock Text="내가 승인한 지원자에게만 화면을 공유한다." Margin="0,8,0,16"/>
+            <TextBlock x:Name="Status" Text="서비스 연결 확인 중이다." TextWrapping="Wrap" Height="48" AutomationProperties.AutomationId="HostStatus"/>
+            <TextBlock Text="일회성 지원 코드 / PIN" FontWeight="SemiBold"/>
+            <TextBlock x:Name="Code" Text="—" FontSize="28" Margin="0,8,0,0" AutomationProperties.AutomationId="PairingCode"/>
+            <TextBlock x:Name="Pin" Text="PIN —" FontSize="20" Margin="0,0,0,10" AutomationProperties.AutomationId="PairingPin"/>
+            <TextBlock Text="신뢰하는 지원자에게 별도 연락으로 전달한다. 접속할 때 권한을 다시 선택한다." TextWrapping="Wrap" Margin="0,0,0,16"/>
+            <Button x:Name="StartButton" Content="새 지원 코드 만들기" Click="StartClicked" Height="38" IsEnabled="False" AutomationProperties.AutomationId="HostStart"/>
+            <Button x:Name="StopButton" Content="즉시 종료" Click="StopClicked" Height="42" Margin="0,8,0,0" Background="#B91C1C" Foreground="White" FontWeight="Bold" AutomationProperties.AutomationId="HostStop"/>
+        </StackPanel>
+    </Border>
 </Window>

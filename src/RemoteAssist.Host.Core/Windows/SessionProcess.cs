@@ -14,15 +14,25 @@ public enum HostChildRole {Tray,Helper,AdminHelper}
 public sealed class SessionProcess : IDisposable
 {
     readonly KernelHandle process,job;
+    readonly object processGate=new();
+    bool disposed;
     public int Pid {get;}
     public uint SessionId {get;}
     public string OwnerSid {get;}
     public HostChildRole Role {get;}
     SessionProcess(int pid,uint session,string sid,HostChildRole role,KernelHandle process,KernelHandle job)
     {Pid=pid;SessionId=session;OwnerSid=sid;Role=role;this.process=process;this.job=job;}
-    public bool HasExited=>WaitForSingleObject(process,0)==0;
-    public void Dispose(){job.Dispose();process.Dispose();}
+    public bool HasExited {get{lock(processGate)return disposed||WaitForSingleObject(process,0)==0;}}
+    public void Dispose(){lock(processGate){if(disposed)return;disposed=true;job.Dispose();process.Dispose();}}
     public static uint ActiveConsoleSession=>WTSGetActiveConsoleSessionId();
+    public static bool IsInteractiveConsole(uint session)
+    {
+        if(session==uint.MaxValue||session!=ActiveConsoleSession)return false;
+        if(!WTSQuerySessionInformation(0,session,8,out var state,out var stateBytes))return false;
+        try{if(stateBytes<4||Marshal.ReadInt32(state)!=0)return false;}finally{WTSFreeMemory(state);}
+        if(!WTSQuerySessionInformation(0,session,16,out var protocol,out var protocolBytes))return false;
+        try{return protocolBytes>=2&&Marshal.ReadInt16(protocol)==0;}finally{WTSFreeMemory(protocol);}
+    }
     public static string ConsoleUserSid(uint session)
     {
         DemandSupervisor(session);Enable("SeTcbPrivilege");Check(WTSQueryUserToken(session,out var token));
@@ -73,7 +83,7 @@ public sealed class SessionProcess : IDisposable
     static void DemandSupervisor(uint session)
     {
         using var identity=WindowsIdentity.GetCurrent();
-        if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=0||session==uint.MaxValue||session!=ActiveConsoleSession)throw new UnauthorizedAccessException("현재 콘솔을 감독하는 Session 0 SYSTEM 서비스가 필요하다.");
+        if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=0||!IsInteractiveConsole(session))throw new UnauthorizedAccessException("현재 활성 콘솔을 감독하는 Session 0 SYSTEM 서비스가 필요하다.");
     }
     static void Check(bool result){if(!result)throw new Win32Exception(Marshal.GetLastWin32Error());}
     static void Enable(string name)
@@ -97,6 +107,8 @@ public sealed class SessionProcess : IDisposable
     [DllImport("advapi32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern bool LookupPrivilegeValue(string? system,string name,out Luid luid);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool AdjustTokenPrivileges(KernelHandle token,bool disable,ref TokenPrivileges privileges,uint length,nint previous,nint needed);
     [DllImport("wtsapi32.dll",SetLastError=true)] static extern bool WTSQueryUserToken(uint session,out KernelHandle token);
+    [DllImport("wtsapi32.dll",EntryPoint="WTSQuerySessionInformationW",SetLastError=true)]static extern bool WTSQuerySessionInformation(nint server,uint session,int info,out nint buffer,out uint bytes);
+    [DllImport("wtsapi32.dll")]static extern void WTSFreeMemory(nint buffer);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool DuplicateTokenEx(KernelHandle token,uint access,nint attributes,int level,int type,out KernelHandle duplicate);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool SetTokenInformation(KernelHandle token,int type,ref uint session,uint bytes);
     [DllImport("userenv.dll",SetLastError=true)] static extern bool CreateEnvironmentBlock(out nint environment,KernelHandle token,bool inherit);

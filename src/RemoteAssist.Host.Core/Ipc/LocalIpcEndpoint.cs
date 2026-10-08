@@ -61,19 +61,19 @@ public static class LocalIpcEndpoint
         try
         {
             await pipe.ConnectAsync(deadline.Token);
-            Check(GetNamedPipeServerProcessId(pipe.SafePipeHandle,out var pid));
-            Check(ProcessIdToSessionId(pid,out var session));
+            var (pid,session)=ServerIdentity(pipe.SafePipeHandle);
             if(pid!=servicePid||session!=0)throw new UnauthorizedAccessException("IPC 서비스 PID/Session이 다르다.");
-            using var process=OpenProcess(0x1000,false,pid);if(process.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error());
-            if(!Image(process).Equals(ProtectedInstallation.ResolveExecutable("RemoteAssist.Host.Service.exe"),StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("IPC 서비스 보호 경로가 다르다.");
+            ServiceIdentity.Demand(pid,ProtectedInstallation.ResolveExecutable("RemoteAssist.Host.Service.exe"));
             var channel=new LocalIpcChannel(pipe);await channel.AuthenticateAsync(role,"service",nonce,deadline.Token);return channel;
         }
-        catch{await pipe.DisposeAsync();throw;}
+        catch(Exception error){LocalDiagnostic.Failure("ipc-connect",error);await pipe.DisposeAsync();throw;}
     }
     static string Image(SessionProcess.KernelHandle process)
     {
         var text=new StringBuilder(32768);var length=(uint)text.Capacity;Check(QueryFullProcessImageName(process,0,text,ref length));return Path.GetFullPath(text.ToString());
     }
+    internal static (uint Pid,uint Session) ServerIdentity(SafePipeHandle handle)
+    {Check(GetNamedPipeServerProcessId(handle,out var pid));Check(GetNamedPipeServerSessionId(handle,out var session));return (pid,session);}
     static void Check(bool result){if(!result)throw new Win32Exception(Marshal.GetLastWin32Error());}
     [StructLayout(LayoutKind.Sequential)] struct SecurityAttributes {public int Size;public nint Descriptor;public int Inherit;}
     [DllImport("advapi32.dll",EntryPoint="ConvertStringSecurityDescriptorToSecurityDescriptorW",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl,uint revision,out nint descriptor,out uint bytes);
@@ -82,7 +82,7 @@ public static class LocalIpcEndpoint
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint pid);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientSessionId(SafePipeHandle pipe,out uint session);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe,out uint pid);
-    [DllImport("kernel32.dll",SetLastError=true)] static extern bool ProcessIdToSessionId(uint pid,out uint session);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerSessionId(SafePipeHandle pipe,out uint session);
     [DllImport("kernel32.dll",SetLastError=true)] static extern SessionProcess.KernelHandle OpenProcess(uint access,bool inherit,uint pid);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(SessionProcess.KernelHandle process,uint access,out SessionProcess.KernelHandle token);
     [DllImport("kernel32.dll",EntryPoint="QueryFullProcessImageNameW",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool QueryFullProcessImageName(SessionProcess.KernelHandle process,uint flags,StringBuilder image,ref uint length);

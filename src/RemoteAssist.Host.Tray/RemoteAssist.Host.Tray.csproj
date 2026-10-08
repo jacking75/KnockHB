@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RemoteAssist.Protocol\RemoteAssist.Protocol.csproj" />
+    <ProjectReference Include="..\RemoteAssist.Host.Core\RemoteAssist.Host.Core.csproj" />
   </ItemGroup>
 
 </Project>

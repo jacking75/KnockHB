@@ -11,6 +11,14 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("input consent, replay, final button coordinate, reset, revocation and partial Unicode recovery",InputRegression.Run),
+    ("Host settings accepts Windows UTF8 BOM but rejects duplicate and unknown configuration",async()=>
+    {
+        var json=Encoding.UTF8.GetBytes("{\"SignalingUri\":\"http://127.0.0.1:25001\",\"AllowLoopbackHttp\":true}");
+        var bom=new byte[]{0xEF,0xBB,0xBF}.Concat(json).ToArray();
+        Check(HostSettings.Parse(bom).AllowLoopbackHttp,"PowerShell UTF8 BOM broke settings");
+        foreach(var invalid in new[]{"{\"AllowLoopbackHttp\":false,\"AllowLoopbackHttp\":true}","{\"Unrecognized\":true}","{\"StunServers\":null}"})await Reject(()=>Task.FromResult(HostSettings.Parse(Encoding.UTF8.GetBytes(invalid))));
+    }),
     ("protected installation ACL allows readers but rejects writers and non-admin owners",async()=>
     {
         var admin=new System.Security.Principal.SecurityIdentifier("S-1-5-32-544");
@@ -199,10 +207,38 @@ var tests = new (string Name, Func<Task> Run)[]
     }),
     ("input binding and normalized coordinate validation", async () =>
     {
-        var input=new InputMsg {T="mouse",A="down",Btn="left",SessionId="sid",Id="i1",Generation=1,PermissionGeneration=1,Sequence=1,TopologyGeneration=1,MonitorIdentity="DISPLAY1",X=.5,Y=.7};
+        var input=new InputMsg {T="mouse",A="down",Btn="left",SessionId="sid",Id="i1",Generation=1,PermissionGeneration=1,Sequence=1,TopologyGeneration=1,InputEpoch=1,MonitorIdentity="DISPLAY1",X=.5,Y=.7};
         Check(ProtocolJson.ParseInput(JsonSerializer.SerializeToUtf8Bytes(input)).Btn=="left","input roundtrip");
-        foreach(var invalid in new[]{input with{X=1.1},input with{Sequence=0},input with{TopologyGeneration=0},input with{Btn="unknown"},input with{SessionId=""}})
+        foreach(var invalid in new[]{input with{X=1.1},input with{Sequence=0},input with{TopologyGeneration=0},input with{InputEpoch=0},input with{Btn="unknown"},input with{SessionId=""}})
             await Reject(()=>Task.FromResult(ProtocolJson.ParseInput(JsonSerializer.SerializeToUtf8Bytes(invalid))));
+    }),
+    ("pointer reorder cannot discard reliable button transitions and reset drops old epochs",()=>
+    {
+        var guard=new RemoteAssist.Host.Core.Input.InputSequenceGuard("sid",1,1,"DISPLAY1",1);
+        var pointer=new InputMsg {T="mouse",A="move",SessionId="sid",Id="p",Generation=1,PermissionGeneration=1,Sequence=100,TopologyGeneration=1,InputEpoch=1,MonitorIdentity="DISPLAY1"};
+        Check(guard.Accept("pointer",pointer),"pointer rejected");
+        var down=pointer with {A="down",Btn="left",Sequence=1};
+        Check(guard.Accept("input",down),"new pointer discarded reliable transition");
+        Check(!guard.Accept("input",down),"reliable transition replay");
+        Check(!guard.Accept("pointer",down with {Sequence=101}),"button accepted on unreliable channel");
+        var reset=down with {T="reset",A="all",Sequence=2,InputEpoch=2};
+        Check(guard.Accept("input",reset),"reset rejected");
+        Check(!guard.Accept("pointer",pointer with {Sequence=101}),"pre-reset pointer resurrected input");
+        Check(guard.Accept("pointer",pointer with {Sequence=1,InputEpoch=2}),"new epoch pointer rejected");
+        Check(!guard.Accept("input",down with {Sequence=3,PermissionGeneration=2,InputEpoch=2}),"old permission binding accepted");
+        Check(!guard.Accept("pointer",pointer with {Sequence=2,InputEpoch=2,TopologyGeneration=2}),"old monitor generation accepted");
+        return Task.CompletedTask;
+    }),
+    ("negative origin portrait maps physical corners across the entire virtual desktop",async()=>
+    {
+        var portrait=new MonitorInfo(1,"DISPLAY1",-2160,0,2160,3840,false);
+        Check(RemoteAssist.Host.Core.Input.InputCoordinates.Pixel(portrait,0,0)==(-2160,0),"negative origin lost");
+        Check(RemoteAssist.Host.Core.Input.InputCoordinates.Pixel(portrait,1,1)==(-1,3839),"portrait rotated again");
+        var desktop=new Rect(-2160,0,4096,3840);
+        Check(RemoteAssist.Host.Core.Input.InputCoordinates.Absolute(portrait,0,0,desktop)==(0,0),"virtual origin moved");
+        Check(RemoteAssist.Host.Core.Input.InputCoordinates.Absolute(portrait,1,1,desktop).Y==65535,"virtual endpoint short");
+        await Reject(()=>Task.FromResult(RemoteAssist.Host.Core.Input.InputCoordinates.Pixel(portrait,double.NaN,.5)));
+        await Reject(()=>Task.FromResult(RemoteAssist.Host.Core.Input.InputCoordinates.Absolute(portrait,0,0,new Rect(0,0,1920,1080))));
     }),
     ("file chunk RFC UUID endian and tamper rejection", async () =>
     {

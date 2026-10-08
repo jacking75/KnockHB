@@ -37,6 +37,14 @@ public sealed class PermissionGate(TimeProvider? time = null)
         lock (_gate) return !_ended && _grant is { } grant && generation == grant.Generation &&
             _time.GetUtcNow() < grant.ExpiresAt && (grant.Capabilities & capability) == capability && capability != Capability.None;
     }
+    public bool Execute(Capability capability,long generation,Action action)
+    {
+        lock(_gate)
+        {
+            if(!Allows(capability,generation))return false;
+            action();return true;
+        }
+    }
     public void End() { lock (_gate) { _ended = true; _grant = null; ++_generation; } }
     public void Revoke() { lock (_gate) { _grant = null; ++_generation; } }
 }

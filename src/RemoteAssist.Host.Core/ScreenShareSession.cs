@@ -6,6 +6,7 @@ using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Host.Core.Media;
 using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Windows;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
@@ -146,6 +147,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         consentDeadline.CancelAfter(TimeSpan.FromSeconds(30));
         var capability = RequestLocalConsent is null ? Capability.None :
             await RequestLocalConsent(new SupporterIdentity(peer.ConnectionId, peer.DisplayName ?? "이름 미제공"), consentDeadline.Token).WaitAsync(consentDeadline.Token);
+        consentDeadline.Token.ThrowIfCancellationRequested();
         if (_lifetime.IsCancellationRequested || capability == Capability.None) { EndSession("대상자가 승인을 거절했다", false); return; }
         // Only implemented capabilities can be granted. Future features stay denied.
         if ((capability & ~(Capability.Screen)) != 0) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
@@ -220,6 +222,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             NotifyState("승인한 화면 공유 중");
             while (!_lifetime.IsCancellationRequested && _permissions.Allows(Capability.Screen, permissionGeneration))
             {
+                if(!InputDesktop.IsDefault()){EndSession("관리자 승인이 없는 데스크톱 전환으로 화면 공유를 종료했다.");return;}
                 if (capture.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
                 {
                     FrameLayout.Validate(frame.Bgra, frame.Width, frame.Height, frame.Stride);
@@ -243,6 +246,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
                         lock (_endGate)
                         {
                             if (Volatile.Read(ref _ended) != 0 || !_permissions.Allows(Capability.Screen, permissionGeneration)) break;
+                            if(!InputDesktop.IsDefault()){EndSession("관리자 승인이 없는 데스크톱 전환으로 화면 공유를 종료했다.");return;}
                             var now = clock.Elapsed;
                             var delta = previousSend == TimeSpan.Zero ? 1.0 / _options.TargetFps : (now - previousSend).TotalSeconds;
                             _pc!.SendVideo((uint)Math.Max(1, Math.Round(delta * 90000)), encoded.ToArray());

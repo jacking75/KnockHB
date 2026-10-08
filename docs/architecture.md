@@ -164,6 +164,18 @@ flowchart TB
 
 ## 5. 제품 설계 원칙
 
+### 제품 서비스와 사용자 UI의 실행 계약
+
+입력 실행은 현재 권한·세대·monitor binding을 검사한 직렬 입력 세션이 맡는다. mouse move와 reliable 전이를 별개 순번으로 검사하고 reset epoch로 지연 pointer를 폐기한다. 버튼 전이는 자체 최종 좌표를 적용한다. 주입에 성공한 원격 key/button down만 추적하며 reset·철회·종료에서 해당 up만 복원한다. SendInput 일부 성공도 실제 성공 prefix를 기록한 뒤 실패로 종료한다. 일반 입력 backend는 최종 주입 직전에 Default input desktop을 확인하고 UIPI 실패를 성공으로 표시하지 않는다. Job 강제 종료·보안 데스크톱으로 인한 미해제 키 복원은 제품 입력 통합 때 별도 감독 경로로 검증하며, 아래 backend 존재만으로 E23/E24를 완료하지 않는다.
+
+일반 권한 캡처는 input desktop이 `Default`임을 캡처 및 최종 송신 직전에 확인한다. 확인 실패·보안 데스크톱 전환은 일반 세션을 종료한다. 관리자 경로가 연결되기 전에는 잠금/UAC에서 이전 화면을 반복 송신하지 않는다. 이후 특권 전환은 별도 관리자 승인과 프레임 전달 계약으로만 추가한다. 서비스는 active 콘솔과 console protocol을 확인하고, 로그인 사용자 토큰이 없는 동안 새 동의를 만들지 않고 기다린다. RDP/사용자 변경 때 기존 승인과 Job을 폐기한다.
+
+일반 사용자 클라이언트는 pipe 핸들의 `GetNamedPipeServerProcessId`/`GetNamedPipeServerSessionId`로 서버 PID·Session 0을 확인한다. SYSTEM 프로세스의 직접 조회는 일반 권한에서 error 5로 실패하므로 사용하지 않는다. SCM의 `RemoteAssistHost` QueryServiceStatusEx/QueryServiceConfig 조회로 동일한 PID, own-process 서비스, LocalSystem 계정과 인자 없는 고정 보호 실행 파일을 확인하고 nonce/역할을 상호 인증한다. 클라이언트에 관리자 권한이나 서비스 설정 변경 권한을 부여하지 않는다. 근거는 [Microsoft pipe 세션 조회](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getnamedpipeserversessionid), [서비스 상태 조회](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryservicestatusex), [서비스 설정 조회](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryserviceconfigw)다.
+
+`RemoteAssistHost` 서비스는 보호 설치 폴더의 고정 Tray/Helper 실행 파일만 생성한다. 일반 사용자 Tray가 로컬 시작 버튼을 눌러야 새 일회성 지원 코드를 만든다. 서비스가 가진 Job을 종료하면 헬퍼의 캡처·WebRTC도 종료된다. 시작 도중 철회된 자원은 감독 범위에 채택하지 않고 즉시 폐기한다. 콘솔 Session ID 또는 사용자 SID 변경, UI/헬퍼 종료, 인증 IPC의 1초 수신 lease 만료는 세션을 종료한다. 사용자 전환 이후 자동 재접속하지 않는다.
+
+Tray는 일반 권한 WPF UI로 코드/PIN·접속 상태·즉시 종료를 표시한다. 서비스 부트스트랩 외 실행은 거부한다. 동의 창은 요청 ID·세션 ID·지원자 연결 ID에 묶고 기본값은 모두 거부한다. 이름은 지원자가 입력한 표시 이름이며 검증된 조직 신원이 아님을 표시한다. 현재 연결한 기능만 활성화하고 나머지는 승인할 수 없다. 동의 창의 30초 만료·닫기·취소·서비스 종료는 거부로 처리하고 코드/PIN을 지운다. 화면/제어/관리자 권한은 각각 독립 항목이다.
+
 1. 대상자의 명시적 동의와 즉시 종료를 우선한다. 현재 PoC의 무동의 송신은 개발용 한계이며 제품 정책이 아니다.
 2. 세션에 승인된 기능만 수행한다. 관리자 조작은 별도 승인한다.
 3. 운영 시그널링은 TLS/WSS를 사용하고, 미디어·데이터는 WebRTC의 암호화 경로를 유지한다.
