@@ -18,6 +18,7 @@ public sealed record InputMsg : DataMessage
     [JsonPropertyName("monitorIdentity")] public string MonitorIdentity { get; init; } = "";
     [JsonPropertyName("topologyGeneration")] public long TopologyGeneration { get; init; }
     [JsonPropertyName("inputEpoch")] public long InputEpoch {get;init;}
+    [JsonPropertyName("pointerBarrier")] public long PointerBarrier {get;init;}
 
     /// <summary>마우스 버튼: left|right|middle</summary>
     [JsonPropertyName("btn")] public string? Btn { get; init; }

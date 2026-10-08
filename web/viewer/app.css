@@ -133,3 +133,8 @@ button {
   background: #000;
   object-fit: contain;
 }
+.input-bar {display:flex;align-items:center;gap:.6rem;padding:.5rem .9rem;border-top:1px solid var(--line);font-size:.82rem;}
+.input-bar input {flex:1;min-width:0;max-width:36rem;padding:.35rem .6rem;}
+.input-bar button {margin:0;padding:.35rem .6rem;}
+button:disabled {opacity:.45;cursor:default;}
+#screen:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;}

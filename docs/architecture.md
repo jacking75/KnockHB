@@ -16,6 +16,8 @@
 
 특권 프레임은 인코딩 상한으로 먼저 축소하고 16MiB 슬롯 2개의 고정 shared mapping으로 일반 헬퍼에 전달한다. SYSTEM만 쓰고 대상 SID는 읽기만 허용한다. 각 슬롯의 크기·stride·모니터/권한 세대·순번을 검증하며 복사 전후 순번이 바뀌면 해당 프레임을 버린다. 슬롯이 가득 차면 오래된 프레임을 버리고 무한 큐를 만들지 않는다. 승인 철회/desktop 전환/종료 시 프레임·인코더 입력·공유 슬롯을 지우며 일반 헬퍼의 인증 IPC가 끊기면 미디어부터 중단한다. 이 단락은 후속 제품 구현의 기준이며 경계 probe가 shared mapping 또는 승인 흐름을 검증한 것으로 해석하지 않는다.
 
+관리자 2차 승인은 30초 대기·최대 2분 유효하며 보안 데스크톱 연속 진입은 최대 30초다. 관리 경로 해제는 지원 세션 전체 종료로 정해 이전 privileged buffer나 queued input의 일반 경로 승계를 피한다. 특권 헬퍼는 input desktop마다 전용 thread를 새로 만들고 DXGI·표시 창·입력을 해당 thread에서 처리한다. 보안 데스크톱에는 일반 Tray 대신 SYSTEM의 고정 종료 표시와 Ctrl+Alt+Shift+F9을 제공한다. 일반 Tray의 F10 등록과 충돌을 피하도록 별도 키를 사용한다. 표시/핫키 생성 실패·desktop 전환 처리 실패는 캡처 전에 종료한다. 일반 desktop에서는 Tray의 종료 경로를 사용한다. 서비스가 시작한 특권 Helper도 Recovery에 PID/이미지/Session을 결합하고 복원 up 전에 먼저 중단한다. 일반 Helper는 여전히 네트워크·인코딩을 소유하며 특권 Helper에 임의 실행 명령을 보내지 않는다.
+
 2026-10-08 구현 결정은 [제품 계약](product-contract.md)을 따른다. 단일 콘솔 사용자·별도 경로 pairing 신원·독립 권한·종료 최종 상태·시그널링 상실 fail-closed가 기준이다. 이후 코드 변경의 현재 상태는 루트 구현계획에서 관리한다.
 
 [문서 안내](README.md) · [기술 사양](technical-specification.md) · [주요 로직](core-logic.md) · [워크플로우](workflows.md)
@@ -164,6 +166,22 @@ flowchart TB
 
 ## 5. 제품 설계 원칙
 
+### 서비스 감사 저장 경계
+
+서비스는 `%ProgramData%/RemoteAssist/audit`에 SYSTEM/Admin 쓰기 전용 디렉터리와 파일을 만들고 소유자·ACL·reparse point를 검사한다. 감사 이벤트는 닫힌 event/result 열거형, 서비스가 결합한 session/connection ID, permission generation, UTC, event ID만 포함한다. 예외 본문·입력 내용·코드/PIN·토큰·파일 본문을 받을 임의 필드는 없다. 각 파일은 4MiB, 최대 네 세대와 7일 보존으로 제한한다. 저장 후 flush를 완료해야 새로운 승인·특권·파일·Runbook 동작을 시작할 수 있다. 저장 실패는 해당 시작을 거부한다. 종료는 Helper 차단을 먼저 수행하고 기록 실패를 별도로 진단하므로 디스크 장애가 철회를 막지 않는다. 서버 보고와 중복 방지는 후속 감사 transport 계약에 따른다.
+
+관리자 2차 승인 창을 열기 전에 Host가 입력을 중단하고 누른 키를 해제한다. 거부 응답은 새 input epoch로 일반 제어를 재개하지만 30초 무응답은 지원 전체 종료다. 승인 후에도 이전 epoch의 대기 입력은 특권 경로에서 실행하지 않는다. 특권 화면은 16MiB 슬롯 상한을 지키도록 최대 1920×1080 범위로 축소한다. 공유 memory의 ACL과 Session 0 생성은 [Microsoft mapping 보안](https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping-security-and-access-rights)과 [CreateFileMapping](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createfilemappinga)을 따른다. desktop 전환마다 새 thread를 쓰는 이유는 [SetThreadDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setthreaddesktop)이 기존 window/hook이 있는 thread의 전환을 거부하기 때문이다.
+
+### 원격 입력 복원 전용 경계
+
+로컬 충돌 정책은 새로운 원격 key/button down 직전 해당 키가 이미 눌렸으면 세션을 차단하는 방식이다. 로컬 사용자가 이미 누른 키를 원격 소유로 등록하거나 해제하지 않는다. 동일 세션이 주입한 키의 전이는 별도로 추적한다. Windows의 합쳐진 입력 상태로는 주입 이후의 동시 로컬 눌림을 출처별로 분리할 수 없으므로 동의 UI에서 동시 조작을 피하도록 안내하고 로컬 종료를 우선한다. 입력 실패를 관리자 권한 자동 재시도로 우회하지 않는다.
+
+일반 Helper의 Job을 강제로 종료해도 원격으로 눌린 키가 남지 않도록 고정 `Host.Recovery` 실행 파일을 둔다. 서비스가 현재 콘솔 세션에 최소 권한 SYSTEM 토큰으로 실행하며, 이 프로세스에는 캡처·네트워크·키/버튼 down·포인터 이동·SAS·명령 실행 기능이 없다. 관리자 승인 없이 허용하는 유일한 특권 동작은 현재 승인된 제어 세션이 예약한 key/button/Unicode의 up 복원이다. 일반 제어 권한을 승격 UI 조작 권한으로 확대하지 않는다.
+
+Recovery는 일반 Helper의 kill-on-close Job 밖에서 동작한다. 인증 IPC로 대상 Session ID·사용자 SID·Helper PID를 한 번 결합하고, 주입 이전에 잠재 down 집합을 기록하여 ACK한다. ACK 실패 시 일반 Helper는 새 입력을 주입하지 않는다. 실제 성공한 up 이후에만 예약을 지운다. 서비스/Helper 상실·입력 lease 만료·명시적 종료에서 예약된 up만 복원하고 종료한다. 대상 콘솔 사용자 변경 시 새 사용자의 desktop을 조작하지 않는다. 복원은 전용 thread에서 현재 input desktop을 열며, 전송 일부 실패는 성공으로 간주하지 않고 제한된 재시도 후 진단한다. 예약 상한은 VK 254개·버튼 3개·Unicode 4096개이며 본문에는 텍스트·화면·PIN을 넣지 않는다.
+
+서비스 종료 시 일반 Helper를 먼저 중단하여 새 down을 차단하고 Recovery IPC를 종료한다. Recovery는 부모 서비스가 죽어도 최대 1초 IPC 수신 lease 또는 Helper process 종료를 독립 감지한다. 이 별도 경계의 실제 장애 시험이 통과하기 전에는 제품에서 제어 권한을 광고하지 않는다.
+
 ### 제품 서비스와 사용자 UI의 실행 계약
 
 입력 실행은 현재 권한·세대·monitor binding을 검사한 직렬 입력 세션이 맡는다. mouse move와 reliable 전이를 별개 순번으로 검사하고 reset epoch로 지연 pointer를 폐기한다. 버튼 전이는 자체 최종 좌표를 적용한다. 주입에 성공한 원격 key/button down만 추적하며 reset·철회·종료에서 해당 up만 복원한다. SendInput 일부 성공도 실제 성공 prefix를 기록한 뒤 실패로 종료한다. 일반 입력 backend는 최종 주입 직전에 Default input desktop을 확인하고 UIPI 실패를 성공으로 표시하지 않는다. Job 강제 종료·보안 데스크톱으로 인한 미해제 키 복원은 제품 입력 통합 때 별도 감독 경로로 검증하며, 아래 backend 존재만으로 E23/E24를 완료하지 않는다.
@@ -175,6 +193,8 @@ flowchart TB
 `RemoteAssistHost` 서비스는 보호 설치 폴더의 고정 Tray/Helper 실행 파일만 생성한다. 일반 사용자 Tray가 로컬 시작 버튼을 눌러야 새 일회성 지원 코드를 만든다. 서비스가 가진 Job을 종료하면 헬퍼의 캡처·WebRTC도 종료된다. 시작 도중 철회된 자원은 감독 범위에 채택하지 않고 즉시 폐기한다. 콘솔 Session ID 또는 사용자 SID 변경, UI/헬퍼 종료, 인증 IPC의 1초 수신 lease 만료는 세션을 종료한다. 사용자 전환 이후 자동 재접속하지 않는다.
 
 Tray는 일반 권한 WPF UI로 코드/PIN·접속 상태·즉시 종료를 표시한다. 서비스 부트스트랩 외 실행은 거부한다. 동의 창은 요청 ID·세션 ID·지원자 연결 ID에 묶고 기본값은 모두 거부한다. 이름은 지원자가 입력한 표시 이름이며 검증된 조직 신원이 아님을 표시한다. 현재 연결한 기능만 활성화하고 나머지는 승인할 수 없다. 동의 창의 30초 만료·닫기·취소·서비스 종료는 거부로 처리하고 코드/PIN을 지운다. 화면/제어/관리자 권한은 각각 독립 항목이다.
+
+공유 중에는 승인된 물리 모니터에 클릭을 가로채지 않는 붉은 테두리와 별도 상시 종료 버튼을 표시한다. Tray 활성 아이콘은 붉은 색이며 Explorer의 TaskbarCreated 이후 재등록한다. 표시·핫키 등록 실패는 지원 세션을 종료한다. 긴급 종료는 Ctrl+Alt+Shift+F10이며 기존 등록과 충돌하면 덮어쓰지 않는다. F12는 디버거 예약 키여서 사용하지 않는다. 근거는 [Microsoft RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)다. 일반 데스크톱의 표시 UI는 관리자 보안 데스크톱으로 옮기지 않으며 특권 모드의 표시는 별도 계약을 따른다.
 
 1. 대상자의 명시적 동의와 즉시 종료를 우선한다. 현재 PoC의 무동의 송신은 개발용 한계이며 제품 정책이 아니다.
 2. 세션에 승인된 기능만 수행한다. 관리자 조작은 별도 승인한다.

@@ -23,6 +23,8 @@ type settings struct {
 	cfg                           signaling.Config
 }
 
+var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
+
 func main() { os.Exit(run()) }
 func run() int {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -50,7 +52,7 @@ func run() int {
 			if name == "" {
 				name = "index.html"
 			}
-			if filepath.Base(name) != name || name != "index.html" && name != "app.css" && name != "app.js" && name != "connection.js" && name!="favicon.svg" {
+			if filepath.Base(name) != name || !viewerAssets[name] {
 				http.NotFound(w, r)
 				return
 			}
@@ -155,8 +157,8 @@ func loadSettings() (settings, error) {
 			return out, err
 		}
 		out.viewer = absolute
-		for _, name := range []string{"index.html", "app.js", "connection.js", "app.css"} {
-			if _, err := os.Stat(filepath.Join(absolute, name)); err != nil {
+		for name := range viewerAssets {
+			if info, err := os.Stat(filepath.Join(absolute, name)); err != nil || !info.Mode().IsRegular() {
 				return out, fmt.Errorf("Viewer 필수 파일 누락: %s", name)
 			}
 		}

@@ -1,7 +1,9 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/RemoteAssist.Host.AdminHelper/RemoteAssist.Host.AdminHelper.csproj" />
     <Project Path="src/RemoteAssist.Host.Core/RemoteAssist.Host.Core.csproj" />
     <Project Path="src/RemoteAssist.Host.Helper/RemoteAssist.Host.Helper.csproj" />
+    <Project Path="src/RemoteAssist.Host.Recovery/RemoteAssist.Host.Recovery.csproj" />
     <Project Path="src/RemoteAssist.Host.Service/RemoteAssist.Host.Service.csproj" />
     <Project Path="src/RemoteAssist.Host.Tray/RemoteAssist.Host.Tray.csproj" />
     <Project Path="src/RemoteAssist.Protocol/RemoteAssist.Protocol.csproj" />
@@ -12,6 +14,7 @@
     <Project Path="tools/RemoteAssist.SessionProbe/RemoteAssist.SessionProbe.csproj" />
     <Project Path="tools/RemoteAssist.BoundaryProbe/RemoteAssist.BoundaryProbe.csproj" />
     <Project Path="tools/RemoteAssist.MediaProbe/RemoteAssist.MediaProbe.csproj" />
+    <Project Path="tools/RemoteAssist.InputTarget/RemoteAssist.InputTarget.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RemoteAssist.Host.Core.Tests/RemoteAssist.Host.Core.Tests.csproj" />

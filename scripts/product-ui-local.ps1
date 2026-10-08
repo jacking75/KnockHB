@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$RunDir,[ValidateSet('Inspect','Start','ApproveScreen','Deny','Stop','Close','CloseConsent','ReadPairing','CrashTray')][string]$Action='Inspect')
+param([Parameter(Mandatory=$true)][string]$RunDir,[ValidateSet('Inspect','Start','ApproveScreen','ApproveControl','Deny','Stop','OverlayStop','Close','CloseConsent','ReadPairing','CrashTray')][string]$Action='Inspect')
 $ErrorActionPreference='Stop'
 $repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $RunDir=[IO.Path]::GetFullPath($RunDir)
@@ -19,8 +19,13 @@ function Find-Control([string]$id) {
     throw "실증 UI 요소 누락: $id"
 }
 function Invoke-Control([string]$id){$button=Find-Control $id;if(!$button.Current.IsEnabled){throw "실증 버튼 비활성: $id"};$button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()}
+function Control-Window($element) {
+    for($i=0;$i -lt 20 -and $element -and $element.Current.ControlType -ne [Windows.Automation.ControlType]::Window;$i++){$element=[Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($element)}
+    if(!$element){throw '이 실증의 창이 필요하다'};return $element
+}
 switch($Action) {
     'Start' {Invoke-Control 'HostStart'}
+    'OverlayStop' {Invoke-Control 'SharedMonitorStop'}
     'Stop' {
         $helperPath=Join-Path $installation.protectedDirectory 'RemoteAssist.Host.Helper.exe'
         $children=@(Get-Process -Name RemoteAssist.Host.Helper -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $helperPath})
@@ -33,8 +38,13 @@ switch($Action) {
         (Find-Control 'ConsentScreen').GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
         Invoke-Control 'ConsentApprove'
     }
+    'ApproveControl' {
+        (Find-Control 'ConsentScreen').GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
+        (Find-Control 'ConsentControl').GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
+        Invoke-Control 'ConsentApprove'
+    }
     'Deny' {Invoke-Control 'ConsentDeny'}
-    'Close' {$windows[0].GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()}
+    'Close' {(Control-Window (Find-Control 'HostStop')).GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()}
     'CloseConsent' {
         $dialog=Find-Control 'ConsentDeny'
         for($i=0;$i -lt 20 -and $dialog -and $dialog.Current.Name -ne '원격 지원 권한 승인';$i++){$dialog=[Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($dialog)}
@@ -57,7 +67,7 @@ switch($Action) {
     }
     'Inspect' {
         $stop=Find-Control 'HostStop';$bounds=$stop.Current.BoundingRectangle
-        $window=[Windows.Automation.AutomationElement]::FromHandle($process[0].MainWindowHandle);$windowBounds=$window.Current.BoundingRectangle
+        $window=Control-Window $stop;$windowBounds=$window.Current.BoundingRectangle
         @{utc=[DateTimeOffset]::UtcNow.ToString('o');pid=$process[0].Id;session=$process[0].SessionId;windowCount=$windows.Count;
             stopOffscreen=$stop.Current.IsOffscreen;stopInsideWindow=($bounds.Bottom -le $windowBounds.Bottom -and $bounds.Top -ge $windowBounds.Top);
             status=(Find-Control 'HostStatus').Current.Name;startEnabled=(Find-Control 'HostStart').Current.IsEnabled;

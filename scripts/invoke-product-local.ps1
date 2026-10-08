@@ -7,7 +7,7 @@ if(!$Admin) {
     $RunDir=Join-Path $artifactRoot ('product-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     New-Item -ItemType Directory -Path $RunDir | Out-Null
     $publish=Join-Path $RunDir 'publish'
-    foreach($name in @('Service','Tray','Helper')) {
+    foreach($name in @('Service','Tray','Helper','Recovery','AdminHelper')) {
         & dotnet publish (Join-Path $repository ('src/RemoteAssist.Host.'+$name+'/RemoteAssist.Host.'+$name+'.csproj')) --no-restore -c Release --self-contained false -o $publish
         if($LASTEXITCODE -ne 0){throw '제품 publish 실패'}
     }
@@ -63,16 +63,36 @@ try {
     New-Service -Name $serviceName -BinaryPathName ('"{0}"' -f $exe) -StartupType Manual | Out-Null
     $installed=$true
     Start-Service -Name $serviceName
+    $ownedService=Get-CimInstance Win32_Service -Filter "Name='RemoteAssistHost'"
+    if($ownedService.PathName -ne ('"{0}"' -f $exe) -or $ownedService.ProcessId -le 0){throw '이 실증의 서비스 PID/경로가 아니다'}
     $clock=[Diagnostics.Stopwatch]::StartNew()
-    while((Get-Service -Name $serviceName).Status -ne 'Stopped' -and $clock.Elapsed.TotalSeconds -lt $Seconds -and !(Test-Path -LiteralPath (Join-Path $RunDir 'finish'))) {Start-Sleep -Milliseconds 200}
+    while((Get-Service -Name $serviceName).Status -ne 'Stopped' -and $clock.Elapsed.TotalSeconds -lt $Seconds -and !(Test-Path -LiteralPath (Join-Path $RunDir 'finish'))) {
+        if(Test-Path -LiteralPath (Join-Path $RunDir 'crash-service')) {
+            # Explicit local fault injection, restricted to the service installed by this invocation.
+            $faultTime=[DateTimeOffset]::UtcNow
+            Stop-Process -Id $ownedService.ProcessId -Force
+            @{utc=$faultTime.ToString('o');scenario='service-crash';ownedPid=$ownedService.ProcessId} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'service-crash.json') -Encoding utf8
+        }
+        Start-Sleep -Milliseconds 100
+    }
     @{utc=[DateTimeOffset]::UtcNow.ToString('o');seconds=$clock.Elapsed.TotalSeconds;serviceState=(Get-Service -Name $serviceName).Status.ToString()} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'result.json') -Encoding utf8
 } catch {
     @{utc=[DateTimeOffset]::UtcNow.ToString('o');error=$_.Exception.Message} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'installer-error.json') -Encoding utf8
     exit 1
 } finally {
     if($installed){Stop-Service -Name $serviceName -ErrorAction SilentlyContinue;& sc.exe delete $serviceName | Out-Null}
+    # Recovery is outside the ordinary helper Job and must finish its up-only restoration first.
+    $cleanupClock=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        $remaining=@(Get-Process -Name 'RemoteAssist.Host.Recovery','RemoteAssist.Host.AdminHelper','RemoteAssist.Host.Helper','RemoteAssist.Host.Tray' -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -and $_.Path.StartsWith($stage+'\',[StringComparison]::OrdinalIgnoreCase)
+        })
+        if($remaining.Count -eq 0){break}
+        Start-Sleep -Milliseconds 100
+    } while($cleanupClock.Elapsed.TotalSeconds -lt 5)
     $status=Join-Path $stage 'service-status.ndjson'
     if(Test-Path -LiteralPath $status){Copy-Item -LiteralPath $status -Destination (Join-Path $RunDir 'service-status.ndjson')}
-    if(Test-Path -LiteralPath $stage){Remove-Item -LiteralPath $stage -Recurse -Force}
-    @{utc=[DateTimeOffset]::UtcNow.ToString('o');serviceAbsent=!(Get-Service -Name $serviceName -ErrorAction SilentlyContinue);stageAbsent=!(Test-Path -LiteralPath $stage)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'cleanup.json') -Encoding utf8
+    if($remaining.Count -eq 0 -and (Test-Path -LiteralPath $stage)){Remove-Item -LiteralPath $stage -Recurse -Force}
+    @{utc=[DateTimeOffset]::UtcNow.ToString('o');serviceAbsent=!(Get-Service -Name $serviceName -ErrorAction SilentlyContinue);stageAbsent=!(Test-Path -LiteralPath $stage);ownedChildrenAbsent=($remaining.Count -eq 0)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'cleanup.json') -Encoding utf8
+    if($remaining.Count -gt 0){throw '복원 프로세스가 정리 기한을 넘었다. 보호 배치를 보존하고 cleanup.json을 실패 증거로 남겼다.'}
 }

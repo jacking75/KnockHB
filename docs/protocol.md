@@ -24,6 +24,8 @@ pointer의 기존 maxRetransmits=0 목표는 고정 SDK의 SCTP partial reliabil
 
 입력 `seq`는 `input`과 `pointer` 채널마다 독립적으로 증가한다. 두 채널을 하나의 순번으로 비교하면 최신 pointer가 먼저 도착한 뒤 신뢰 전이 key/button이 버려지는 결함이 생기므로 금지한다. 입력은 필수 양의 `inputEpoch`를 포함한다. 초기 epoch는 1이다. reliable `reset/all`은 다음 epoch로 정확히 1 증가하며 원격 키·버튼을 해제한다. 다른 입력은 현재 epoch와 일치해야 한다. reset 이전의 지연 pointer는 폐기하고, 새 epoch의 pointer가 reset보다 먼저 도착해도 폐기한다. reliable 순번은 reset 후에도 계속 증가한다. 이전 모니터/권한/연결 세대의 입력은 어떤 채널에서도 실행하지 않는다.
 
+reliable 마우스 button/wheel 전이는 필수 `pointerBarrier`(0 이상의 safe integer)를 포함한다. Viewer는 대기 pointer를 먼저 flush하고 당시 송신한 pointer 순번을 barrier로 넣는다. Host는 전이의 최종 좌표를 적용한 뒤 barrier 이하의 지연 move를 폐기한다. flush가 배압으로 보류됐으면 대기 move는 폐기한다. 따라서 독립 채널의 오래된 move가 버튼 좌표를 되돌리지 않는다. reset 해제에 성공하면 Host는 control 채널에서 같은 ID의 `input-reset-ack`와 `inputEpoch`를 응답한다. Viewer는 ACK 전 새 입력을 보내지 않으며 1초 ACK timeout은 전체 연결 종료다.
+
 파일 청크 header는 32바이트다. ASCII RAFT 4바이트, 버전 uint16 LE, reserved uint16=0, RFC4122 순서 transfer UUID 16바이트, sequence uint32 LE, payload length uint32 LE 다음에 최대 16384바이트를 붙인다. offer는 UUID/name/size/sha256을 포함하며 별도 수락 전 본문 전송은 금지한다. diagnostics는 telemetry에만 보낸다. clipboard는 별도 권한과 방향 승인, 64KiB 한도, UUID/hash echo 방지를 적용한다. Runbook은 설치된 ID/version/hash/검증 인자에 로컬 건별 승인을 묶고 원격 임의 스크립트는 거부한다. 미구현 채널/기능은 supported capabilities에 광고하지 않는다.
 
 v0.1 클라이언트는 v1에 참가할 수 없다. 과거 초안의 unreliable key/button과 좌표 공식은 폐기했다.
@@ -32,7 +34,7 @@ v0.1 클라이언트는 v1에 참가할 수 없다. 과거 초안의 unreliable 
 
 ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:` 접두사를 포함한다. SIPSorcery의 native candidate 값은 접두사를 포함하지 않을 수 있으므로 Host의 송신 adapter에서 정확히 한 번 붙인다. sdpMLineIndex는 0 이상의 미디어 순서다. empty/end-of-candidates는 실제 후보로 전달하지 않는다.
 
-시그널링 v1은 구현했다. 데이터채널은 위 계약과 C# 입력 파서·파일 청크 header까지만 존재한다. Host/Viewer는 데이터채널을 개설하지 않는다. 기능별 진행 상태는 루트 구현계획에서만 관리한다.
+시그널링 v1과 승인 후 control 데이터 채널을 구현했다. 보호 설치의 제품 서비스에서 실제 Chrome의 data-ready→data-ping→data-pong을 확인했다. 일반 제어 승인 시 Host가 input/pointer도 생성하며 복원 감독이 준비돼야 이를 광고한다. 다른 기능은 아직 광고하지 않는다. 기능별 진행 상태는 루트 구현계획에서만 관리한다.
 
 ## 참가와 승인 예시
 
@@ -64,11 +66,25 @@ joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 
 
 ## 보조 기능 확장 원칙
 
+### 데이터 제어 채널 시작 계약
+
+Host가 승인 후 `control` reliable ordered 채널을 offer에 포함해 만든다. Viewer는 같은 label의 채널 한 개만 받아들인다. 미지원/중복 채널은 세션 오류다. Host의 첫 `data-ready`는 데이터 공통 envelope와 `channels`, `permissions`, `monitor:{identity,topologyGeneration,x,y,width,height}`를 포함한다. 화면 전용은 `channels:["control"]`, `permissions:["screen"]`이다. 일반 제어는 복원 감독 준비 후 `channels:["control","input","pointer"]`, `permissions:["screen","control"]`이다. 모든 input 채널이 open이고 일치하는 준비 통지가 도착하기 전에는 Viewer가 입력을 보내지 않는다. Viewer는 500ms data-ping을 보내며 바인딩과 순번을 검사한 ping만 Host의 입력 lease를 갱신한다. 2초 동안 pong이 없으면 연결을 종료한다. 후속 file 등의 실제 실행·철회가 연결된 뒤 추가한다.
+
+초기 관리자 요청 범위를 승인했으면 permissions는 `screen,control,admin` 순서이며 채널 구성은 일반 제어와 같다. `admin-request`는 GUID N 형식 id와 공통 envelope만 보낸다. Host는 입력을 중단하고 기존 키를 해제한 뒤 2차 동의 창을 요청한다. 지원자가 원격으로 자기 승인 창을 조작할 수 없어야 한다. Host의 같은 ID `admin-state`는 `state:pending|denied|active`를 응답한다. active에만 양의 `adminGeneration`을 포함한다. denied/active에는 Host가 증가시킨 `inputEpoch`를 넣는다. 승인 중 대기한 이전 epoch 입력은 실행하지 않는다. Viewer는 local held 상태·pending pointer를 지우고 새 epoch를 사용한다. Viewer는 active 통지를 받기 전 특권 기능을 표시하지 않는다. `admin-sas`와 `admin-revoke`는 현재 adminGeneration을 포함하며, revoke는 지원 전체 종료다. Host의 로컬 승인·privileged 준비 ACK만 active를 만들 수 있다.
+
+control JSON은 UTF-8 32KiB 상한과 중복 필드 거부를 적용한다. `seq`는 채널의 송신 방향마다 독립적인 양의 단조 순번이다. 세션/연결/권한 세대가 맞아야 처리한다. `data-ping` 요청에는 같은 `id`의 `data-pong`을 보내며 remote consent/grant를 이 경로에서 받지 않는다. 채널 닫힘·타입/바인딩 오류·256KiB 송신 bufferedAmount 상한 초과는 기존 권한을 폐기하고 세션을 끝낸다.
+
 파일 header 검증은 본문 길이·reserved·transfer UUID·최대 16384바이트를 검사한다. 순번·상한·백프레셔·임시 파일·최종 체크섬·취소 및 부분 파일 제거는 E31에서 구현한다. 보조 기능의 요청·응답·오류 DTO는 E31~E34에서 문서를 먼저 확장한다. 아직 존재하지 않는 요청을 현재 지원 기능으로 광고하지 않는다.
 
 ## 변경 이력
 
 ## 로컬 IPC v1 (Windows Host 전용)
+
+관리자 IPC는 `admin-request`/`admin-response`의 현재 request ID와 service가 결합한 sessionId/connectionId/permissionGeneration을 사용한다. 초기 admin은 요청 허용 범위이며 `AdminAuthorization`의 2차 로컬 승인이 실제 lease를 만든다. `admin-config`는 해당 승인·target SID·monitor·mapping·output 상한만 전달하고, `admin-ready` 이후 일반 Helper에 `admin-state`를 보낸다. `admin-input`은 같은 adminGeneration의 검증된 InputStroke 최대 64개를 받아 `admin-input-ack`로 실제 성공 prefix 수를 응답한다. `admin-lease`는 검증된 data-ping에서만 갱신한다. `admin-revoke`는 긴급 중단으로 dispatch backlog를 우회한다. `admin-sas`는 현재 control+관리자 승인에서만 서비스가 정책을 진단하고 호출한다. Recovery의 `recovery-admin`은 서비스가 시작한 현재 특권 Helper의 PID를 ACK 전에 결합하고 모든 관련 Helper를 차단한 뒤 up을 복원한다.
+
+특권 프레임 mapping은 서비스가 생성하는 고유 `Global\\RemoteAssist-<GUID N>` 이름을 인증 IPC로만 전달한다. 슬롯 두 개는 각각 header 64바이트 + payload 16MiB다. header는 little-endian commit(0), permission generation(8), topology generation(16), admin generation(24), width(32), height(36), stride(40), payload bytes(44), secure desktop flag(48), reserved 0(52), monotonic timestamp ms(56)다. commit은 프레임 순번×2이며 쓰는 동안 홀수다. 단일 SYSTEM writer가 payload를 복사한 뒤 even commit을 publish한다. reader는 승인된 세 세대와 geometry/stride/크기를 확인하고 복사 전후 commit이 같은 최신 슬롯만 소비한다. 아직 쓰는 슬롯·변조·잘린 크기·이전 세대는 송신하지 않는다. 관리자 해제 전에 SYSTEM이 두 슬롯을 지운다. 파일이나 로그로 프레임을 저장하지 않는다.
+
+복원 전용 IPC는 `recovery-bind`(sessionId, permissionGeneration, userSid, helperPid), `recovery-reserve`(동일 sessionId/permissionGeneration, revision, keys, buttons, unicode), `recovery-ack`(같은 correlation ID), `recovery-lease`를 추가한다. 예약은 실제 down 전에 ACK하며 성공한 up 뒤에만 예약 집합을 줄인다. revision은 1부터 정확히 증가한다. keys는 1~254의 VK, buttons는 left/right/middle, unicode는 1~65535의 UTF-16 code unit이다. 중복·초과·다른 세션·늦은 세대는 거부하고 종료한다. 이 메시지는 인증된 서비스↔Recovery와 서비스↔일반 Helper 사이에서만 사용하며 Viewer가 로컬 승인·복원 예약을 직접 보낼 수 없다. Recovery에는 다른 실행 명령이 없다. 복원 예약과 Unicode 값은 진단·감사 로그에 저장하지 않는다.
 
 시그널링과 별개의 인증된 Named Pipe다. 서비스가 생성한 고유 pipe 이름·32-byte nonce·서비스 PID·자식 역할을 보호된 고정 바이너리의 시작 인자로 전달한다. 서버 ACL은 SYSTEM과 대상 SID만 허용하고 실제 client PID/Session ID/SID를 서비스가 생성한 자식과 대조한다. 클라이언트도 커널의 server PID를 전달받은 서비스 PID와 대조한다. 외부 네트워크 pipe client와 다른 PID는 거부한다. nonce는 로그에 쓰지 않으며 상호 hello에만 사용한다.
 

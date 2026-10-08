@@ -1,5 +1,19 @@
 # 구현 기반의 로컬 실행 증거 — 2026-10-08
 
+## 12:40 KST 검증 방침 변경과 입력 통합 증거
+
+13:14 KST까지 추가 대화형 시험 없이 관리자 제품 경로를 구현했다. 최초 admin 토글은 요청 범위이며 30초 기한의 2차 로컬 승인과 최대 2분 lease가 실제 특권 Helper를 만든다. Helper는 네트워크 없이 shared BGRA와 고정 native input만 처리한다. 보안 desktop의 고정 종료 창·F9·30초 제한, Session/SID/monitor/세대 최종 검사, 서비스 SAS 정책 진단을 연결했다. 코드 리뷰에서 원격으로 2차 승인 창을 클릭할 위험을 발견해 해당 창을 열기 전에 입력을 중단·해제하고 응답 뒤 epoch를 증가시켰다. 이 경계의 allow/deny·stale epoch와 shared mapping 크기/세대/clear 회귀를 포함해 C# 28개 그룹과 Node 29개 시험이 통과했다. 전체 solution은 경고/오류 0개다. 실제 새 관리자 실행·Winlogon 종료 표시·Global mapping ACL·SAS 전환은 미실행이다. 이 상태를 E25/E26 완료로 처리하지 않는다.
+
+사용자는 화면·입력 시험의 불편을 이유로 구현과 코드 리뷰를 우선하고 추가 E2E를 마지막으로 미루도록 지시했다. 모든 시험 브라우저·격리 입력 창·임시 제품 서비스와 보호 배치를 정리했다. 이후에는 비대화형 검사와 코드 리뷰를 수행한다. 아래는 방침 변경 전의 기록이며 추가 E2E의 실행 승인을 뜻하지 않는다.
+
+제품 경로에 control/input/pointer 채널, reset ACK, 독립 SYSTEM up-only 복원 감독을 연결했다. `.artifacts/product-20261008-120820`에서 실제 Chrome→일반 Helper→소유 시험 창의 클릭 1회·F12 down/up 각각 1회와 Unicode `한글 검증` 수신을 확인했다. composition 이벤트는 합성했으므로 실제 IME 조작 전체의 수용 증거는 아니다. 원격 Ctrl down 수신과 foreground/held 상태를 확인한 뒤 Helper 강제 종료→Ctrl up/held=false/Helper 소멸은 287.2731ms였다.
+
+`.artifacts/product-20261008-122658`에서 공유 테두리·모니터 안의 종료 창·제품 제어 상태를 확인했다. 동일 PC의 headed Viewer는 로컬 포커스 이동이 원격 reset을 발생시켜 보류 키 시험과 충돌했다. headless Viewer와 고정 격리 .NET WPF 시험 창으로 준비 완료를 확인한 뒤 서비스 강제 종료를 수행했다. 실제 서비스 종료 기록→Ctrl up은 137.0782ms, 마커 요청→복원 관찰은 298.8769ms였다. cleanup.json의 serviceAbsent/stageAbsent=true와 소유 제품 프로세스·시험 창의 종료를 확인했다.
+
+앞선 `-122018` 서비스 종료 시도는 fault 시점의 CIM 조회가 측정에 포함돼 2초 제한을 넘었다. 복원은 관찰했으나 지연 수용 PASS로 처리하지 않는다. PowerShell WPF 시험 창의 문화권·파일 교체 오류도 발견했다. WPF 프로젝트에서 invariant globalization을 해제하고 snapshot 파일 교체 충돌을 재시도하는 .NET InputTarget으로 정리했다. 기존 PS 구현은 해당 도구 실행기로 교체했다. 실제 관리자 제품 경로·복원 lease 만료·종료 단축키·전체 입력 조합의 실증은 미실행이다.
+
+코드 리뷰에서 이전 Recovery의 지연 종료 callback을 현재 Helper scope와 대조하도록 제한했고, IPC ACK 대기 상한을 원자적으로 적용했다. 포인터 캡처 실패 시 down을 보내지 않고 reset하며, Viewer 필수 모듈 누락을 서버 시작 전에 검사한다. 이 증거를 E21~E24 전체 완료나 F 통과로 승계하지 않는다.
+
 ## 후속 활성 콘솔 실증
 
 ### 제품 서비스·Tray의 실제 통합 시험

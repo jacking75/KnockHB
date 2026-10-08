@@ -45,7 +45,7 @@ public static class LocalIpcEndpoint
                 using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))
                     if(identity.User?.Value!=child.OwnerSid)throw new UnauthorizedAccessException("IPC 자식 SID가 바뀌었다.");
                 var role=child.Role.ToString().ToLowerInvariant();
-                var expected=ProtectedInstallation.ResolveExecutable(child.Role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
+                var expected=ProtectedInstallation.ResolveExecutable(child.Role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.Recovery=>"RemoteAssist.Host.Recovery.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
                 if(!Image(process).Equals(expected,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("IPC 자식 실행 파일 불일치다.");
                 var channel=new LocalIpcChannel(server);
                 await channel.AuthenticateAsync("service",role,nonce,deadline.Token);return channel;
@@ -55,7 +55,7 @@ public static class LocalIpcEndpoint
     }
     public static async Task<LocalIpcChannel> ConnectAsync(string name,string nonce,int servicePid,string role,CancellationToken ct)
     {
-        if(!Guid.TryParseExact(name,"N",out _)||servicePid<=0||role is not ("tray" or "helper" or "adminhelper"))throw new ArgumentException("IPC bootstrap 오류다.");
+        if(!Guid.TryParseExact(name,"N",out _)||servicePid<=0||role is not ("tray" or "helper" or "adminhelper" or "recovery"))throw new ArgumentException("IPC bootstrap 오류다.");
         var pipe=new NamedPipeClientStream(".",name,PipeDirection.InOut,PipeOptions.Asynchronous,TokenImpersonationLevel.Identification);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));
         try

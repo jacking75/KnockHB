@@ -11,6 +11,7 @@ public interface IInputBackend
     /// <returns>Count of the actually injected prefix, including partial failures.</returns>
     int Send(IReadOnlyList<InputStroke> strokes);
 }
+public interface IInputPreflight {bool CanPress(InputStroke stroke);}
 
 /// <summary>All validation and native writes are serialized with revocation. Tracks only its own successfully injected transitions.</summary>
 public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,long topologyGeneration,IInputBackend backend)
@@ -21,12 +22,24 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
     readonly HashSet<char> unicode=[];
     InputSequenceGuard? sequences;
     bool stopped;
+    bool paused;
+    public void SuspendForApproval(){lock(gate){paused=true;Release();}}
+    public long ResumeLocalPhase()
+    {
+        lock(gate)
+        {
+            var grant=permissions.Current;
+            if(stopped||!paused||grant==null||!permissions.Allows(Capability.Control,grant.Generation))throw new UnauthorizedAccessException("입력 승인 전환 상태 오류다.");
+            sequences??=new(grant.SessionId,1,grant.Generation,monitor.DeviceName,topologyGeneration);
+            var epoch=sequences.AdvanceLocalPhase();paused=false;return epoch;
+        }
+    }
     public bool Dispatch(string channel,ReadOnlyMemory<byte> bytes)
     {
         var message=ProtocolJson.ParseInput(bytes);
         lock(gate)
         {
-            if(stopped||!permissions.Allows(Capability.Control,message.PermissionGeneration))return false;
+            if(stopped||paused||!permissions.Allows(Capability.Control,message.PermissionGeneration))return false;
             var grant=permissions.Current;
             if(grant is null||message.SessionId!=grant.SessionId)return false;
             sequences??=new InputSequenceGuard(grant.SessionId,1,grant.Generation,monitor.DeviceName,topologyGeneration);
@@ -45,7 +58,16 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
             else if(message.A=="text")
                 foreach(var character in message.Text!){strokes.Add(new(StrokeKind.Unicode,Character:character));strokes.Add(new(StrokeKind.Unicode,Character:character,Up:true));}
             else if(message.A=="down"||keys.Contains((ushort)message.Vk!.Value))strokes.Add(new(StrokeKind.Key,Key:(ushort)message.Vk!.Value,Up:message.A=="up"));
-            return permissions.Execute(Capability.Control,message.PermissionGeneration,()=>Inject(strokes));
+            return permissions.Execute(Capability.Control,message.PermissionGeneration,()=>
+            {
+                if(backend is IInputPreflight preflight)
+                    foreach(var stroke in strokes.Where(s=>!s.Up&&s.Kind is StrokeKind.Key or StrokeKind.Button or StrokeKind.Unicode))
+                    {
+                        var owned=stroke.Kind switch {StrokeKind.Key=>keys.Contains(stroke.Key),StrokeKind.Button=>buttons.Contains(stroke.Button),_=>unicode.Contains(stroke.Character)};
+                        if(!owned&&!preflight.CanPress(stroke)){stopped=true;throw new IOException("로컬 사용자가 이미 누른 키·버튼과 충돌했다.");}
+                    }
+                Inject(strokes);
+            });
         }
     }
     public void Stop()

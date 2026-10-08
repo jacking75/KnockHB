@@ -8,7 +8,7 @@ using RemoteAssist.Host.Core.Security;
 
 namespace RemoteAssist.Host.Core.Windows;
 
-public enum HostChildRole {Tray,Helper,AdminHelper}
+public enum HostChildRole {Tray,Helper,AdminHelper,Recovery}
 
 /// <summary>SYSTEM supervisor only. Fixed protected executables, no arbitrary command or inherited handles.</summary>
 public sealed class SessionProcess : IDisposable
@@ -38,13 +38,25 @@ public sealed class SessionProcess : IDisposable
         DemandSupervisor(session);Enable("SeTcbPrivilege");Check(WTSQueryUserToken(session,out var token));
         using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))return identity.User?.Value??throw new UnauthorizedAccessException("대상 사용자 SID 누락");
     }
+    public static string RecoveryConsoleUserSid(uint session)
+    {
+        using var current=WindowsIdentity.GetCurrent();
+        if(!current.IsSystem||Process.GetCurrentProcess().SessionId!=session||!IsInteractiveConsole(session))throw new UnauthorizedAccessException("현재 복원 SYSTEM 세션이 필요하다.");
+        Enable("SeTcbPrivilege");
+        try
+        {
+            Check(WTSQueryUserToken(session,out var token));
+            using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))return identity.User?.Value??throw new UnauthorizedAccessException("복원 사용자 SID 누락");
+        }
+        finally{Enable("SeTcbPrivilege",false);}
+    }
     public static SessionProcess Start(HostChildRole role,uint session,string pipe,string nonce,PermissionSnapshot? adminGrant=null)
     {
         DemandSupervisor(session);
         if(!Enum.IsDefined(role)||!Guid.TryParseExact(pipe,"N",out _)||nonce.Length!=64||!nonce.All(Uri.IsHexDigit))throw new ArgumentException("헬퍼 bootstrap 설정 오류다.");
-        var system=role==HostChildRole.AdminHelper;
-        if(system&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 독립 관리자 승인이 필요하다.");
-        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
+        var system=role is HostChildRole.AdminHelper or HostChildRole.Recovery;
+        if(role==HostChildRole.AdminHelper&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 독립 관리자 승인이 필요하다.");
+        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.Recovery=>"RemoteAssist.Host.Recovery.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
         Enable("SeTcbPrivilege");Enable("SeIncreaseQuotaPrivilege");Enable("SeAssignPrimaryTokenPrivilege");
         KernelHandle original;
         if(system)Check(OpenProcessToken(GetCurrentProcess(),0xB,out original));else Check(WTSQueryUserToken(session,out original));
@@ -69,7 +81,8 @@ public sealed class SessionProcess : IDisposable
                     using var thread=new KernelHandle(info.Thread);var child=new KernelHandle(info.Process);
                     try
                     {
-                        Check(AssignProcessToJobObject(candidateJob,child));DemandSupervisor(session);
+                        // Recovery outlives service/ordinary-helper Job termination to restore only owned ups.
+                        if(role!=HostChildRole.Recovery)Check(AssignProcessToJobObject(candidateJob,child));DemandSupervisor(session);
                         if(ResumeThread(thread)==uint.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
                         var ownedJob=new KernelHandle(candidateJob.DangerousGetHandle());candidateJob.SetHandleAsInvalid();
                         return new((int)info.Pid,session,sid,role,child,ownedJob);
@@ -86,10 +99,10 @@ public sealed class SessionProcess : IDisposable
         if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=0||!IsInteractiveConsole(session))throw new UnauthorizedAccessException("현재 활성 콘솔을 감독하는 Session 0 SYSTEM 서비스가 필요하다.");
     }
     static void Check(bool result){if(!result)throw new Win32Exception(Marshal.GetLastWin32Error());}
-    static void Enable(string name)
+    static void Enable(string name,bool enabled=true)
     {
         Check(OpenProcessToken(GetCurrentProcess(),0x28,out var token));using(token)
-        {Check(LookupPrivilegeValue(null,name,out var luid));var privilege=new TokenPrivileges {Count=1,Luid=luid,Attributes=2};Check(AdjustTokenPrivileges(token,false,ref privilege,0,0,0));if(Marshal.GetLastWin32Error()!=0)throw new Win32Exception(Marshal.GetLastWin32Error());}
+        {Check(LookupPrivilegeValue(null,name,out var luid));var privilege=new TokenPrivileges {Count=1,Luid=luid,Attributes=enabled?2u:0u};Check(AdjustTokenPrivileges(token,false,ref privilege,0,0,0));if(Marshal.GetLastWin32Error()!=0)throw new Win32Exception(Marshal.GetLastWin32Error());}
     }
     internal sealed class KernelHandle : SafeHandleZeroOrMinusOneIsInvalid
     {public KernelHandle():base(true){}public KernelHandle(nint value):base(true){SetHandle(value);}protected override bool ReleaseHandle()=>CloseHandle(handle);}

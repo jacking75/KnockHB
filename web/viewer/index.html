@@ -32,10 +32,19 @@
     <header class="bar">
       <span class="badge">● 원격 화면 · E2E 암호화</span>
       <span id="stats"></span>
+      <button id="admin-request" type="button" disabled>관리자 지원 요청</button>
+      <button id="admin-sas" type="button" disabled>Ctrl+Alt+Del</button>
+      <button id="admin-revoke" type="button" disabled>관리자 지원 해제</button>
       <button id="hangup" type="button">세션 종료</button>
     </header>
+    <p id="session-status" role="status"></p>
 
-    <video id="screen" autoplay playsinline muted></video>
+    <video id="screen" autoplay playsinline muted tabindex="0" aria-label="대상 화면과 승인된 원격 입력"></video>
+    <footer class="input-bar">
+      <span id="input-status">화면 보기</span>
+      <input id="remote-text" maxlength="4096" placeholder="IME 확정 문자는 자동 입력하며 다른 문자는 버튼으로 보낸다" aria-label="대상 PC에 입력할 문자" disabled>
+      <button id="send-text" type="button" disabled>문자 입력</button>
+    </footer>
   </section>
 
   <script type="module" src="app.js"></script>

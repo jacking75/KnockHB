@@ -6,8 +6,9 @@ namespace RemoteAssist.Host.Core.Input;
 public sealed class InputSequenceGuard(string sessionId,long connectionGeneration,long permissionGeneration,string monitorIdentity,long topologyGeneration)
 {
     readonly object gate=new();
-    long inputSequence,pointerSequence,epoch=1;
+    long inputSequence,pointerSequence,pointerBarrier,epoch=1;
     public long Epoch {get{lock(gate)return epoch;}}
+    public long AdvanceLocalPhase(){lock(gate){epoch=checked(epoch+1);pointerSequence=pointerBarrier=0;return epoch;}}
     public bool Accept(string channel,InputMsg message)
     {
         lock(gate)
@@ -16,16 +17,17 @@ public sealed class InputSequenceGuard(string sessionId,long connectionGeneratio
                 message.MonitorIdentity!=monitorIdentity||message.TopologyGeneration!=topologyGeneration||message.Sequence is <1 or >9007199254740991L||message.InputEpoch is <1 or >9007199254740991L)return false;
             if(channel=="pointer")
             {
-                if(message.T!="mouse"||message.A!="move"||message.InputEpoch!=epoch||message.Sequence<=pointerSequence)return false;
+                if(message.T!="mouse"||message.A!="move"||message.InputEpoch!=epoch||message.Sequence<=pointerSequence||message.Sequence<=pointerBarrier)return false;
                 pointerSequence=message.Sequence;return true;
             }
             if(channel!="input"||message.T=="mouse"&&message.A=="move"||message.Sequence<=inputSequence)return false;
             if(message.T=="reset")
             {
                 if(message.A!="all"||message.InputEpoch!=epoch+1)return false;
-                epoch=message.InputEpoch;pointerSequence=0;
+                epoch=message.InputEpoch;pointerSequence=pointerBarrier=0;
             }
             else if(message.InputEpoch!=epoch)return false;
+            if(message.T=="mouse")pointerBarrier=Math.Max(pointerBarrier,message.PointerBarrier);
             inputSequence=message.Sequence;return true;
         }
     }

@@ -1,15 +1,37 @@
 using System.Runtime.InteropServices;
 using RemoteAssist.Host.Core.Windows;
+using RemoteAssist.Host.Core.Capture;
 
 namespace RemoteAssist.Host.Core.Input;
 
-public sealed class WindowsInputBackend : IInputBackend
+public sealed class WindowsInputBackend(MonitorInfo? approvedMonitor=null) : IInputBackend,IInputPreflight
 {
+    public bool CanPress(InputStroke stroke)
+    {
+        var vk=stroke.Kind switch {StrokeKind.Key=>stroke.Key,StrokeKind.Button=>stroke.Button switch {"left"=>1,"right"=>2,"middle"=>4,_=>throw new ArgumentException("입력 버튼 오류다.")},StrokeKind.Unicode=>0xE7,_=>0};
+        return vk==0||(GetAsyncKeyState(vk)&0x8000)==0;
+    }
     public int Send(IReadOnlyList<InputStroke> strokes)
+    {
+        if(approvedMonitor is { } expected&&!Monitors.Enumerate().Any(m=>m.DeviceName==expected.DeviceName&&m.X==expected.X&&m.Y==expected.Y&&m.Width==expected.Width&&m.Height==expected.Height))return 0;
+        return SendCore(strokes,false);
+    }
+    internal static int SendRecoveryUps(IReadOnlyList<InputStroke> strokes)
+    {
+        if(strokes.Any(s=>!s.Up||s.Kind is not (StrokeKind.Key or StrokeKind.Button or StrokeKind.Unicode)))throw new UnauthorizedAccessException("복원 up만 허용한다.");
+        return SendCore(strokes,true);
+    }
+    internal static int SendApprovedAdmin(IReadOnlyList<InputStroke> strokes)
+    {
+        using var identity=System.Security.Principal.WindowsIdentity.GetCurrent();
+        if(!identity.IsSystem||System.Diagnostics.Process.GetCurrentProcess().SessionId==0)throw new UnauthorizedAccessException("현재 사용자 세션의 승인된 SYSTEM backend가 필요하다.");
+        return SendCore(strokes,true);
+    }
+    static int SendCore(IReadOnlyList<InputStroke> strokes,bool recovery)
     {
         if(IntPtr.Size!=8)throw new PlatformNotSupportedException("Windows x64 입력 backend다.");
         if(strokes.Count>8192)throw new ArgumentOutOfRangeException(nameof(strokes));
-        if(!InputDesktop.IsDefault())return 0;
+        if(!recovery&&!InputDesktop.IsDefault())return 0;
         var left=GetSystemMetrics(76);var top=GetSystemMetrics(77);var width=GetSystemMetrics(78);var height=GetSystemMetrics(79);
         if(width<2||height<2)return 0;
         var inputs=new NativeInput[strokes.Count];
@@ -26,7 +48,7 @@ public sealed class WindowsInputBackend : IInputBackend
                 _=>throw new ArgumentException("입력 종류 오류다.")
             };
         }
-        if(!InputDesktop.IsDefault())return 0;
+        if(!recovery&&!InputDesktop.IsDefault())return 0;
         return (int)SendInput((uint)inputs.Length,inputs,Marshal.SizeOf<NativeInput>());
     }
     static int Absolute(int pixel,int origin,int size)
@@ -36,5 +58,6 @@ public sealed class WindowsInputBackend : IInputBackend
     [StructLayout(LayoutKind.Sequential)]struct KeyboardInput {public ushort VirtualKey,Scan;public uint Flags,Time;public nuint Extra;}
     [StructLayout(LayoutKind.Explicit,Size=40)]struct NativeInput {[FieldOffset(0)]public uint Type;[FieldOffset(8)]public MouseInput Mouse;[FieldOffset(8)]public KeyboardInput Keyboard;}
     [DllImport("user32.dll")]static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")]static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll",SetLastError=true)]static extern uint SendInput(uint count,NativeInput[] inputs,int bytes);
 }

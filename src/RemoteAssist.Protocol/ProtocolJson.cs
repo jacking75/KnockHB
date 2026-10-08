@@ -37,6 +37,7 @@ public static class ProtocolJson
         switch(message.T)
         {
             case "mouse":
+                if(message.A!="move"&&(!document.RootElement.TryGetProperty("pointerBarrier",out _)||message.PointerBarrier is <0 or >9007199254740991L))throw new InvalidDataException("포인터 barrier 오류다.");
                 if(!document.RootElement.TryGetProperty("x",out _)||!document.RootElement.TryGetProperty("y",out _)||
                    !double.IsFinite(message.X)||!double.IsFinite(message.Y)||message.X is <0 or >1||message.Y is <0 or >1)
                     throw new InvalidDataException("잘못된 좌표다.");

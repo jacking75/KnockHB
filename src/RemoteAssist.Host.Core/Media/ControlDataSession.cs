@@ -1,0 +1,58 @@
+using System.Text.Json;
+using RemoteAssist.Host.Core.Capture;
+using RemoteAssist.Host.Core.Security;
+using RemoteAssist.Protocol;
+using SIPSorcery.Net;
+
+namespace RemoteAssist.Host.Core.Media;
+
+internal sealed class ControlDataSession(RTCDataChannel channel,PermissionGate permissions,PermissionSnapshot binding,MonitorInfo monitor,Action<string> fail,Action? inputLease=null,Action<ControlMessage>? adminCommand=null)
+{
+    readonly object gate=new();
+    long sent,received;
+    bool ready;
+    public void Attach()
+    {
+        channel.onopen+=()=>
+        {
+            try{lock(gate){ready=true;var control=binding.Capabilities.HasFlag(Capability.Control);Send("data-ready",Guid.NewGuid().ToString("N"),control?["control","input","pointer"]:["control"],binding.Capabilities.HasFlag(Capability.Admin)?["screen","control","admin"]:control?["screen","control"]:["screen"],new(monitor.DeviceName,1,monitor.X,monitor.Y,monitor.Width,monitor.Height));}}
+            catch {fail("기능 채널 준비 실패다.");}
+        };
+        channel.onclose+=()=>fail("기능 채널이 종료됐다.");
+        channel.onerror+=_=>fail("기능 채널 전송 실패다.");
+        channel.onmessage+=(_,kind,bytes)=>
+        {
+            try
+            {
+                if(kind!=DataChannelPayloadProtocols.WebRTC_String)throw new InvalidDataException("제어 채널은 JSON 텍스트만 허용한다.");
+                var message=ControlMessage.Parse(bytes);
+                lock(gate)
+                {
+                    if(!ready||message.SessionId!=binding.SessionId||message.Generation!=1||message.PermissionGeneration!=binding.Generation||message.Sequence!=received+1||
+                        !permissions.Allows(Capability.Screen,binding.Generation))throw new InvalidDataException("오래되거나 다른 제어 채널이다.");
+                    received=message.Sequence;
+                    if(message.T=="data-ping")
+                    {if(binding.Capabilities.HasFlag(Capability.Control))inputLease?.Invoke();Send("data-pong",message.Id);}
+                    else if(message.T is "admin-request" or "admin-sas" or "admin-revoke"&&binding.Capabilities.HasFlag(Capability.Admin)&&adminCommand!=null)
+                    {if(message.T=="admin-request")AdminState(message.Id,"pending");adminCommand(message);}
+                    else throw new InvalidDataException("현재 Viewer 제어 명령을 허용하지 않는다.");
+                }
+            }
+            catch {fail("잘못된 기능 채널 메시지다.");}
+        };
+    }
+    public void ResetAcknowledged(InputMsg message)=>Send("input-reset-ack",message.Id,inputEpoch:message.InputEpoch);
+    public void AdminState(string id,string state,long? adminGeneration=null,long? inputEpoch=null)=>Send("admin-state",id,state:state,adminGeneration:adminGeneration,inputEpoch:inputEpoch);
+    void Send(string type,string id,string[]? channels=null,string[]? capabilities=null,MonitorDescriptor? descriptor=null,long? inputEpoch=null,string? state=null,long? adminGeneration=null)
+    {
+        lock(gate)
+        {
+            if(channel.readyState!=RTCDataChannelState.open||channel.bufferedAmount>256*1024)throw new IOException("기능 채널 송신 상한/상태 오류다.");
+            var message=new ControlMessage {T=type,SessionId=binding.SessionId,Generation=1,PermissionGeneration=binding.Generation,Sequence=sent+1,Id=id,
+                Channels=channels,Permissions=capabilities,Monitor=descriptor,InputEpoch=inputEpoch,State=state,AdminGeneration=adminGeneration};
+            var bytes=JsonSerializer.SerializeToUtf8Bytes(message);ControlMessage.Parse(bytes);
+            if(!permissions.Execute(Capability.Screen,binding.Generation,()=>channel.send(System.Text.Encoding.UTF8.GetString(bytes))))throw new UnauthorizedAccessException("화면 권한이 폐기됐다.");
+            sent++;
+        }
+    }
+}

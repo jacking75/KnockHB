@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>$(WindowsTfm)</TargetFramework><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><InvariantGlobalization>false</InvariantGlobalization></PropertyGroup>
+</Project>

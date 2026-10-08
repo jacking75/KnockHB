@@ -11,6 +11,17 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("admin requires second local approval and shared frame slots reject stale or cleared data",AdminRegression.Run),
+    ("audit binds durable closed metadata, rotates bounded files and rejects storage failures",AuditRegression.Run),
+    ("independent input recovery reserves before down and retains repeated Unicode partial prefixes",RecoveryRegression.Run),
+    ("control startup rejects mismatched capability, unknown field, missing monitor and extra ping body",async()=>
+    {
+        var ready=new ControlMessage {T="data-ready",SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,Id="request",Channels=["control"],Permissions=["screen"],Monitor=new("DISPLAY",1,-2160,0,2160,3840)};
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(ready);Check(ControlMessage.Parse(bytes).Monitor!.X==-2160,"portrait binding lost");
+        foreach(var invalid in new[]{ready with {Permissions=["control"]},ready with {Monitor=null},ready with {T="data-ping"},ready with {Generation=9007199254740992L}})
+            await Reject(()=>Task.FromResult(ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(invalid))));
+        await Reject(()=>Task.FromResult(ControlMessage.Parse(Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(bytes).Replace("\"v\":1","\"unknown\":true,\"v\":1")))));
+    }),
     ("input consent, replay, final button coordinate, reset, revocation and partial Unicode recovery",InputRegression.Run),
     ("Host settings accepts Windows UTF8 BOM but rejects duplicate and unknown configuration",async()=>
     {

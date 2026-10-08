@@ -7,6 +7,7 @@ using RemoteAssist.Host.Core.Media;
 using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Signaling;
 using RemoteAssist.Host.Core.Windows;
+using RemoteAssist.Host.Core.Input;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
@@ -38,14 +39,34 @@ public sealed class ScreenShareSession : IAsyncDisposable
     private string _encoderName = "(미선택)";
     private MonitorInfo _monitor;
     private bool _answerApplied;
+    private InputDataSession? _inputData;
+    private ControlDataSession? _controlData;
+    private AdminFrameSource? _adminFrame;
     private readonly Queue<IceCandidate> _remoteIce = new();
     public SessionCredentials? Credentials { get; private set; }
     public Task<SessionOutcome> Completion => _completion.Task;
     public string EncoderName => Volatile.Read(ref _encoderName);
     public MonitorInfo Monitor => _monitor;
+    public Capability GrantedCapabilities=>_permissions.Current?.Capabilities??Capability.None;
     public event Action<int, int>? FrameSent;
     public event Action<string>? StateChanged;
     public Func<SupporterIdentity, CancellationToken, Task<Capability>>? RequestLocalConsent { get; set; }
+    public Func<PermissionSnapshot,IInputBackend>? CreateInputBackend {get;set;}
+    public Action? InputLeaseObserved {get;set;}
+    public Action<ControlMessage>? AdminCommand {get;set;}
+    public AdminFrameSource? AdminFrame=>Volatile.Read(ref _adminFrame);
+    public void ActivateAdmin(AdminFrameSource source)
+    {
+        lock(_endGate)
+        {
+            var grant=_permissions.Current;
+            if(Volatile.Read(ref _ended)!=0||_adminFrame!=null||grant is null||!grant.Capabilities.HasFlag(Capability.Admin)||grant.SessionId!=source.Approval.SessionId||grant.ConnectionId!=source.Approval.ConnectionId||grant.Generation!=source.Approval.PermissionGeneration||!source.IsCurrent)
+            {source.Dispose();throw new UnauthorizedAccessException("현재 관리자 프레임 승인이 아니다.");}
+            Volatile.Write(ref _adminFrame,source);_keyframes.Request();
+        }
+        _controlData!.AdminState(source.Approval.RequestId,"active",source.Approval.AdminGeneration,_inputData!.ResumeLocalPhase());
+    }
+    public void DenyAdmin(string requestId)=>_controlData!.AdminState(requestId,"denied",inputEpoch:_inputData!.ResumeLocalPhase());
 
     public ScreenShareSession(ScreenShareOptions options, ILoggerFactory? loggerFactory = null)
     {
@@ -150,9 +171,9 @@ public sealed class ScreenShareSession : IAsyncDisposable
         consentDeadline.Token.ThrowIfCancellationRequested();
         if (_lifetime.IsCancellationRequested || capability == Capability.None) { EndSession("대상자가 승인을 거절했다", false); return; }
         // Only implemented capabilities can be granted. Future features stay denied.
-        if ((capability & ~(Capability.Screen)) != 0) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
+        if ((capability & ~(Capability.Screen|Capability.Control|Capability.Admin)) != 0||capability.HasFlag(Capability.Control)&&CreateInputBackend==null||capability.HasFlag(Capability.Admin)&&(!capability.HasFlag(Capability.Control)||AdminCommand==null)) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
         var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, TimeSpan.FromHours(2));
-        await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = ["screen"], PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
+        await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = capability.HasFlag(Capability.Admin)?["screen","control","admin"]:capability.HasFlag(Capability.Control)?["screen","control"]:["screen"], PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
         var iceServers = _options.StunServers.Select(url => new RTCIceServer {urls=url}).ToList();
         foreach(var server in _signaling.JoinedAck?.IceServers ?? [])
             foreach(var url in server.Urls)iceServers.Add(new RTCIceServer{urls=url,username=server.Username,credential=server.Credential});
@@ -160,6 +181,20 @@ public sealed class ScreenShareSession : IAsyncDisposable
         _pc = new RTCPeerConnection(new RTCConfiguration
         { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all }, 0, new PortRange(27002, 27099));
         var pc = _pc;
+        var controlChannel=await pc.createDataChannel("control",new RTCDataChannelInit {ordered=true});
+        var control=new ControlDataSession(controlChannel,_permissions,grant,_monitor,reason=>EndSession(reason,true),InputLeaseObserved,message=>
+        {
+            if(message.T is "admin-sas" or "admin-revoke"&&AdminFrame?.Approval.AdminGeneration!=message.AdminGeneration)throw new UnauthorizedAccessException("현재 관리자 세대가 아니다.");
+            if(message.T=="admin-request")_inputData!.SuspendForApproval();
+            if(message.T=="admin-revoke")EndSession("지원자가 관리자 모드와 지원 세션을 해제했다.");else AdminCommand!(message);
+        });_controlData=control;control.Attach();
+        if(capability.HasFlag(Capability.Control))
+        {
+            _inputData=new(new InputSession(_permissions,_monitor,1,CreateInputBackend!(grant)),_lifetime.Token,reason=>EndSession(reason,true),control.ResetAcknowledged);
+            _inputData.Attach(await pc.createDataChannel("input",new RTCDataChannelInit {ordered=true}));
+            _inputData.Attach(await pc.createDataChannel("pointer",new RTCDataChannelInit {ordered=true}));_inputData.Start();
+        }
+        pc.ondatachannel+=_=>EndSession("미지원 또는 중복 기능 채널이다.",true);
         var feedbackBinding=new RtcpFeedbackBinding();
         pc.OnReceiveReport += (_, media, report) =>
         {
@@ -208,13 +243,15 @@ public sealed class ScreenShareSession : IAsyncDisposable
     }
     private void CaptureLoop(long permissionGeneration)
     {
+        IScreenCapture? capture=null;
+        ReadOnlyMemory<byte> lastFrame=default;
         try
         {
-            using var capture = WgcScreenCapture.IsSupported() ? (IScreenCapture)new WgcScreenCapture(_monitor) : new DxgiScreenCapture(_monitor);
+            capture = WgcScreenCapture.IsSupported() ? (IScreenCapture)new WgcScreenCapture(_monitor) : new DxgiScreenCapture(_monitor);
             _monitor = capture.Monitor;
             using var encoder = new FFmpegH264Encoder(_options.PreferredEncoder, _loggerFactory?.CreateLogger<FFmpegH264Encoder>());
             using var scaler = new BgraFrameScaler(_options.MaxOutputLongEdge,_options.MaxOutputShortEdge);
-            ReadOnlyMemory<byte> lastFrame = default;
+            bool privilegedSource=false;
             var width = 0; var height = 0; var sent = 0;
             var clock = Stopwatch.StartNew(); var previousSend = TimeSpan.Zero;
             var nextTick=TimeSpan.Zero;var interval=TimeSpan.FromSeconds(1d/_options.TargetFps);
@@ -222,8 +259,19 @@ public sealed class ScreenShareSession : IAsyncDisposable
             NotifyState("승인한 화면 공유 중");
             while (!_lifetime.IsCancellationRequested && _permissions.Allows(Capability.Screen, permissionGeneration))
             {
-                if(!InputDesktop.IsDefault()){EndSession("관리자 승인이 없는 데스크톱 전환으로 화면 공유를 종료했다.");return;}
-                if (capture.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
+                var admin=AdminFrame;
+                if(admin!=null)
+                {
+                    if(!privilegedSource){capture?.Dispose();capture=null;ClearCopiedFrame(ref lastFrame);privilegedSource=true;}
+                    ClearCopiedFrame(ref lastFrame);
+                    if(admin.TryRead(1,out var privileged))
+                    {
+                        lastFrame=privileged!.Pixels;
+                        if(width!=privileged.Width||height!=privileged.Height){width=privileged.Width;height=privileged.Height;encoder.Configure(width,height,_options.TargetFps,_options.BitrateKbps);Volatile.Write(ref _encoderName,encoder.EncoderName);_keyframes.Request();}
+                    }
+                }
+                else if(!InputDesktop.IsDefault()){EndSession("관리자 승인이 없는 데스크톱 전환으로 화면 공유를 종료했다.");return;}
+                else if (capture!.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
                 {
                     FrameLayout.Validate(frame.Bgra, frame.Width, frame.Height, frame.Stride);
                     lastFrame=scaler.Scale(frame.Bgra,frame.Width,frame.Height,frame.Stride);
@@ -246,7 +294,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
                         lock (_endGate)
                         {
                             if (Volatile.Read(ref _ended) != 0 || !_permissions.Allows(Capability.Screen, permissionGeneration)) break;
-                            if(!InputDesktop.IsDefault()){EndSession("관리자 승인이 없는 데스크톱 전환으로 화면 공유를 종료했다.");return;}
+                            if(admin is null?!InputDesktop.IsDefault():!admin.IsCurrent){EndSession("데스크톱 송신 승인이 종료됐다.");return;}
                             var now = clock.Elapsed;
                             var delta = previousSend == TimeSpan.Zero ? 1.0 / _options.TargetFps : (now - previousSend).TotalSeconds;
                             _pc!.SendVideo((uint)Math.Max(1, Math.Round(delta * 90000)), encoded.ToArray());
@@ -263,6 +311,12 @@ public sealed class ScreenShareSession : IAsyncDisposable
             if (!_lifetime.IsCancellationRequested) EndSession("권한 유효기간 종료", false);
         }
         catch (Exception ex) { _log.LogError(ex, "미디어 파이프라인 실패"); EndSession("미디어 파이프라인 실패", true); }
+        finally{capture?.Dispose();ClearCopiedFrame(ref lastFrame);}
+    }
+    static void ClearCopiedFrame(ref ReadOnlyMemory<byte> frame)
+    {
+        if(System.Runtime.InteropServices.MemoryMarshal.TryGetArray(frame,out var bytes)&&bytes.Array!=null)System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes.AsSpan());
+        frame=default;
     }
     public void EndSession(string reason = "로컬 종료", bool failed = false)
     {
@@ -292,9 +346,10 @@ public sealed class ScreenShareSession : IAsyncDisposable
             if (!stopped) throw new TimeoutException("네이티브 캡처가 정지하지 않았다. 살아 있는 스레드의 자원은 해제하지 않는다. 헬퍼 감독 종료가 필요하다.");
         }
         if (_signaling is not null) await _signaling.DisposeAsync();
-        var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask }.OfType<Task>();
+        var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask,_inputData?.Completion }.OfType<Task>();
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(Math.Max(.1, 5 - clock.Elapsed.TotalSeconds)));
         _pc?.close(); _pc?.Dispose();
+        _adminFrame?.Dispose();
         _callerCancellation.Dispose();
         _lifetime.Dispose();
     }

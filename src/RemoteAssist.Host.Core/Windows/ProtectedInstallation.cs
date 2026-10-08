@@ -7,7 +7,7 @@ public static class ProtectedInstallation
 {
     public static string ResolveExecutable(string fileName)
     {
-        if(fileName is not ("RemoteAssist.Host.Service.exe" or "RemoteAssist.Host.Tray.exe" or "RemoteAssist.Host.Helper.exe" or "RemoteAssist.Host.AdminHelper.exe"))
+        if(fileName is not ("RemoteAssist.Host.Service.exe" or "RemoteAssist.Host.Tray.exe" or "RemoteAssist.Host.Helper.exe" or "RemoteAssist.Host.AdminHelper.exe" or "RemoteAssist.Host.Recovery.exe"))
             throw new ArgumentException("고정된 Host 실행 파일만 허용한다.");
         var root=Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
         var programFiles=Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).TrimEnd(Path.DirectorySeparatorChar);

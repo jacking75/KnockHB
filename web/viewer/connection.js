@@ -1,6 +1,6 @@
 // Each attempt owns its socket, peer connection, timers and pending ICE.
-export function parseSignal(text) {
-  if (typeof text !== 'string' || new TextEncoder().encode(text).length > 128 * 1024) throw Error('시그널링 크기 또는 타입 오류다.');
+function parseEnvelope(text, maxBytes, typeField) {
+  if (typeof text !== 'string' || new TextEncoder().encode(text).length > maxBytes) throw Error('프로토콜 크기 또는 타입 오류다.');
   const message = JSON.parse(text);
   const stack = [];
   const tokens = text.match(/"(?:[^"\\]|\\.)*"|[{}\[\],:]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/g) || [];
@@ -18,9 +18,11 @@ export function parseSignal(text) {
       top.names.add(key);
     }
   }
-  if (!message || message.v !== 1 || typeof message.type !== 'string') throw Error('지원하지 않는 프로토콜이다.');
+  if (!message || message.v !== 1 || typeof message[typeField] !== 'string') throw Error('지원하지 않는 프로토콜이다.');
   return message;
 }
+export const parseSignal = text => parseEnvelope(text, 128 * 1024, 'type');
+export const parseData = text => parseEnvelope(text, 32 * 1024, 't');
 
 export function describeError(message) {
   return ({ 'not-found': '없는 세션 코드다.', 'expired': '세션이 만료됐다. 새 코드를 요청해야 한다.',
@@ -32,12 +34,14 @@ export function describeError(message) {
 export class ViewerConnection {
   constructor({ base, code, pin, displayName, createSocket = url => new WebSocket(url),
     createPeer = config => new RTCPeerConnection(config), isCurrent = () => true,
-    onState = () => {}, onTrack = () => {}, onStats = () => {}, onEnd = () => {},
+    onState = () => {}, onTrack = () => {}, onStats = () => {}, onEnd = () => {}, onData = () => {},
     setTimer = (callback, interval) => globalThis.setInterval(callback, interval),
     clearTimer = timer => globalThis.clearInterval(timer), now = Date.now, forceRelay = false }) {
     this.base = base; this.code = code; this.pin = pin; this.displayName = displayName;
     this.createPeer = createPeer; this.isCurrent = isCurrent; this.onState = onState;
     this.onTrack = onTrack; this.onStats = onStats; this.onEnd = onEnd;
+    this.onData = onData; this.channels = new Map(); this.dataReceived = 0; this.dataSent = 0;
+    this.inputSequence = 0; this.pointerSequence = 0; this.inputEpoch = 1; this.pendingPointer = null;
     this.setTimer = setTimer; this.clearTimer = clearTimer; this.now = now;
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
     this.forceRelay = forceRelay; this.iceServers = [];
@@ -100,7 +104,8 @@ export class ViewerConnection {
       case 'peer-joined': case 'consent-pending': this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
       case 'consent':
         if (!Array.isArray(message.permissions) || !Number.isSafeInteger(message.permissionGeneration) || message.permissionGeneration < 1) throw Error('잘못된 승인 통지다.');
-        this.granted = message.permissions.includes('screen'); this.permissionGeneration = message.permissionGeneration;
+        if(this.granted||!['["screen"]','["screen","control"]','["screen","control","admin"]'].includes(JSON.stringify(message.permissions)))throw Error('중복 또는 미지원 승인 통지다.');
+        this.granted = message.permissions.includes('screen'); this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
         this.onState('대상자가 승인한 기능을 연결하는 중이다.'); break;
       case 'consent-denied': this.end('대상자가 동의를 거절했다.'); break;
       case 'ice':
@@ -124,6 +129,7 @@ export class ViewerConnection {
         this.end('WebRTC 협상 시간 초과다.', true);
     }, 1000));
     pc.ontrack = event => { if (this.live() && this.pc === pc) this.onTrack(event); };
+    pc.ondatachannel = event => { if (this.live() && this.pc === pc) this.acceptChannel(event.channel); else event.channel.close(); };
     pc.onicecandidate = event => {
       if (this.live() && this.pc === pc && event.candidate)
         this.send({ type: 'ice', room: this.code, ice: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate });
@@ -165,11 +171,113 @@ export class ViewerConnection {
       finally { busy = false; }
     }, 1000));
   }
+  acceptChannel(channel) {
+    if (!(['control', ...(this.permissions?.includes('control') ? ['input', 'pointer'] : [])].includes(channel.label)) || this.channels.has(channel.label) || channel.ordered !== true
+        || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) { channel.close(); this.end('미지원 또는 중복 기능 채널이다.', true); return; }
+    this.channels.set(channel.label, channel);
+    channel.onclose = () => { if (this.live()) this.end('기능 채널이 종료됐다.', true); };
+    channel.onerror = () => { if (this.live()) this.end('기능 채널 전송 실패다.', true); };
+    if (channel.label !== 'control') {
+      channel.onmessage = () => this.end('입력 채널에서 예상하지 않은 응답이다.', true);
+      return;
+    }
+    channel.onmessage = event => {
+      if (!this.live()) return;
+      try {
+        const message = parseData(event.data);
+        if (message.sessionId !== this.sessionId || message.generation !== 1 || message.permissionGeneration !== this.permissionGeneration
+            || !Number.isSafeInteger(message.seq) || message.seq !== this.dataReceived + 1 || typeof message.id !== 'string' || message.id.length < 1 || message.id.length > 64)
+          throw Error('다른 기능 채널 바인딩이다.');
+        this.dataReceived = message.seq;
+        const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : [])];
+        if (Object.keys(message).some(key => !allowed.includes(key))) throw Error('알 수 없는 제어 필드다.');
+        if (message.t === 'data-ready') {
+          const control = this.permissions.includes('control');
+          if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(control ? ['control','input','pointer'] : ['control'])
+              || JSON.stringify(message.permissions) !== JSON.stringify(this.permissions) || !this.permissions.includes('screen')) throw Error('기능 채널 준비 오류다.');
+          const m = message.monitor;
+          if (!m || typeof m.identity !== 'string' || m.identity.length < 1 || m.identity.length > 128 || m.topologyGeneration !== 1
+              || Object.keys(m).some(key=>!['identity','topologyGeneration','x','y','width','height'].includes(key))
+              || ![m.x, m.y, m.width, m.height].every(Number.isSafeInteger) || m.x < -2147483648 || m.x > 2147483647 || m.y < -2147483648 || m.y > 2147483647 || m.width < 2 || m.height < 2 || m.width > 16384 || m.height > 16384) throw Error('모니터 계약 오류다.');
+          this.monitor = Object.freeze({ ...m }); this.dataReady = true; this.pingId = message.id;
+          this.lastPong = this.now(); this.ping();
+          this.timers.push(this.setTimer(() => {
+            if (!this.live()) return;
+            if (this.pendingReset && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
+            else if (this.now() - this.lastPong >= 2000) this.end('기능 채널 생존 확인 시간 초과다.', true); else this.ping();
+          }, 500));
+          this.timers.push(this.setTimer(() => this.flushPointer(), 16));
+        } else if(message.t === 'admin-state') {
+          if(!this.permissions.includes('admin')||message.id!==this.adminRequestId||!['pending','denied','active'].includes(message.state))throw Error('예상하지 않은 관리자 응답이다.');
+          if(message.state === 'pending') {if(message.adminGeneration!==undefined||message.inputEpoch!==undefined)throw Error('잘못된 관리자 대기 응답이다.');}
+          else {
+            if(!Number.isSafeInteger(message.inputEpoch)||message.inputEpoch!==this.inputEpoch+1)throw Error('관리자 입력 epoch 오류다.');
+            if(message.state === 'active' ? !Number.isSafeInteger(message.adminGeneration)||message.adminGeneration<1 : message.adminGeneration!==undefined)throw Error('관리자 세대 오류다.');
+            this.inputEpoch=message.inputEpoch;this.pointerSequence=0;this.pendingPointer=null;this.adminRequestId=null;
+            this.adminGeneration=message.state === 'active'?message.adminGeneration:null;
+          }
+        } else if (message.t === 'input-reset-ack') {
+          if(!this.pendingReset || message.id !== this.pendingReset.id || message.inputEpoch !== this.inputEpoch) throw Error('오래되거나 다른 입력 해제 응답이다.');
+          this.pendingReset = null;
+        } else if (message.t !== 'data-pong' || !this.dataReady || message.id !== this.pingId) throw Error('예상하지 않은 제어 응답이다.');
+        else this.lastPong = this.now();
+        this.onData(message);
+      } catch { this.end('잘못된 기능 채널 메시지다.', true); }
+    };
+  }
+  ping() {
+    const channel = this.channels.get('control');
+    if (!this.live() || channel?.readyState !== 'open' || channel.bufferedAmount > 256 * 1024) { this.end('기능 채널 송신 상한이다.', true); return; }
+    try { channel.send(JSON.stringify({ v: 1, t: 'data-ping', sessionId: this.sessionId, generation: 1, permissionGeneration: this.permissionGeneration, id: this.pingId, seq: ++this.dataSent })); }
+    catch { this.end('기능 채널 송신 실패다.', true); }
+  }
+  canControl() { return this.live() && !this.pendingReset && !this.adminRequestId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
+  controlCommand(t,fields={},id) {
+    const channel=this.channels.get('control');
+    if(!this.live()||channel?.readyState!=='open'||channel.bufferedAmount>256*1024){this.end('기능 제어 송신 상태 오류다.',true);return false;}
+    try{channel.send(JSON.stringify({...fields,v:1,t,sessionId:this.sessionId,generation:1,permissionGeneration:this.permissionGeneration,id,seq:++this.dataSent}));return true;}
+    catch{this.end('기능 제어 송신 실패다.',true);return false;}
+  }
+  requestAdmin(id=globalThis.crypto.randomUUID().replaceAll('-','')) {
+    if(!this.canControl()||!this.permissions.includes('admin')||this.adminGeneration)return false;
+    this.adminRequestId=id;this.onData({t:'input-paused'});return this.controlCommand('admin-request',{},id);
+  }
+  adminAction(t) {
+    if(!this.canControl()||!this.adminGeneration||!['admin-sas','admin-revoke'].includes(t))return false;
+    return this.controlCommand(t,{adminGeneration:this.adminGeneration},globalThis.crypto.randomUUID().replaceAll('-',''));
+  }
+  input(payload, pointer = false) {
+    if (!this.canControl()) return false;
+    if (pointer) { this.pendingPointer = payload; return true; }
+    if(payload.t === 'mouse') { this.flushPointer(); this.pendingPointer = null; payload = {...payload, pointerBarrier:this.pointerSequence}; }
+    const channel = this.channels.get('input');
+    if (channel.bufferedAmount > 64 * 1024) { this.end('입력 채널 송신 상한이다.', true); return false; }
+    try { channel.send(JSON.stringify(this.inputEnvelope(payload, ++this.inputSequence))); return true; }
+    catch { this.end('입력 전송 실패다.', true); return false; }
+  }
+  inputEnvelope(payload, seq) {
+    return { ...payload, v: 1, sessionId: this.sessionId, generation: 1, permissionGeneration: this.permissionGeneration,
+      id: `input-${this.inputEpoch}-${seq}`, seq, inputEpoch: this.inputEpoch, monitorIdentity: this.monitor.identity, topologyGeneration: this.monitor.topologyGeneration };
+  }
+  flushPointer() {
+    if (!this.canControl() || !this.pendingPointer) return;
+    const channel = this.channels.get('pointer'); if (channel.bufferedAmount >= 2048) return;
+    const latest = this.pendingPointer; this.pendingPointer = null;
+    try { channel.send(JSON.stringify(this.inputEnvelope(latest, ++this.pointerSequence))); }
+    catch { this.end('포인터 전송 실패다.', true); }
+  }
+  resetInput() {
+    if (!this.canControl()) return;
+    this.pendingPointer = null; this.inputEpoch++; this.pointerSequence = 0;
+    if(this.input({ t: 'reset', a: 'all' })) {this.pendingReset={id:`input-${this.inputEpoch}-${this.inputSequence}`,at:this.now()};this.onData({t:'input-paused'});}
+  }
   end(reason = '세션을 종료했다.', error = false) {
-    if (this.closed) return;
+    if (this.closed || this.ending) return; this.ending = true;
+    this.resetInput();
     this.reason ??= reason; this.closed = true; this.pin = '';
     for (const timer of this.timers.splice(0)) this.clearTimer(timer);
     this.pendingIce.length = 0;
+    for (const channel of this.channels.values()) channel.close(); this.channels.clear();
     this.pc?.close();
     if (this.ws.readyState < 2) this.ws.close(); // CONNECTING is also owned
     this.onEnd(this.reason, error);
