@@ -4,9 +4,10 @@ namespace RemoteAssist.Host.Core.Security;
 public sealed class LocalApprovalGate
 {
     readonly object gate=new();string? current,kind;bool ended;
+    public bool IsPending {get{lock(gate)return current!=null;}}
     public bool TryBegin(string requestId,string approvalKind)
     {
-        if(!Guid.TryParseExact(requestId,"N",out var id)||id.ToString("N")!=requestId||approvalKind is not ("admin" or "file" or "runbook"))throw new InvalidDataException("로컬 승인 요청 바인딩 오류다.");
+        if(!Guid.TryParseExact(requestId,"N",out var id)||id.ToString("N")!=requestId||approvalKind is not ("admin" or "file" or "runbook" or "monitor"))throw new InvalidDataException("로컬 승인 요청 바인딩 오류다.");
         lock(gate){if(ended||current!=null)return false;current=requestId;kind=approvalKind;return true;}
     }
     public bool Complete(string requestId,string approvalKind)

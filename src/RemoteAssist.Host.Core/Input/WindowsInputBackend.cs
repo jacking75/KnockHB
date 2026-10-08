@@ -4,7 +4,7 @@ using RemoteAssist.Host.Core.Capture;
 
 namespace RemoteAssist.Host.Core.Input;
 
-public sealed class WindowsInputBackend(MonitorInfo? approvedMonitor=null) : IInputBackend,IInputPreflight
+public sealed class WindowsInputBackend(MonitorInfo? approvedMonitor=null,Func<MonitorInfo>? monitorProvider=null) : IInputBackend,IInputPreflight
 {
     public bool CanPress(InputStroke stroke)
     {
@@ -13,7 +13,7 @@ public sealed class WindowsInputBackend(MonitorInfo? approvedMonitor=null) : IIn
     }
     public int Send(IReadOnlyList<InputStroke> strokes)
     {
-        if(approvedMonitor is { } expected&&!Monitors.Enumerate().Any(m=>m.DeviceName==expected.DeviceName&&m.X==expected.X&&m.Y==expected.Y&&m.Width==expected.Width&&m.Height==expected.Height))return 0;
+        if((monitorProvider?.Invoke()??approvedMonitor) is { } expected&&!Monitors.Enumerate().Any(m=>m.DeviceName==expected.DeviceName&&m.X==expected.X&&m.Y==expected.Y&&m.Width==expected.Width&&m.Height==expected.Height))return 0;
         return SendCore(strokes,false);
     }
     internal static int SendRecoveryUps(IReadOnlyList<InputStroke> strokes)

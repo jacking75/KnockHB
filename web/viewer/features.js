@@ -8,7 +8,7 @@ export function permissionMask(permissions) {
 }
 export function featureChannels(permissions) {
   const mask=permissionMask(permissions),result=['control'];
-  if(mask&2)result.push('input','pointer');if(mask&8)result.push('file');if(mask&144)result.push('chat');if(mask&32)result.push('telemetry');return result;
+  if(mask&2)result.push('input','pointer');if(mask&8)result.push('file');if(mask&144)result.push('chat');if(mask&32)result.push('telemetry');if(mask&64)result.push('runbook');return result;
 }
 export function validText(text,max=4096,bytes=32768) {
   return typeof text==='string'&&text.length<=max&&!text.includes('\0')&&text.isWellFormed()&&new TextEncoder().encode(text).length<=bytes;
@@ -38,8 +38,8 @@ export function validateSnapshot(s) {
   return s;
 }
 export class FeatureSession {
-  constructor(connection){this.connection=connection;this.received={chat:0,telemetry:0};this.sent=0;this.pending=new Map();this.seen=new Set();this.quotas=new Map();}
-  allowed(permission){const c=this.connection;return c.live()&&c.dataReady&&c.permissions?.includes(permission);}
+  constructor(connection){this.connection=connection;this.generation=connection.generation??1;this.received={chat:0,telemetry:0};this.sent=0;this.pending=new Map();this.seen=new Set();this.quotas=new Map();}
+  allowed(permission){const c=this.connection;return c.live()&&!c.recovering&&(c.generation??1)===this.generation&&c.dataReady&&c.permissions?.includes(permission);}
   ready(permission){return this.allowed(permission)&&this.connection.channels.get(permission==='diagnostics'?'telemetry':'chat')?.readyState==='open';}
   quota(type,max){const now=this.connection.now(),old=this.quotas.get(type);if(!old||now-old.start>=1000){this.quotas.set(type,{start:now,count:1});return true;}if(old.count>=max)return false;old.count++;return true;}
   send(t,fields={},id=globalThis.crypto.randomUUID().replaceAll('-','')) {
@@ -47,7 +47,7 @@ export class FeatureSession {
     if(!this.ready(permission)||!guid.test(id))return false;
     if(!this.quota(permission,permission==='chat'?5:2)){c.onData({t:'feature-status',text:'요청 빈도를 줄여야 한다.'});return false;}
     if(ch.bufferedAmount>65536){c.end('보조 채널 송신 상한이다.',true);return false;}
-    try{const json=JSON.stringify({...fields,v:1,t,sessionId:c.sessionId,generation:1,permissionGeneration:c.permissionGeneration,id,seq:this.sent+1});if(new TextEncoder().encode(json).length>30720){c.onData({t:'feature-status',text:'텍스트의 JSON 크기 한도를 초과했다.'});return false;}ch.send(json);this.sent++;return true;}
+    try{const json=JSON.stringify({...fields,v:1,t,sessionId:c.sessionId,generation:(c.generation??1),permissionGeneration:c.permissionGeneration,id,seq:this.sent+1});if(new TextEncoder().encode(json).length>30720){c.onData({t:'feature-status',text:'텍스트의 JSON 크기 한도를 초과했다.'});return false;}ch.send(json);this.sent++;return true;}
     catch{c.end('보조 채널 전송 실패다.',true);return false;}
   }
   chat(text){return validText(text)&&text.length>0&&this.send('chat',{text});}
@@ -60,7 +60,7 @@ export class FeatureSession {
   }
   async receive(label,message) {
     const c=this.connection,common=['v','t','sessionId','generation','permissionGeneration','id','seq'];
-    if(message.sessionId!==c.sessionId||message.generation!==1||message.permissionGeneration!==c.permissionGeneration||!guid.test(message.id)||!Number.isSafeInteger(message.seq)||message.seq!==this.received[label]+1||this.seen.has(message.id))throw Error('보조 채널 바인딩·재생 오류다.');
+    if(message.sessionId!==c.sessionId||message.generation!==(c.generation??1)||message.permissionGeneration!==c.permissionGeneration||!guid.test(message.id)||!Number.isSafeInteger(message.seq)||message.seq!==this.received[label]+1||this.seen.has(message.id))throw Error('보조 채널 바인딩·재생 오류다.');
     const fields=message.t==='chat'?['text']:message.t==='telemetry'?['snapshot']:message.t==='clipboard-text'?['text','hash']:message.t==='clipboard-applied'?['hash']:message.t==='clipboard-rejected'?['code']:null;
     if(!fields||Object.keys(message).some(k=>![...common,...fields].includes(k))||fields.some(k=>!(k in message)))throw Error('보조 채널 필드 오류다.');
     if(message.t==='telemetry') {if(label!=='telemetry'||!c.permissions.includes('diagnostics'))throw Error('진단 방향·권한 오류다.');validateSnapshot(message.snapshot);}
@@ -73,10 +73,10 @@ export class FeatureSession {
         if(message.t==='clipboard-text'){if(pending.action!=='get'||!validText(message.text,8192,16384)||message.hash!==await textHash(message.text))throw Error('클립보드 hash 오류다.');}
         else if(message.t==='clipboard-applied'){if(pending.action!=='set'||message.hash!==pending.hash)throw Error('클립보드 적용 응답 오류다.');}
         else if(!['clipboard-busy','too-large','unavailable'].includes(message.code))throw Error('클립보드 거부 코드 오류다.');
-        if(!c.live())return;this.pending.delete(message.id);
+        if(!this.allowed('clipboard'))return;this.pending.delete(message.id);
       }
     }
-    if(!c.live())return;
+    if(!this.allowed(message.t==='telemetry'?'diagnostics':message.t==='chat'?'chat':'clipboard'))return;
     this.received[label]=message.seq;this.seen.add(message.id);if(this.seen.size>256)this.seen.delete(this.seen.values().next().value);
     c.onData(message);
   }

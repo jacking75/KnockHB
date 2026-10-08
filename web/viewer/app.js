@@ -7,9 +7,13 @@ const el = Object.fromEntries(['join', 'session', 'join-form', 'code', 'pin', 'n
 let current = null;
 let input = null;
 let lastDiagnostics=0;
+for(const id of ['file-panel','file-source','file-send','file-status','file-accept','file-reject','file-cancel'])el[id]=document.getElementById(id);
+for(const id of ['media-controls','monitor-list','monitor-choice','monitor-select','quality-mode','quality-status'])el[id]=document.getElementById(id);
+for(const id of ['runbook-panel','runbook-choice','runbook-detail','runbook-preview','runbook-send','runbook-cancel','runbook-result'])el[id]=document.getElementById(id);
 function status(text, error = false) { for(const target of [el.status,el['session-status']]){target.textContent=text;target.classList.toggle('error',error);} }
 function reset() { input?.dispose();input=null;for(const id of ['remote-text','send-text','admin-request','admin-sas','admin-revoke'])el[id].disabled=true;el['input-status'].textContent='화면 보기';el.screen.srcObject = null; el.session.hidden = true; el.join.hidden = false; el.stats.textContent = ''; delete el.session.dataset.controlState; delete el.session.dataset.inputReady; }
-function resetFeatures(){lastDiagnostics=0;for(const id of ['chat-panel','clipboard-panel','diagnostics-panel'])el[id].hidden=true;for(const id of ['chat-history','feature-status','diagnostics-content'])el[id].textContent='';el['chat-text'].value=el['clipboard-text'].value='';el['clipboard-copy'].disabled=true;}
+function resetFeatures(){lastDiagnostics=0;for(const id of ['chat-panel','clipboard-panel','diagnostics-panel','file-panel','media-controls','runbook-panel'])el[id].hidden=true;for(const id of ['chat-history','feature-status','diagnostics-content','runbook-preview','runbook-result','quality-status'])el[id].textContent='';el['chat-text'].value=el['clipboard-text'].value=el['file-source'].value='';el['monitor-choice'].replaceChildren();el['runbook-choice'].replaceChildren();el['clipboard-copy'].disabled=true;}
+function previewRunbook(){const book=current?.runbooks.books.find(b=>b.bookId===el['runbook-choice'].value);el['runbook-preview'].textContent=book?`${book.title}\n버전 ${book.bookVersion} · SHA256 ${book.hash}\n${book.requiresAdmin?'별도 관리자형 작업 승인 필요다.\n':''}${book.impact}\n\n${book.source}`:'';}
 function appendChat(text){el['chat-history'].textContent=(el['chat-history'].textContent+text+'\n').slice(-8192);el['chat-history'].scrollTop=el['chat-history'].scrollHeight;}
 function showDiagnostics(snapshot) {
   lastDiagnostics=Date.now();el['diagnostics-status'].textContent='마지막 수신: '+new Date(lastDiagnostics).toLocaleTimeString();
@@ -22,6 +26,17 @@ function showDiagnostics(snapshot) {
     '시작 항목 이름:\n'+list(snapshot.startup,s=>s),'서비스:\n'+list(snapshot.services,s=>`${s.name}: ${s.state}`)].join('\n\n');
 }
 function updateFeatures(connection,message) {
+  el['runbook-panel'].hidden=!connection.permissions?.includes('runbook');el['runbook-send'].disabled=!connection.runbooks.ready()||!!connection.runbooks.pending||!connection.runbooks.books.length;el['runbook-cancel'].disabled=!connection.runbooks.pending;
+  if(message.t==='runbook-catalog'){el['runbook-choice'].replaceChildren(...message.books.map(b=>{const option=document.createElement('option');option.value=b.bookId;option.textContent=b.title;return option;}));previewRunbook();}
+  if(message.t==='runbook-result'){const r=message.result;el['runbook-result'].textContent=`${r.state} · 종료 코드 ${r.exitCode??'없음'}\n${r.stdout}\n${r.stderr}\n잔여 영향: ${r.remainingImpact}`;}
+  el['media-controls'].hidden=!connection.permissions?.includes('screen');
+  if(message.t==='monitor-list'){el['monitor-choice'].replaceChildren(...message.monitors.map(m=>{const option=document.createElement('option');option.value=m.identity;option.textContent=`${m.identity} ${m.width}×${m.height}`;return option;}));}
+  if(message.t==='monitor-state')status('대상자가 승인한 모니터로 전환했다.');
+  if(message.t==='quality-state'){const q=message.quality;el['quality-status'].textContent=`설정: ${q.fps} fps / ${q.bitrateKbps} kbps / 최대 ${q.longEdge}×${q.shortEdge}`;}
+  el['file-panel'].hidden=!connection.permissions?.includes('file');el['file-send'].disabled=!connection.files.ready()||!!connection.files.current;
+  if(message.t==='file-offer'){el['file-status'].textContent=`대상자의 ${message.name} (${message.size} bytes)를 저장할지 승인한다.`;el['file-accept'].disabled=el['file-reject'].disabled=false;}
+  if(message.t==='file-status'){el['file-status'].textContent=message.text;el['file-accept'].disabled=el['file-reject'].disabled=true;}
+  el['file-cancel'].disabled=!connection.files.current;
   if(message.t==='data-ready'){el.join.hidden=true;el.session.hidden=false;el.screen.hidden=!connection.permissions.includes('screen');}
   for(const [permission,panel,buttons] of [['chat','chat-panel',['chat-send']],['clipboard','clipboard-panel',['clipboard-send','clipboard-get']],['diagnostics','diagnostics-panel',[]]]){
     el[panel].hidden=!connection.permissions?.includes(permission);for(const id of buttons)el[id].disabled=!connection.features.ready(permission);
@@ -73,6 +88,17 @@ el['join-form'].addEventListener('submit', event => {
   current = connection; el.pin.value = '';
 });
 el.hangup.addEventListener('click', () => current?.end());
+const command=(t,fields={})=>current?.controlCommand(t,fields,crypto.randomUUID().replaceAll('-',''));
+el['runbook-choice'].addEventListener('change',previewRunbook);
+el['runbook-send'].addEventListener('click',()=>{if(current?.runbooks.request(el['runbook-choice'].value,el['runbook-detail'].value)){el['runbook-result'].textContent='대상자의 이번 작업 승인을 기다린다.';el['runbook-send'].disabled=true;el['runbook-cancel'].disabled=false;}});
+el['runbook-cancel'].addEventListener('click',()=>current?.runbooks.cancel());
+el['monitor-list'].addEventListener('click',()=>command('monitor-list'));
+el['monitor-select'].addEventListener('click',()=>{if(el['monitor-choice'].value)command('monitor-select',{monitorIdentity:el['monitor-choice'].value});});
+el['quality-mode'].addEventListener('change',()=>command('quality-mode',{mode:el['quality-mode'].value}));
+el['file-send'].addEventListener('click',()=>{const file=el['file-source'].files[0];if(file)current?.files.offer(file).catch(()=>current?.end('파일 전송 실패다.',true));});
+el['file-accept'].addEventListener('click',async()=>{const c=current,offer=c?.files.current;if(!offer)return;try{if(!globalThis.showSaveFilePicker){el['file-status'].textContent='이 브라우저는 파일 저장 API를 지원하지 않는다.';await c.files.cancel('io-error');return;}const handle=await showSaveFilePicker({suggestedName:offer.name});if(current===c&&c.files.current===offer)await c.files.accept(handle);}catch{if(current===c)await c.files.cancel('declined');}});
+el['file-reject'].addEventListener('click',()=>current?.files.cancel('declined'));
+el['file-cancel'].addEventListener('click',()=>current?.files.cancel());
 el['chat-send'].addEventListener('click',()=>{const text=el['chat-text'].value;if(current?.features.chat(text)){appendChat('나: '+text);el['chat-text'].value='';}});
 for(const [id,action] of [['clipboard-send','set'],['clipboard-get','get']])el[id].addEventListener('click',async()=>{
   const connection=current;try{if(!await connection?.features.clipboard(action,action==='set'?el['clipboard-text'].value:''))if(current===connection)el['feature-status'].textContent='전송 상태·텍스트 크기·요청 빈도를 확인해야 한다.';}catch{if(current===connection)el['feature-status'].textContent='클립보드 전송 준비에 실패했다.';}

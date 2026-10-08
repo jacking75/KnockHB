@@ -439,6 +439,7 @@ third_party/ffmpeg/*
 !third_party/ffmpeg/README.md
 !third_party/ffmpeg/supply.json
 !third_party/ffmpeg/libraries.json
+!third_party/ffmpeg/source-recipes.json
 !third_party/ffmpeg/notices/
 
 # Go 빌드 산출물
@@ -449,3 +450,8 @@ server/signaling/signaling.exe
 web/viewer/node_modules/
 web/viewer/dist/
 .playwright-cli/
+
+deploy/coturn/private/
+deploy/signaling/private/
+deploy/signaling/audit/
+deploy/signaling/.env

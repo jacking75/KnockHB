@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { permissionMask,featureChannels,FeatureSession,textHash,validateSnapshot } from '../features.js';
 import { ViewerConnection } from '../connection.js';
+import {readFileSync} from 'node:fs';
+test('shared C#/Go/JS permission and channel contract',()=>{for(const fixture of JSON.parse(readFileSync(new URL('../../../tests/fixtures/features.json',import.meta.url),'utf8'))){assert.equal(permissionMask(fixture.permissions),fixture.mask);assert.deepEqual(featureChannels(fixture.permissions),fixture.channels);}});
 const id='0123456789abcdef0123456789abcdef';
 function session(permissions=['clipboard']) {
   const received=[],sent=[],ended=[];

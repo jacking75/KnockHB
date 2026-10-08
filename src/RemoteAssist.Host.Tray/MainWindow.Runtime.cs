@@ -4,6 +4,7 @@ using System.Windows.Media;
 using RemoteAssist.Host.Core.Ipc;
 using System.Text.Json;
 using RemoteAssist.Protocol;
+using RemoteAssist.Host.Core.Runbooks;
 
 namespace RemoteAssist.Host.Tray;
 
@@ -18,6 +19,10 @@ public partial class MainWindow
     string? currentSession,pendingId;
     bool closed;
     int capabilities;
+    int connectionGeneration=1;
+    LocalActionWindow? fileDialog;
+    ActionConsentWindow? actionDialog;
+    string? fileId;
     void InitializeRuntime()
     {
         SourceInitialized+=(_,_)=>icon=new NativeTrayIcon(this,StopLocal);
@@ -37,8 +42,10 @@ public partial class MainWindow
                 currentSession=body.GetProperty("sessionId").GetString();
                 Code.Text=body.GetProperty("code").GetString();Pin.Text="PIN "+body.GetProperty("pin").GetString();StartButton.IsEnabled=false;
                 break;
+            case "update-status":UpdateStatus.Text=message.Body?.GetProperty("Status").GetString()??"";break;
             case "state":
                 var state=message.Body??throw new InvalidDataException("상태 표시 누락");
+                if(state.TryGetProperty("generation",out var generationState))connectionGeneration=generationState.GetInt32();
                 if(state.TryGetProperty("ended",out var ended)&&ended.GetBoolean()){EndLocal();StartButton.IsEnabled=peer!=null;}
                 Status.Text=state.GetProperty("status").GetString();
                 var active=state.TryGetProperty("active",out var sharing)&&sharing.GetBoolean();
@@ -48,12 +55,13 @@ public partial class MainWindow
                     if((capabilities&1)!=0)
                     {
                         var monitor=state.GetProperty("monitor").Deserialize<MonitorDescriptor>()??throw new InvalidDataException("모니터 표시 바인딩 누락");
-                        indicator??=new SharingIndicator(monitor,StopLocal);
+                        indicator?.Dispose();indicator=new SharingIndicator(monitor,StopLocal);
                     }
                     Status.Text=((capabilities&2)!=0?"화면 공유·원격 제어 중":(capabilities&1)!=0?"화면 공유 중":"승인한 진단·보조 기능 연결 중")+" · Ctrl+Alt+Shift+F10으로 즉시 종료";
                 }
                 else {capabilities=state.TryGetProperty("capabilities",out var caps)?caps.GetInt32():0;indicator?.Dispose();indicator=null;}
                 ChatText.IsEnabled=ChatSend.IsEnabled=active&&(capabilities&128)!=0;
+                FileSend.IsEnabled=active&&(capabilities&8)!=0;
                 SessionBorder.BorderBrush=active?Brushes.Crimson:Brushes.SlateGray;
                 Topmost=active;icon?.SetActive(active);
                 break;
@@ -86,6 +94,35 @@ public partial class MainWindow
                     adminPending=null;adminConsent=null;
                     TryPost("admin-response",new {sessionId=adminSession,connectionId=adminConnection,permissionGeneration=generation,approved=adminDialog.Approved},adminId);
                 }));break;
+            case "runbook-request":
+                var bookRequest=message.Body?.Deserialize<RunbookMessage>()??throw new InvalidDataException("Runbook 요청 누락이다.");
+                var book=RunbookCatalog.Demand(bookRequest);
+                if((capabilities&64)==0||book.RequiresAdmin&&(capabilities&4)==0||bookRequest.SessionId!=currentSession||bookRequest.Generation!=connectionGeneration||bookRequest.PermissionGeneration!=1||bookRequest.Id!=message.Id||actionDialog!=null)throw new UnauthorizedAccessException("현재 Runbook 승인 요청이 아니다.");
+                var bookSession=currentSession;var bookDialog=new ActionConsentWindow(book.RequiresAdmin?"이번 관리자 Runbook 실행 승인":"이번 Runbook 실행 승인",$"{book.Title}\n버전 {book.BookVersion} · SHA256 {book.Hash}\n인자 detail={bookRequest.Args!["detail"]}\n{book.Impact}\n최대 20초 · 출력 제한 · 취소는 이미 수행한 변경을 복원하지 않는다.\n\n실제 실행 스크립트:\n{book.Source}"){Owner=this};actionDialog=bookDialog;
+                Dispatcher.BeginInvoke(new Action(()=>{if(actionDialog!=bookDialog||currentSession!=bookSession)return;Show();WindowState=WindowState.Normal;Activate();bookDialog.ShowDialog();if(actionDialog!=bookDialog||currentSession!=bookSession)return;actionDialog=null;TryPost("runbook-response",new {approved=bookDialog.Approved},bookRequest.Id);}));break;
+            case "monitor-request":
+                var monitorRequest=message.Body??throw new InvalidDataException("모니터 요청 누락이다.");
+                if((capabilities&1)==0||currentSession!=monitorRequest.GetProperty("sessionId").GetString()||actionDialog!=null)throw new UnauthorizedAccessException("현재 모니터 요청이 아니다.");
+                var target=monitorRequest.GetProperty("monitor").Deserialize<MonitorDescriptor>()!;var monitorId=message.Id;var monitorSession=currentSession;
+                var monitorDialog=new ActionConsentWindow("공유 모니터 전환 승인",$"{target.Identity}\n{target.Width}×{target.Height} @ ({target.X},{target.Y})\n이 모니터의 화면을 지원자에게 공유한다. 거부하면 기존 모니터를 유지한다."){Owner=this};actionDialog=monitorDialog;
+                Dispatcher.BeginInvoke(new Action(()=>{if(actionDialog!=monitorDialog||currentSession!=monitorSession)return;monitorDialog.ShowDialog();if(actionDialog!=monitorDialog||currentSession!=monitorSession)return;actionDialog=null;TryPost("monitor-response",new {approved=monitorDialog.Approved},monitorId);}));break;
+            case "file-request":case "file-select":
+                if((capabilities&8)==0||currentSession==null||fileDialog!=null)throw new UnauthorizedAccessException("파일 승인 상태 오류다.");
+                var incoming=message.Type=="file-request";
+                var offer=incoming?message.Body?.Deserialize<FileMessage>():null;
+                if(incoming&&(offer==null||offer.Id!=message.Id||offer.SessionId!=currentSession||offer.PermissionGeneration!=1||offer.Generation!=connectionGeneration))throw new InvalidDataException("파일 승인 바인딩 오류다.");
+                var requestId=message.Id;var fileSession=currentSession;
+                var fileWindow=new LocalActionWindow(incoming?"수신 파일 저장 승인":"보낼 파일 선택",incoming?$"지원자가 보낸 {offer!.Name} ({offer.Size} bytes)의 저장 폴더를 승인한다.":"지원자에게 보낼 파일의 전체 경로를 선택한다.",incoming?Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments):""){Owner=this};fileDialog=fileWindow;
+                Dispatcher.BeginInvoke(new Action(()=>
+                {
+                    if(fileDialog!=fileWindow||currentSession!=fileSession)return;
+                    fileWindow.ShowDialog();if(fileDialog!=fileWindow||currentSession!=fileSession)return;fileDialog=null;
+                    fileId=fileWindow.SelectedPath==null?null:requestId;FileCancel.IsEnabled=fileId!=null;
+                    TryPost("file-response",new {folder=fileWindow.SelectedPath},requestId);
+                }));break;
+            case "file-state":
+                var fileState=message.Body?.Deserialize<RemoteAssist.Host.Core.Files.FileTransferState>()??throw new InvalidDataException("파일 상태 누락이다.");
+                FileStatus.Text=fileState.State+" · "+fileState.Size+" bytes";FileCancel.IsEnabled=false;fileId=null;break;
             case "chat":
                 var chat=ReadFeature(message,128);if(chat.T!="chat")throw new InvalidDataException("채팅 방향 오류다.");AppendChat("지원자: "+chat.Text);break;
             case "clipboard-request":
@@ -112,7 +149,7 @@ public partial class MainWindow
     FeatureMessage ReadFeature(LocalIpcMessage message,int permission)
     {
         var value=message.Body?.Deserialize<FeatureMessage>()??throw new InvalidDataException("보조 기능 본문 누락이다.");_=FeatureMessage.Parse(ProtocolJson.Encode(value));
-        if((capabilities&permission)!=permission||value.SessionId!=currentSession||value.Generation!=1||value.PermissionGeneration!=1||value.Id!=message.Id)throw new UnauthorizedAccessException("현재 로컬 보조 기능 승인이 아니다.");return value;
+        if((capabilities&permission)!=permission||value.SessionId!=currentSession||value.Generation!=connectionGeneration||value.PermissionGeneration!=1||value.Id!=message.Id)throw new UnauthorizedAccessException("현재 로컬 보조 기능 승인이 아니다.");return value;
     }
     void ChatClicked(object sender,RoutedEventArgs e)
     {
@@ -123,12 +160,17 @@ public partial class MainWindow
     void AppendChat(string text)
     {var lines=(ChatHistory.Text+text+Environment.NewLine);if(lines.Length>8192)lines=lines[^8192..];ChatHistory.Text=lines;ChatHistory.ScrollToEnd();}
     void StartClicked(object sender,RoutedEventArgs e){StartButton.IsEnabled=false;Status.Text="지원 코드를 준비 중이다.";TryPost("start");}
+    void FileClicked(object sender,RoutedEventArgs e)
+    {if((capabilities&8)==0)return;fileId=Guid.NewGuid().ToString("N");FileCancel.IsEnabled=true;TryPost("file-send",id:fileId);}
+    void FileCancelClicked(object sender,RoutedEventArgs e){if(fileId!=null)TryPost("file-cancel",id:fileId);}
     void StopClicked(object sender,RoutedEventArgs e)=>StopLocal();
     void StopLocal(){TryPost("stop");EndLocal();Status.Text="종료 요청을 보냈다.";}
     void EndLocal()
     {
         pendingId=null;currentSession=null;
         capabilities=0;ChatText.IsEnabled=ChatSend.IsEnabled=false;ChatText.Clear();ChatHistory.Clear();
+        FileSend.IsEnabled=FileCancel.IsEnabled=false;fileId=null;var localFile=fileDialog;fileDialog=null;localFile?.Close();FileStatus.Text="파일 전송 대기";
+        var localAction=actionDialog;actionDialog=null;localAction?.Close();
         adminPending=null;var adminDialog=adminConsent;adminConsent=null;adminDialog?.Close();
         var dialog=consent;consent=null;dialog?.Close();
         indicator?.Dispose();indicator=null;

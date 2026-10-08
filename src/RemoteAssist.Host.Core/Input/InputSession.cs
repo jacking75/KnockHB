@@ -14,7 +14,7 @@ public interface IInputBackend
 public interface IInputPreflight {bool CanPress(InputStroke stroke);}
 
 /// <summary>All validation and native writes are serialized with revocation. Tracks only its own successfully injected transitions.</summary>
-public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,long topologyGeneration,IInputBackend backend)
+public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,long topologyGeneration,IInputBackend backend,long connectionGeneration=1)
 {
     readonly object gate=new();
     readonly HashSet<ushort> keys=[];
@@ -24,13 +24,15 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
     bool stopped;
     bool paused;
     public void SuspendForApproval(){lock(gate){paused=true;Release();}}
+    public void RebindMonitor(MonitorInfo target,long generation,IInputBackend next)
+    {lock(gate){if(!paused||stopped)throw new InvalidOperationException("모니터 전환 전 입력을 중단해야 한다.");monitor=target;topologyGeneration=generation;backend=next;sequences?.RebindMonitor(target.DeviceName,generation);}}
     public long ResumeLocalPhase()
     {
         lock(gate)
         {
             var grant=permissions.Current;
             if(stopped||!paused||grant==null||!permissions.Allows(Capability.Control,grant.Generation))throw new UnauthorizedAccessException("입력 승인 전환 상태 오류다.");
-            sequences??=new(grant.SessionId,1,grant.Generation,monitor.DeviceName,topologyGeneration);
+            sequences??=new(grant.SessionId,connectionGeneration,grant.Generation,monitor.DeviceName,topologyGeneration);
             var epoch=sequences.AdvanceLocalPhase();paused=false;return epoch;
         }
     }
@@ -42,7 +44,7 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
             if(stopped||paused||!permissions.Allows(Capability.Control,message.PermissionGeneration))return false;
             var grant=permissions.Current;
             if(grant is null||message.SessionId!=grant.SessionId)return false;
-            sequences??=new InputSequenceGuard(grant.SessionId,1,grant.Generation,monitor.DeviceName,topologyGeneration);
+            sequences??=new InputSequenceGuard(grant.SessionId,connectionGeneration,grant.Generation,monitor.DeviceName,topologyGeneration);
             if(!sequences.Accept(channel,message))return false;
             if(message.T=="reset"){Release();return true;}
             var strokes=new List<InputStroke>();

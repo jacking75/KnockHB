@@ -80,11 +80,23 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if s.startupError != nil || !s.audit.Healthy() {
+		http.Error(w, "audit unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	s.mu.Lock()
 	stopping := s.stopping
 	s.mu.Unlock()
 	if stopping {
 		http.Error(w, "stopping", http.StatusServiceUnavailable)
+		return
+	}
+	if len(s.cfg.TURNURLs) > 0 && len(s.turnSecret()) < 32 {
+		http.Error(w, "TURN key unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.cfg.OperatorSecretFile != "" && ReadSecretFile(s.cfg.OperatorSecretFile) == "" {
+		http.Error(w, "node key unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

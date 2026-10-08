@@ -1,6 +1,18 @@
 # 두 PC E2E 테스트 사전 준비
 
-2026-10-08 사용자 지시로 추가 대화형 검증은 구현과 코드 리뷰 뒤로 미룬다. 최종 두 PC F01~F12는 별도 수행한다. 아래 기존 PoC 예시는 과거 준비 기록이며 현행 제품 시험의 실행 지시로 사용하지 않는다.
+2026-10-08 E01~E41 구현·코드 리뷰를 마쳤다. 실제 제품 실증은 V의 준비·실행·수용을 거친 뒤 F01~F12에서 두 PC로 별도 수행한다. 아래 기존 PoC 예시는 과거 준비 기록이며 현행 제품 시험의 실행 지시로 사용하지 않는다.
+
+## 현행 제품 경로의 준비
+
+실행 주체는 SYSTEM Host.Service와 대상 사용자 세션의 WPF Tray/Helper다. 관리자 승인 시 별도 AdminHelper/Recovery, 등록 Runbook 실행 시 별도 worker가 소유 Job에서 실행된다. HostRun 콘솔 화면 승인을 제품 동의나 관리자 승인으로 사용하지 않는다.
+
+현행 명령·판정은 [제품 하네스 계약](../tests/e2e/README.md), [시나리오](../tests/e2e/scenarios.json), [설치/업데이트](../deploy/installation.md), [실행 가이드](../docs/development-guide.md)를 따른다. 준비된 후보의 commit/hash를 고정하고 깨끗한 시험 환경에서 `powershell -NoProfile -File scripts/product-e2e-harness.ps1 -Action Prepare -Seconds 240`으로 화면 없는 publish/계정/도구 기록을 만든다. 이 명령의 완료는 기능 PASS가 아니다.
+
+한 묶음의 signaling/TURN·TLS·포트·실제 Tray/Viewer·시험 대상 창·foreground·모니터 geometry·복귀 담당자를 준비한 뒤 readiness JSON을 리뷰한다. 입력 시험은 현재 InputTarget snapshot과 소유 PID/경로를 사용한다. 관리자 시험은 현장 UAC/잠금 복귀 조작자와 절차가 필수다. 준비 실패나 누락이 있으면 Arm을 실행하지 않는다.
+
+실행 직전에 목적·예상 240초/최대 300초·중단 조건을 사용자에게 알리고 `Arm -RunDir <prepared> -Readiness <reviewed.json>`을 실행한다. 실제 Tray의 동의는 대상자가 직접 한다. 첫 실패·준비 신호 누락·기한 초과 시 Abort로 종료하고 Collect에서 소유 서비스/자식/배치 정리와 실제 관찰 증거를 확인한다. 후보를 바꾸거나 같은 준비 묶음을 다시 Arm하지 않는다. 새로운 원인/수정 리뷰 뒤 새 Prepare를 사용한다.
+
+두 PC F는 양쪽 서명 설치 후보와 TLS/TURN·다른 NAT·현장 조작자·영상/입력 관측을 별도로 준비한다. 서명 인증서/업데이트 endpoint/공개 대응 소스·VM snapshot·다른 GPU/계정이 없으면 해당 V/F를 BLOCKED로 남긴다. 아래 PoC 명령은 현행 제품 절차에서 재사용하지 않는다.
 
 <a id="required-execution-plan"></a>
 
@@ -35,7 +47,7 @@
 
 [개발자 문서](../docs/README.md) · [실행 가이드](../docs/development-guide.md) · [기술 사양](../docs/technical-specification.md) · [리뷰 태스크](code-review-task-risks-2026-10-07.md)
 
-최종 제품 E2E 전에 구현할 작업은 [통합 구현계획의 E01~E41](../원격제어-구현계획.md#implementation-checklist)을 따른다. 이 준비 문서의 실행 예시는 현재 화면 공유 PoC 기준이다. 제품 구현 완료 시 해당 계획의 E41에서 서비스·Tray·동의·설치본 경로에 맞게 갱신한 뒤 최종 F01~F12를 수행한다.
+구현·검증 상태는 [통합 구현계획](../원격제어-구현계획.md#implementation-checklist)을 따른다. 현행 제품 시험은 위 제품 하네스 경로이며, 이후의 PoC 예시는 과거 참고 자료다. 필수 V와 Gate A 뒤 최종 F01~F12를 수행한다.
 
 ## 1. 먼저 알아둘 것
 

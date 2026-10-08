@@ -50,6 +50,24 @@ func TestGoldenFixtures(t *testing.T) {
 		})
 	}
 }
+func TestSharedFeatures(t *testing.T) {
+	data, err := os.ReadFile("../../../../tests/fixtures/features.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Mask        int
+		Permissions []string
+	}
+	if json.Unmarshal(data, &fixtures) != nil {
+		t.Fatal("feature fixture")
+	}
+	for _, f := range fixtures {
+		if mask, ok := permissionMask(f.Permissions); !ok || mask != f.Mask {
+			t.Fatal("permission drift")
+		}
+	}
+}
 func TestTURNHMACExpiryAndBinding(t *testing.T) {
 	secret := strings.Repeat("s", 32)
 	s := New(Config{TURNSecret: secret, TURNURLs: []string{"turn:example.invalid:25010"}}, nil)

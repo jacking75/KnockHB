@@ -21,6 +21,6 @@ public static class FeatureContract
         if((mask&2)!=0){result.Add("input");result.Add("pointer");}
         if((mask&8)!=0)result.Add("file");
         if((mask&(16|128))!=0)result.Add("chat");
-        if((mask&32)!=0)result.Add("telemetry");return result.ToArray();
+        if((mask&32)!=0)result.Add("telemetry");if((mask&64)!=0)result.Add("runbook");return result.ToArray();
     }
 }

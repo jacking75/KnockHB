@@ -1,218 +1,67 @@
 # 아키텍처
 
-## E05 단일 PC 경계 실증 도구
+구현 기준과 수용 상태는 구분한다. 기능/와이어는 [제품 계약](product-contract.md)·[프로토콜](protocol.md), 실행 수용은 [구현계획](../원격제어-구현계획.md)의 V/F를 따른다.
 
-`tools/RemoteAssist.BoundaryProbe`는 제품 원격 명령을 받지 않는 일회성 실증 서비스다. 승인된 설치 스크립트가 고유한 Program Files 하위 디렉터리에 해시 확인한 바이너리를 배치하고 SYSTEM 서비스로 실행한다. 서비스는 Session 0에 남고 WTS 사용자 토큰의 일반 헬퍼와 해당 콘솔 세션에 제한한 SYSTEM 실증 헬퍼를 각각 생성한다. 실행 대상은 자기 바이너리와 고정된 probe 모드뿐이다. 자식은 kill-on-close Job Object로 감독한다.
-
-헬퍼는 관리자/SYSTEM과 대상 사용자만 접근하는 고유 Named Pipe로 결과를 전송한다. 서비스는 실제 client PID를 자신이 생성한 자식 PID와 대조한다. 수집하는 것은 계정 종류·세션·데스크톱·캡처 크기·프레임 해시이며 화면 원본을 저장하지 않는다. SYSTEM 헬퍼는 데스크톱 변경마다 새 스레드에서 input desktop을 연결한 뒤 DXGI 실증을 수행한다. 관찰은 제한 시간 뒤 끝나고 설치 스크립트가 서비스·보호된 임시 배치를 제거한다. 이 도구의 성공은 제품 승인/철회/IPC가 완성됐다는 뜻이 아니다. SAS·입력·사용자 전환은 별도 명시된 실증 결과로 판정한다.
-
-보안 데스크톱의 입력은 캡처 성공과 독립적으로 실증한다. `DESKTOP_READOBJECTS|DESKTOP_WRITEOBJECTS`만 요청하면 SendInput이 error 5로 실패했다. 대상 데스크톱의 접근 범위를 `0x1FF`로 열었을 때 SYSTEM 헬퍼의 포인터 이동·복원이 성공했다. TokenUIAccess=0인 동일 경로도 성공해 UIAccess 부여 코드는 제거했다. 일반 사용자 토큰은 변경하지 않는다. 제품의 특권 헬퍼 생성에는 현재 세션의 독립 관리자 동의·짧은 lease·철회 감독을 추가해야 하며 이 probe 경로를 제품의 상시 권한으로 사용하지 않는다. 정식 설치본의 서명 검증은 E36에서 별도로 강제한다.
-
-### 확정한 제품 책임과 IPC 경계
-
-서비스는 활성 콘솔의 SID/Session ID와 설치 보호 경로의 바이너리를 검증하며 자식을 kill-on-close Job Object로 소유한다. 일반 사용자 UI/헬퍼가 캡처·인코더·WebRTC·일반 입력을 맡는다. 독립 관리자 승인이 유효할 때만 SYSTEM 특권 헬퍼를 같은 콘솔 세션에 만든다. 특권 헬퍼에는 화면 캡처·허용된 입력·SAS·고정 Runbook만 노출하며 임의 실행 파일·PowerShell 본문·경로를 받지 않는다.
-
-서비스·Tray·헬퍼의 Named Pipe는 SYSTEM과 대상 SID로 보호하고 로컬 PID·토큰·세션·설치 파일을 대조한다. 접속마다 난수 nonce와 단조로운 세대·순번을 검사한다. 제어 JSON은 32KiB, 큐는 128개로 제한한다. 관리자 상태는 지원 세션/피어/권한 세대에 결합하며 500ms 갱신하는 1초 lease와 로컬 철회에 따른 즉시 종료를 적용한다. 사용자/SID 변경·로그오프·RDP 전환·서비스/일반 헬퍼 종료는 모든 승인을 폐기한다. 두 번째 계정이 없어 실제 사용자 전환은 후속 실증에 남기며 기존 동의를 새 사용자에게 전달하지 않는다.
-
-특권 프레임은 인코딩 상한으로 먼저 축소하고 16MiB 슬롯 2개의 고정 shared mapping으로 일반 헬퍼에 전달한다. SYSTEM만 쓰고 대상 SID는 읽기만 허용한다. 각 슬롯의 크기·stride·모니터/권한 세대·순번을 검증하며 복사 전후 순번이 바뀌면 해당 프레임을 버린다. 슬롯이 가득 차면 오래된 프레임을 버리고 무한 큐를 만들지 않는다. 승인 철회/desktop 전환/종료 시 프레임·인코더 입력·공유 슬롯을 지우며 일반 헬퍼의 인증 IPC가 끊기면 미디어부터 중단한다. 이 단락은 후속 제품 구현의 기준이며 경계 probe가 shared mapping 또는 승인 흐름을 검증한 것으로 해석하지 않는다.
-
-관리자 2차 승인은 30초 대기·최대 2분 유효하며 보안 데스크톱 연속 진입은 최대 30초다. 관리 경로 해제는 지원 세션 전체 종료로 정해 이전 privileged buffer나 queued input의 일반 경로 승계를 피한다. 특권 헬퍼는 input desktop마다 전용 thread를 새로 만들고 DXGI·표시 창·입력을 해당 thread에서 처리한다. 보안 데스크톱에는 일반 Tray 대신 SYSTEM의 고정 종료 표시와 Ctrl+Alt+Shift+F9을 제공한다. 일반 Tray의 F10 등록과 충돌을 피하도록 별도 키를 사용한다. 표시/핫키 생성 실패·desktop 전환 처리 실패는 캡처 전에 종료한다. 일반 desktop에서는 Tray의 종료 경로를 사용한다. 서비스가 시작한 특권 Helper도 Recovery에 PID/이미지/Session을 결합하고 복원 up 전에 먼저 중단한다. 일반 Helper는 여전히 네트워크·인코딩을 소유하며 특권 Helper에 임의 실행 명령을 보내지 않는다.
-
-2026-10-08 구현 결정은 [제품 계약](product-contract.md)을 따른다. 단일 콘솔 사용자·별도 경로 pairing 신원·독립 권한·종료 최종 상태·시그널링 상실 fail-closed가 기준이다. 이후 코드 변경의 현재 상태는 루트 구현계획에서 관리한다.
-
-[문서 안내](README.md) · [기술 사양](technical-specification.md) · [주요 로직](core-logic.md) · [워크플로우](workflows.md)
-
-## 1. 제품 목표와 현재 실행 구조
-
-RemoteAssist의 목표는 대상자가 허용한 범위 안에서 화면 보기, 원격 조작, 진단 작업을 제공하는 것이다. 현재는 HostRun 콘솔에서 화면 보기만 명시 승인받는 경로와 시그널링/Viewer 기반이 구현되어 있다. 서비스·Tray의 제품 동의 UI와 원격 제어는 미구현이다.
-
-아래 그림은 현재 코드의 프로세스 경계다. Host.Service와 Host.Tray는 이 데이터 흐름에 아직 참여하지 않는다. STUN 서버는 주소 후보 수집을 돕고, Go 서버는 코드 발급과 협상 메시지를 처리한다.
+## 실행 경계
 
 ```mermaid
 flowchart LR
-    subgraph target["대상 Windows PC"]
-        host["HostRun 콘솔 프로세스"]
-        core["Host.Core: 세션 / 캡처 / 인코더 / WebRTC"]
-        desktop["선택한 모니터"]
-        host --> core
-        desktop -->|"WGC 또는 DXGI"| core
-    end
-    subgraph server["시그널링 서버"]
-        go["Go HTTP / WebSocket"]
-        rooms["메모리 Room Manager"]
-        go --> rooms
-    end
-    subgraph supporter["지원자 PC"]
-        viewer["웹 Viewer / 브라우저 WebRTC"]
-    end
-    stun["STUN 서버"]
-    core <-->|"세션 발급 / SDP / ICE"| go
-    viewer <-->|"join / SDP / ICE"| go
-    core -->|"H.264 / WebRTC 미디어"| viewer
-    core -.->|"주소 후보 탐색"| stun
-    viewer -.->|"주소 후보 탐색"| stun
+ subgraph target["대상 Windows PC"]
+  service["SYSTEM · Session 0 서비스"]
+  tray["일반 권한 WPF Tray · 동의/즉시 종료"]
+  helper["대상 사용자 Helper · 캡처/인코딩/WebRTC/일반 입력"]
+  recovery["독립 일반 Recovery · 예약한 up만 복원"]
+  admin["건별 승인 SYSTEM AdminHelper · 대상 Session/desktop"]
+  book["건별 승인 RunbookWorker · 일반/SYSTEM"]
+  service <-->|"인증 Named Pipe"| tray
+  service <-->|"인증 Named Pipe"| helper
+  service <-->|"예약/lease"| recovery
+  service <-->|"승인/lease/입력"| admin
+  service <-->|"고정 작업/결과"| book
+  admin -->|"ACL 공유 프레임"| helper
+ end
+ go["Go · 직접 TLS/WSS · 일회성 룸/감사"]
+ turn["coturn · 단기 인증 · 암호문 릴레이"]
+ viewer["지원자 웹 Viewer"]
+ helper <-->|"HTTPS/WSS · SDP/ICE"| go
+ viewer <-->|"HTTPS/WSS · SDP/ICE"| go
+ helper <-->|"DTLS-SRTP/SCTP · P2P"| viewer
+ helper <--> turn
+ turn <--> viewer
 ```
 
-Host와 Viewer를 같은 PC에서 실행하는 루프백 PoC도 가능하다. 하지만 실제 사용은 서로 다른 머신이며, NAT·드라이버·DPI·권한 차이는 루프백만으로 검증되지 않는다.
+서비스는 Session 0에서 캡처하지 않는다. WTS로 확인한 단일 콘솔 Session/SID에 일반 Tray/Helper를 생성한다. Session 변경·RDP·로그오프·Tray/IPC 상실·서비스 재시작은 기존 승인을 폐기하고 모든 소유 자식을 종료한다. 새 사용자/피어가 승계하지 않는다.
 
-### 서버를 통과하는 것과 통과하지 않는 것
+설치 디렉터리는 Program Files/RemoteAssist/versions의 SYSTEM/Administrators 쓰기·Users 읽기 권한으로 보호한다. 실행 파일뿐 아니라 의존 DLL/스크립트/상위 디렉터리의 ACL·소유자·reparse 여부를 검사한다. Named Pipe는 로컬 전용이며 ACL과 상대 SID/Session/PID/보호 이미지·인스턴스 nonce를 결합한다. 일반 helper에는 범용 SYSTEM 실행 인터페이스가 없다.
 
-| 데이터 | 현재 경로 | 설명 |
-|---|---|---|
-| 코드/PIN/Host 토큰 발급 | Host → HTTP `/session` | 발급 응답은 Host만 받는다 |
-| 참가 인증 | Host/Viewer → WebSocket `/ws` | 역할별로 다른 자격정보 사용 |
-| SDP·ICE·종료 알림 | Host ↔ Go ↔ Viewer | 화면 자체가 아니라 연결 제어 메시지 |
-| 화면 프레임 | Host → WebRTC → Viewer | Go 서버가 프레임을 보관하거나 디코딩하지 않음 |
-| 웹 페이지·JS·CSS | 선택적으로 Go → 브라우저 | `RA_VIEWER_DIR` 설정 시 정적 파일 제공 |
-| 마우스·키보드·파일·채팅 | 아직 없음 | 프로토콜 문서에는 목표 메시지가 있으나 채널은 미구현 |
+## 소유권과 종료
 
-목표 구조에는 TURN 경유 미디어 전달이 추가된다. 시그널링의 메시지 릴레이와 TURN의 미디어 릴레이는 서로 다른 기능이다.
+ScreenShareSession이 bounded 직렬 상태 큐·시그널링 수신·heartbeat·협상/transport generation·캡처 스레드를 소유한다. 캡처/스케일러/인코더는 한 스레드에서 생성·사용·폐기한다. 오래된 PC/채널 callback은 세대/인스턴스 검사로 폐기한다. 최종 송신과 권한 철회를 직렬화하고 종료 상태는 되돌리지 않는다.
 
-## 2. 저장소와 프로젝트 의존성
+서비스의 Job이 일반/특권/Runbook helper를 소유한다. IPC heartbeat와 실제 영상 lease를 분리한다. 활성 화면의 첫 프레임은 15초, 이후 실제 송신 정지는 3초 deadline으로 감독하고 hung native helper를 Job 종료로 격리한다. 로컬 즉시 종료는 이 deadline을 기다리지 않고 소유 Job을 종료한다. Recovery는 별도 Job에서 down 전에 ACK한 키/button/Unicode up만 복원하며 helper/서비스 상실·lease 만료를 감시한다. managed cleanup은 5초 상한이고 살아 있는 native 객체를 다른 스레드에서 Dispose하지 않는다.
 
-```text
-RemoteAssist.slnx                     C# 프로젝트 8개
-Directory.Build.props                공통 TFM·컴파일 옵션
-Directory.Packages.props             NuGet 버전 중앙 관리
-src/
-  RemoteAssist.Protocol/             SignalMsg, InputMsg JSON DTO
-  RemoteAssist.Host.Core/            캡처·인코딩·시그널링·세션 조합
-    Capture/                        WGC, DXGI, 모니터 열거, 프레임 타입
-    Media/                          인코더 인터페이스, FFmpeg 로더·인코더
-    Signaling/                      Host WebSocket/HTTP 클라이언트
-  RemoteAssist.Host.Service/         Windows 서비스 골격
-  RemoteAssist.Host.Tray/            WPF 일반 권한 UI 골격
-tools/
-  RemoteAssist.HostRun/              실제 화면 공유 PoC 실행 진입점
-  RemoteAssist.CaptureDump/          캡처를 PNG로 확인하는 진단 도구
-  RemoteAssist.SessionProbe/         사용자 세션·desktop 읽기 전용 진단
-tests/RemoteAssist.Host.Core.Tests/  순수 회귀 실행 하네스
-server/signaling/                    독립 Go 모듈과 테스트
-web/viewer/                          index.html, app.js, app.css
-deploy/                             signaling Dockerfile, coturn compose
-third_party/ffmpeg/                  별도 확보할 네이티브 DLL 안내
-docs/                               지속적으로 유지하는 개발자 문서와 프로토콜
-docs_working/                       임시 개발 문서: 리뷰·조사·작업 메모·태스크 리스크
-원격제어-구현계획.md                  단계별 태스크와 상태
-```
+서비스의 session.gate 독점 파일 잠금은 지원 수명 전체에 유지된다. 업데이트/제거는 이 잠금을 얻어야 한다. 종료 시 새 작업과 송신/입력을 막고 독립 복원·자원 정리를 수행한 뒤 lease를 해제한다. 감사 실패가 종료를 막지 않는다.
 
-아래 화살표는 **프로젝트 참조 방향**이다. 런타임 통신 화살표와 혼동하지 않는다.
+## 미디어와 입력
 
-```mermaid
-flowchart TB
-    run["HostRun"] --> core["Host.Core"]
-    dump["CaptureDump"] --> core
-    service["Host.Service"] --> core
-    core --> protocol["Protocol"]
-    tray["Host.Tray"] --> protocol
-    core --> rtc["SIPSorcery"]
-    core --> ffmpeg["SIPSorceryMedia.FFmpeg / 네이티브 FFmpeg"]
-    core --> win["WinRT / Vortice / Win32"]
-    go["Go signaling: 별도 모듈"]
-    viewer["Viewer: 별도 정적 웹 앱"]
-```
+안정된 모니터 identity/geometry를 승인에 묶는다. WGC 우선이며 미지원 때 동일 모니터의 DXGI 폴백만 허용한다. BGRA 크기/stride/세대를 검사하고 방향을 유지해 짝수 크기로 축소한다. DXGI는 회전/커서 합성을 처리한다. 모니터 제거는 종료이고 배치/해상도 변경은 새 현장 승인 후 capture/staging/scaler/encoder 재구성과 IDR/geometry ACK로 재개한다.
 
-`RemoteAssist.Protocol`은 플랫폼 중립 `net10.0`이다. 나머지 C# 프로젝트는 Windows용 TFM을 사용한다. Go 구조체와 JS 객체가 C# DTO를 참조하는 것은 아니다. 세 언어는 각각 [protocol.md](protocol.md)를 구현한다.
+FFmpeg 8.1 공유 LGPL DLL만 hash 검사 후 고정 경로에서 로드한다. 허용 HW 후보→libopenh264 순서로 실제 시험 출력을 확인하며 libx264/GPL/nonfree/PATH 폴백은 금지한다. constrained baseline SDP/실제 SPS profile·level과 peer 한도를 일치시킨다. monotonic 90kHz RTP sample time과 mode1 NAL/FU-A를 사용하고 SRTP/SSRC/sequence는 SIPSorcery가 소유한다.
 
-### 각 구성요소의 책임
+입력은 reliable ordered input/pointer를 분리한다. pointer move는 최신 값만 합치며 key/button/text/reset 전이는 유실시키지 않는다. 상대 0..1 좌표는 승인 모니터의 물리 픽셀·가상 desktop으로 환산한다. 순번/topology/inputEpoch/barrier로 오래된 입력을 거부하고 reset ACK 뒤에만 새 epoch를 재개한다. 로컬 승인 UI·포커스 이탈·권한 변경 시 입력을 해제한다.
 
-| 구성요소 | 책임 | 맡지 않는 일 / 현재 한계 |
-|---|---|---|
-| HostRun | 옵션 해석, 세션 시작, 코드/PIN 표시, Ctrl+C 종료 | 설치형 제품 UI나 동의 창이 아님 |
-| ScreenShareSession | 시그널링과 PC 생성, 캡처 스레드, 송신 파이프라인 | 화면 승인 게이트·종료 최종 상태; 서비스 기능은 미연결 |
-| SignalingClient | HTTP 발급, Host join, JSON WebSocket 송수신 | TURN 발급·재접속·UI 처리 없음 |
-| 캡처 클래스 | 지정 출력에서 BGRA 프레임 획득 | 인코딩·네트워크·사용자 동의 판단을 하지 않음 |
-| FFmpegH264Encoder | 허용 H.264 후보 선택, BGRA 인코딩 | 후보별 Configure/출력 폴백·forceKeyframe/PLI/FIR |
-| Go Room Manager | 코드별 룸, 자격정보, 슬롯, 만료 정리 | DB·분산 룸·영구 세션 기록 없음 |
-| Go signaling | HTTP/WS 접수, 인증 호출, 피어 메시지 전달 | 미디어 디코딩·보관 없음 |
-| Viewer | 이름·코드/PIN 입력, 승인 뒤 answer, 영상·통계 표시 | 원격 입력·동의 요청·파일/채팅 없음 |
+## 특권·보조 기능
 
-## 3. 데이터와 자원의 소유권
+관리자 초기 capability는 요청 가능 범위이며 활성 권한이 아니다. Tray의 별도 만료 승인에만 서비스가 대상 Session의 SYSTEM AdminHelper를 실행한다. 특권 capture 프레임은 ACL·세대·geometry·commit을 검사한 두 슬롯 mapping으로 전달한다. 관리자 입력은 승인된 batch만 전달한다. SAS와 보안 desktop 종료/복귀는 별도 게이트를 따른다. 관리자 철회는 전체 지원 종료로 처리한다.
 
-현재 자원·작업·승인·종료의 상세는 [주요 로직](core-logic.md)을 따른다. Host 세션이 bounded 직렬 이벤트 큐, 수신/heartbeat/deadline Task와 캡처 스레드를 소유한다. 캡처·인코더는 같은 스레드에서 생성/사용/폐기한다. 로컬 승인 전에 PeerConnection과 캡처를 만들지 않는다. 종료는 최종 송신과 직렬화해 권한을 먼저 폐기한다. native hang의 헬퍼 프로세스 격리 감독은 미구현이다.
+FileTransferSession은 로컬 경로/수락·한 건·16KiB 순번 청크·credit 배압·SHA-256·안전한 NTFS handle/충돌·부분 파일 정리를 소유한다. 감사 ACK 없이는 필수 전이를 진행하지 않는다. FeatureDataChannel은 chat/clipboard를 독립 검사한다. 클립보드는 명시 get/set과 hash/로컬 UI actor를 사용한다. DiagnosticsSession은 읽기 전용 provider의 상한/오류/취소와 영상 없는 모드를 제공한다.
 
-## 4. 목표 Host 구조 — 아직 미구현
+Runbook은 고정 embedded source/hash와 허용 인자 enum만 사용한다. Tray에 실제 전문과 영향·권한을 보여 건별 승인한다. 별도 Job의 worker가 보호 설치/hash를 다시 검사하고 고정 PowerShell에서 최대20초/출력4096자 한도로 실행한다. 취소는 이미 발생한 효과를 되돌린다는 뜻이 아니다. 원격 임의 셸은 제공하지 않는다.
 
-제품에는 서비스와 사용자 UI의 역할 분리가 필요하다. 여기에 사용자 세션에서 캡처·입력을 실행할 헬퍼의 실행 위치를 명확히 해야 한다. SYSTEM 권한이 있다고 Session 0에서 로그인 사용자의 모니터와 입력에 자동 접근할 수 있는 것은 아니다.
+## 연결·운영·업데이트
 
-아래는 **목표 책임 경계**이며, 실제 프로세스 개수·헬퍼 실행 파일·프레임 IPC·인코딩 위치는 T2.4/G03에서 확정할 사항이다. 현재 저장소에 이 헬퍼 프로젝트가 있는 것은 아니다.
+인증된 같은 피어의 일시 ICE 단절만 2초 후 새 PeerConnection/DTLS/SCTP generation으로 복구한다. 시그널링/승인/IPC 상실 또는 관리자·건별 승인 중 복구는 전체 종료다. 연속 최대3회/각30초, 성공 후8분 TURN credential 갱신이며 이전 전송/입력은 차단한다. TURN allocation·다른 NAT 성공은 V/F에서 따로 확인한다.
 
-```mermaid
-flowchart TB
-    subgraph zero["Session 0 / SYSTEM"]
-        service["Host.Service: 세션 감독 / 권한 검증 / 헬퍼 수명"]
-    end
-    subgraph user["대상 사용자의 Windows 세션"]
-        tray["Host.Tray: 동의 / 상태 / 종료 UI"]
-        helper["일반 권한 캡처·입력 헬퍼: 예정"]
-        privileged["관리자 승인용 특권 실행 경로: 예정"]
-    end
-    tray <-->|"인증된 IPC: 요청 / 승인 / 철회"| service
-    service <-->|"세션과 권한에 묶인 IPC"| helper
-    service -.->|"별도 관리자 승인 후"| privileged
-    helper --> desktop["허용된 사용자 데스크톱"]
-    privileged -.-> secure["UAC / 보안 데스크톱: 별도 검증"]
-```
+Go 서버는 bounded 룸/연결/발급/메시지·일회성 pairing·정확한 Origin·CSP·TLS 설정과 WS shutdown deadline을 적용한다. 운영 node 인증으로 감사와 metrics를 제공한다. Host의 보호 spool은 서버 fsync ACK 이후만 삭제한다. payload/화면/클립보드/Runbook 출력/비밀 키를 감사에 넣지 않는다.
 
-설계에서 지켜야 할 경계는 다음과 같다.
-
-- **UI:** Tray는 `asInvoker`를 유지한다. UI를 관리자 권한으로 실행하는 것으로 서비스 통신 인증을 대체하지 않는다.
-- **세션:** 제어 대상 Windows Session ID를 명시한다. 콘솔 사용자와 RDP 사용자를 동일하게 취급하지 않는다.
-- **IPC:** 파이프 이름을 안다는 이유만으로 승인이나 프레임을 신뢰하지 않는다. ACL과 상대 프로세스/세션 신원을 검증한다.
-- **권한:** 화면 보기·일반 제어·관리자 권한을 분리한다. 일반 제어 동의만으로 승격 창에 입력하는 경로가 열리면 안 된다.
-- **철회:** UI 종료·로그오프·사용자 전환·동의 철회를 세션 상태에 연결한다. 이전 세션 callback이 권한을 되살리지 못하게 한다.
-
-`SetThreadDesktop`은 현재 프로세스 window station의 desktop을 지정하는 API이며 다른 Windows 세션으로 프로세스를 옮기는 기능이 아니다. Windows 세션 경계의 근거는 [Microsoft SetThreadDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setthreaddesktop)와 [Window Stations](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations)를 참고한다.
-
-## 5. 제품 설계 원칙
-
-### 서비스 감사 저장 경계
-
-서비스는 `%ProgramData%/RemoteAssist/audit`에 SYSTEM/Admin 쓰기 전용 디렉터리와 파일을 만들고 소유자·ACL·reparse point를 검사한다. 감사 이벤트는 닫힌 event/result 열거형, 서비스가 결합한 session/connection ID, permission generation, UTC, event ID만 포함한다. 예외 본문·입력 내용·코드/PIN·토큰·파일 본문을 받을 임의 필드는 없다. 각 파일은 4MiB, 최대 네 세대와 7일 보존으로 제한한다. 저장 후 flush를 완료해야 새로운 승인·특권·파일·Runbook 동작을 시작할 수 있다. 저장 실패는 해당 시작을 거부한다. 종료는 Helper 차단을 먼저 수행하고 기록 실패를 별도로 진단하므로 디스크 장애가 철회를 막지 않는다. 서버 보고와 중복 방지는 후속 감사 transport 계약에 따른다.
-
-관리자 2차 승인 창을 열기 전에 Host가 입력을 중단하고 누른 키를 해제한다. 거부 응답은 새 input epoch로 일반 제어를 재개하지만 30초 무응답은 지원 전체 종료다. 승인 후에도 이전 epoch의 대기 입력은 특권 경로에서 실행하지 않는다. 특권 화면은 16MiB 슬롯 상한을 지키도록 최대 1920×1080 범위로 축소한다. 공유 memory의 ACL과 Session 0 생성은 [Microsoft mapping 보안](https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping-security-and-access-rights)과 [CreateFileMapping](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createfilemappinga)을 따른다. desktop 전환마다 새 thread를 쓰는 이유는 [SetThreadDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setthreaddesktop)이 기존 window/hook이 있는 thread의 전환을 거부하기 때문이다.
-
-### 원격 입력 복원 전용 경계
-
-로컬 충돌 정책은 새로운 원격 key/button down 직전 해당 키가 이미 눌렸으면 세션을 차단하는 방식이다. 로컬 사용자가 이미 누른 키를 원격 소유로 등록하거나 해제하지 않는다. 동일 세션이 주입한 키의 전이는 별도로 추적한다. Windows의 합쳐진 입력 상태로는 주입 이후의 동시 로컬 눌림을 출처별로 분리할 수 없으므로 동의 UI에서 동시 조작을 피하도록 안내하고 로컬 종료를 우선한다. 입력 실패를 관리자 권한 자동 재시도로 우회하지 않는다.
-
-일반 Helper의 Job을 강제로 종료해도 원격으로 눌린 키가 남지 않도록 고정 `Host.Recovery` 실행 파일을 둔다. 서비스가 현재 콘솔 세션에 최소 권한 SYSTEM 토큰으로 실행하며, 이 프로세스에는 캡처·네트워크·키/버튼 down·포인터 이동·SAS·명령 실행 기능이 없다. 관리자 승인 없이 허용하는 유일한 특권 동작은 현재 승인된 제어 세션이 예약한 key/button/Unicode의 up 복원이다. 일반 제어 권한을 승격 UI 조작 권한으로 확대하지 않는다.
-
-Recovery는 일반 Helper의 kill-on-close Job 밖에서 동작한다. 인증 IPC로 대상 Session ID·사용자 SID·Helper PID를 한 번 결합하고, 주입 이전에 잠재 down 집합을 기록하여 ACK한다. ACK 실패 시 일반 Helper는 새 입력을 주입하지 않는다. 실제 성공한 up 이후에만 예약을 지운다. 서비스/Helper 상실·입력 lease 만료·명시적 종료에서 예약된 up만 복원하고 종료한다. 대상 콘솔 사용자 변경 시 새 사용자의 desktop을 조작하지 않는다. 복원은 전용 thread에서 현재 input desktop을 열며, 전송 일부 실패는 성공으로 간주하지 않고 제한된 재시도 후 진단한다. 예약 상한은 VK 254개·버튼 3개·Unicode 4096개이며 본문에는 텍스트·화면·PIN을 넣지 않는다.
-
-서비스 종료 시 일반 Helper를 먼저 중단하여 새 down을 차단하고 Recovery IPC를 종료한다. Recovery는 부모 서비스가 죽어도 최대 1초 IPC 수신 lease 또는 Helper process 종료를 독립 감지한다. 이 별도 경계의 실제 장애 시험이 통과하기 전에는 제품에서 제어 권한을 광고하지 않는다.
-
-### 제품 서비스와 사용자 UI의 실행 계약
-
-입력 실행은 현재 권한·세대·monitor binding을 검사한 직렬 입력 세션이 맡는다. mouse move와 reliable 전이를 별개 순번으로 검사하고 reset epoch로 지연 pointer를 폐기한다. 버튼 전이는 자체 최종 좌표를 적용한다. 주입에 성공한 원격 key/button down만 추적하며 reset·철회·종료에서 해당 up만 복원한다. SendInput 일부 성공도 실제 성공 prefix를 기록한 뒤 실패로 종료한다. 일반 입력 backend는 최종 주입 직전에 Default input desktop을 확인하고 UIPI 실패를 성공으로 표시하지 않는다. Job 강제 종료·보안 데스크톱으로 인한 미해제 키 복원은 제품 입력 통합 때 별도 감독 경로로 검증하며, 아래 backend 존재만으로 E23/E24를 완료하지 않는다.
-
-일반 권한 캡처는 input desktop이 `Default`임을 캡처 및 최종 송신 직전에 확인한다. 확인 실패·보안 데스크톱 전환은 일반 세션을 종료한다. 관리자 경로가 연결되기 전에는 잠금/UAC에서 이전 화면을 반복 송신하지 않는다. 이후 특권 전환은 별도 관리자 승인과 프레임 전달 계약으로만 추가한다. 서비스는 active 콘솔과 console protocol을 확인하고, 로그인 사용자 토큰이 없는 동안 새 동의를 만들지 않고 기다린다. RDP/사용자 변경 때 기존 승인과 Job을 폐기한다.
-
-일반 사용자 클라이언트는 pipe 핸들의 `GetNamedPipeServerProcessId`/`GetNamedPipeServerSessionId`로 서버 PID·Session 0을 확인한다. SYSTEM 프로세스의 직접 조회는 일반 권한에서 error 5로 실패하므로 사용하지 않는다. SCM의 `RemoteAssistHost` QueryServiceStatusEx/QueryServiceConfig 조회로 동일한 PID, own-process 서비스, LocalSystem 계정과 인자 없는 고정 보호 실행 파일을 확인하고 nonce/역할을 상호 인증한다. 클라이언트에 관리자 권한이나 서비스 설정 변경 권한을 부여하지 않는다. 근거는 [Microsoft pipe 세션 조회](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getnamedpipeserversessionid), [서비스 상태 조회](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryservicestatusex), [서비스 설정 조회](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryserviceconfigw)다.
-
-`RemoteAssistHost` 서비스는 보호 설치 폴더의 고정 Tray/Helper 실행 파일만 생성한다. 일반 사용자 Tray가 로컬 시작 버튼을 눌러야 새 일회성 지원 코드를 만든다. 서비스가 가진 Job을 종료하면 헬퍼의 캡처·WebRTC도 종료된다. 시작 도중 철회된 자원은 감독 범위에 채택하지 않고 즉시 폐기한다. 콘솔 Session ID 또는 사용자 SID 변경, UI/헬퍼 종료, 인증 IPC의 1초 수신 lease 만료는 세션을 종료한다. 사용자 전환 이후 자동 재접속하지 않는다.
-
-Tray는 일반 권한 WPF UI로 코드/PIN·접속 상태·즉시 종료를 표시한다. 서비스 부트스트랩 외 실행은 거부한다. 동의 창은 요청 ID·세션 ID·지원자 연결 ID에 묶고 기본값은 모두 거부한다. 이름은 지원자가 입력한 표시 이름이며 검증된 조직 신원이 아님을 표시한다. 현재 연결한 기능만 활성화하고 나머지는 승인할 수 없다. 동의 창의 30초 만료·닫기·취소·서비스 종료는 거부로 처리하고 코드/PIN을 지운다. 화면/제어/관리자 권한은 각각 독립 항목이다.
-
-공유 중에는 승인된 물리 모니터에 클릭을 가로채지 않는 붉은 테두리와 별도 상시 종료 버튼을 표시한다. Tray 활성 아이콘은 붉은 색이며 Explorer의 TaskbarCreated 이후 재등록한다. 표시·핫키 등록 실패는 지원 세션을 종료한다. 긴급 종료는 Ctrl+Alt+Shift+F10이며 기존 등록과 충돌하면 덮어쓰지 않는다. F12는 디버거 예약 키여서 사용하지 않는다. 근거는 [Microsoft RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)다. 일반 데스크톱의 표시 UI는 관리자 보안 데스크톱으로 옮기지 않으며 특권 모드의 표시는 별도 계약을 따른다.
-
-1. 대상자의 명시적 동의와 즉시 종료를 우선한다. 현재 PoC의 무동의 송신은 개발용 한계이며 제품 정책이 아니다.
-2. 세션에 승인된 기능만 수행한다. 관리자 조작은 별도 승인한다.
-3. 운영 시그널링은 TLS/WSS를 사용하고, 미디어·데이터는 WebRTC의 암호화 경로를 유지한다.
-4. 세션 시작·종료·권한 변경·파일 전송·Runbook 결과를 감사 이벤트로 남긴다. PIN과 인증 토큰은 로그에서 제외한다.
-5. 초기 제품에 무인 상시 접속을 넣지 않는다. AI 조치도 사람의 승인 없이 실행하지 않는다.
-
-이 원칙의 구현 상태는 [워크플로우의 목표 기능](workflows.md) 및 리뷰 G01/G03과 함께 확인한다.
-
-## 6. 확장할 때 먼저 결정할 것
-
-| 변경 | 선행 결정 |
-|---|---|
-| 서비스에 화면 공유 연결 | 사용자 세션 헬퍼, IPC 인증, 프로세스 종료·권한 철회 |
-| 마우스·키보드 추가 | 전이 이벤트 신뢰성, key-up 복구, 좌표·DPI·모니터 계약 |
-| TURN 도입 | 양쪽 ICE 설정, 단기 자격증명, 실제 relay 경로 검증 |
-| 인코더 교체 | `IVideoEncoder` 계약, 포맷 변경과 키프레임, 실패 폴백 |
-| 다중 세션/서버 확장 | 룸 소유권, 세션 라우팅, 재시작·재접속 정책 |
-| Runbook/진단 추가 | 수집 범위·실행 권한·사용자 승인·감사·취소 |
-
-현재 발견된 결함의 수정 순서와 완료 조건은 [리뷰·태스크 리스크](../docs_working/code-review-task-risks-2026-10-07.md)가 관리한다. 이 문서는 해당 태스크의 완료를 대신 선언하지 않는다.
+자체 포함 Host와 별도 LGPL DLL을 Authenticode로 서명하고 고정 manifest의 ZIP/hash를 RSA-PSS/SHA256으로 검증한다. 유휴 gate→보호 staging→원자 pending transaction→SCM image 변경→45초 dependency/설정 ready→commit 순서다. 실패/중간 종료는 직전 정상 image로 rollback한다. root bootstrap은 protocol1 recovery를 유지하며 자동 업데이트는 현재 검증된 버전 updater로 전달한다. 실제 서명·VM 설치/전원 차단·운영 endpoint 수용은 V36/V37이다.

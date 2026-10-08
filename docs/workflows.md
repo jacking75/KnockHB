@@ -1,38 +1,39 @@
 # 기능별 워크플로우
 
-2026-10-08 현재 흐름과 미구현 제품 흐름을 구분한다. [제품 계약](product-contract.md)·[프로토콜](protocol.md)이 기준이며 완료 상태는 [구현계획](../원격제어-구현계획.md)에서만 관리한다.
+실행 성공 여부는 [구현계획](../원격제어-구현계획.md)의 V/F에서 판정한다. 아래는 구현된 경로의 처리 순서다.
 
-## 현재 화면 보기
+## 생성·동의·연결
 
-1. 대상자가 HostRun을 시작한다. 옵션·URI·모니터를 먼저 검사하고 코드/PIN을 발급받는다.
-2. 대상자가 코드/PIN을 지원자에게 별도 경로로 전달한다. 일반 로그에는 두 값을 기록하지 않는다.
-3. 지원자는 자기 신고 이름과 코드/PIN으로 Viewer에 참가한다. 서버는 원자적으로 인증·1회 소비·슬롯 예약하고 joined ACK 뒤 peer를 공개한다.
-4. Host가 지원자 이름과 승인 모니터를 로컬 콘솔에 표시한다. 대상자가 30초 안에 '화면 승인'을 입력해야 한다. 거절·timeout·연결 상실이면 캡처 없이 종료한다.
-5. Host가 screen 권한을 로컬 객체에 부여하고 consent를 통지한다. 승인 뒤 PC/offer를 만들며 Viewer가 answer를 보낸다. SDP 이전 ICE는 제한된 큐에 보관한다.
-6. connected 뒤 승인 모니터를 캡처하고 실제 초기화·출력을 통과한 H.264 인코더를 선택한다. 크기 변경과 PLI/FIR은 강제 키프레임 복구를 요청한다.
-7. Viewer는 영상과 실제 수신 통계·selected candidate pair 경로를 표시한다. 통계 조회 실패는 처리하며 지난 연결의 callback은 새 UI를 변경하지 못한다.
-8. 대상자 Ctrl+C, Viewer 종료, peer 이탈, WS 무응답, 협상 오류는 권한 폐기·새 송신 차단·자원 정리로 수렴한다. 첫 종료 사유를 보존하며 같은 코드로 승인을 복구하지 않는다.
+1. 보호된 서비스가 console Session/SID를 확인하고 일반 Tray를 시작한다.
+2. 대상자가 지원 시작을 누르면 session.gate를 얻고 일반 Helper를 생성한다. 코드/PIN은 로컬 UI에만 표시한다.
+3. Viewer가 별도 경로로 받은 코드/PIN과 자기 신고 이름으로 한 번 참가한다. 서버는 예약/소비를 원자화하고 joined ACK 뒤에만 peer를 ready로 공개한다.
+4. Tray는 지원자 검증 수준·모니터·독립 기능 토글을 보여준다. 기본 미승인이며 거절/닫기/timeout은 승인되지 않는다.
+5. 로컬 승인·필수 감사 후에만 PeerConnection/승인 트랙과 기능 채널을 만든다. data-ready가 권한/채널/geometry를 확인한다. diagnostics만 승인하면 영상은 없다.
 
-현재 동의는 콘솔 화면 보기 전용이다. 상시 표시·Tray 동의·원클릭 종료의 제품 UX는 미구현이며 최종 제품 경로로 배포하지 않는다.
+## 화면·입력·모니터·품질
 
-## 현재 진단 도구
+캡처는 WGC/DXGI의 같은 모니터를 사용하며 BGRA→scale→허용 H.264 후보→SPS/SDP 한도 검사→RTP/SRTP 순서다. actual sample time을 90kHz로 반영한다. Viewer는 decodedFrames/FPS/bitrate와 selected pair의 양쪽 P2P/relay를 표시한다. 품질 설정값과 실제 통계를 구분한다.
 
-SessionProbe는 process/console session ID, Default/input desktop, 승격 여부, WGC 지원 여부와 DXGI 출력을 읽는다. 프로세스 승격·입력 주입·다른 사용자 세션 이동은 수행하지 않는다.
+Viewer input은 승인 영상의 여백을 제외해 0..1로 변환한다. Host는 identity/topology/epoch/sequence/barrier·현재 권한을 검사한다. down은 독립 Recovery 예약 ACK 뒤에만 주입하고 성공한 up 뒤 예약을 줄인다. blur/reset·건별 로컬 UI·권한 변경 시 key/button을 해제하고 새 epoch ACK 전에는 입력하지 않는다.
 
-CaptureDump는 승인한 공통 모니터 identity를 WGC/DXGI에 전달해 PNG를 저장한다. 요청한 개수를 모두 저장해야 성공이다. 기존 파일을 덮어쓰지 않는다. 실패는 원인과 비정상 종료 코드다. 저장 PNG는 사용자가 명시적으로 요청한 로컬 진단 산출물이며 민감 화면을 저장소에 커밋하지 않는다.
+모니터 변경/geometry 변경은 새 descriptor를 대상자가 건별 승인해야 한다. 캡처 스레드가 이전 프레임을 지우고 새 capture/encoder/IDR→geometry ACK→입력 재개로 처리한다. 대상 제거·거부·실패는 종료한다. 자동 품질은 5초 유지·혼잡 하향·15초 연속 안정 후 상승하며 통계 누락을 안정으로 세지 않는다.
 
-HostRun --encoder-check는 캡처·시그널링 없이 synthetic 1080p BGRA를 처리한다. 후보마다 Configure/실제 출력/전체 디코딩/fresh decoder 강제 키프레임 복구/출력 처리량을 확인한다. 강제 후보 실패를 폴백 성공으로 숨기지 않는다. 하드웨어 없는 후보는 UNSUPPORTED로 분리한다. 네트워크 표시 FPS와 구분한다.
+## 관리자·보안 desktop
 
-## 제품 경로 — 아직 미구현
+초기 admin capability는 요청 허용이다. 요청 시 일반 입력을 중단하고 Tray에서 별도 만료 승인을 받는다. 서비스는 승인 바인딩의 대상 Session/SYSTEM AdminHelper를 Job으로 실행한다. 기본/보안 desktop 프레임은 ACL 공유 mapping을 거쳐 일반 Helper의 인코더로 전달한다. batch 입력/SAS는 현재 admin generation과 lease를 검사한다. 로컬 철회·승인 만료·helper/desktop 복귀 오류는 전체 지원을 종료한다. UAC 정책을 끄거나 자격증명을 저장하지 않는다.
 
-Service는 Session 0에서 사용자 세션 헬퍼를 감독하고 Tray는 일반 사용자 승인 UI를 맡을 목표다. 헬퍼의 실제 실행 계정/session/desktop, 인증 IPC·ACL·승인 세대·민감 버퍼 수명은 E05 실증 뒤 확정한다. 서비스가 Session 0에서 사용자 화면을 직접 캡처한다고 가정하지 않는다.
+## 보조 기능
 
-일반 입력은 reliable key/button/text/reset과 별도 최신 pointer를 사용한다. 실제 video contain 영역·monitor identity·topology generation·단조 seq를 검증한다. 화면 보기+제어 승인 없이는 주입하지 않는다. blur/숨김/철회/헬퍼 종료 때 눌린 키를 해제한다. E21~E23에서 채널·브라우저 입력·SendInput을 연결한다.
+파일 offer는 본문 전 건별 수락/저장 위치 선택과 durable 감사가 필요하다. Host 송신도 로컬 파일 선택이다. 한 건의 16KiB 청크에 순번/길이/credit을 적용하고 SHA256을 완료 전에 검사한다. 거부·취소·timeout·철회는 부분 산출물을 지우며 원본을 보존한다.
 
-관리자 권한은 독립 동의와 추가 현장 승인이 필요하다. UAC/SAS/잠금화면은 E05에서 실증한 backend와 대상자 중단 경로를 전제로 구현한다. 일반 동의를 SYSTEM 임의 명령 실행 권한으로 바꾸지 않는다.
+chat은 동의한 text만 송수신한다. clipboard get/set은 별도 권한·명시 동작·로컬 UI actor·hash/길이/빈도로 검사한다. 내용은 감사하지 않는다. 진단은 읽기 전용 provider의 bounded snapshot이며 오류/stale를 표시한다.
 
-TURN은 인증된 joined에 단기 credential을 전달하고 양쪽 PC에 설정을 넣는 단계까지 존재한다. 실제 coturn TLS/allocation·장시간 갱신/rotation·복구 시험은 미완료다. 현재 ICE disconnected는 종료하며 자동 복구를 지원한다고 표현하지 않는다.
+Runbook은 등록 ID/version/source hash·허용 인자만 요청한다. Tray가 실제 전문/영향/권한을 보여 건별 승인하면 일반/SYSTEM worker Job을 실행한다. 20초·출력4096자·동시1개 한도와 취소가 있으며 감사는 ID/hash/결과만 남긴다. 이미 수행한 변경은 취소로 되돌아가지 않을 수 있다.
 
-파일은 기능 승인과 건별 수락·저장 위치 선택·임시 파일·체크섬 완료를 요구한다. clipboard는 방향 승인과 echo 방지, diagnostics는 별도 읽기 전용 동의, Runbook은 설치된 ID/version/hash와 인자에 대한 로컬 건별 승인을 요구한다. 해당 기능은 아직 UI·채널·실행 경로가 없다.
+## 복구·종료·업데이트
 
-서명 설치·업데이트는 정식 서명과 검증/롤백/진행 중 세션 보호를 요구한다. 스켈레톤 서비스 빌드나 개발 인증서를 정식 설치 후보로 선언하지 않는다. 최종 F01~F12는 사용자의 지시에 따라 별도 세션에서 수행한다.
+일시 ICE 단절은 같은 인증 피어/로컬 승인에 한해 입력/영상 중단→peer별 새 TURN credential→다음 generation PC/DTLS/SCTP→새 data-ready/IDR로 복구한다. 최대3회/각30초이고 credential은 8분마다 갱신한다. 승인 UI/관리자 중 복구·시그널링 상실·다른 피어는 종료다.
+
+로컬 즉시 종료는 새 송신/입력을 먼저 차단하고 Job/독립 up 복원을 실행한다. 실제 영상 lease가 멈춰도 서비스가 헬퍼를 종료한다. Viewer 디코딩 정지는 별도로 종료한다. 감사 실패가 종료를 막지 않는다.
+
+업데이트는 HTTPS/PSS/ZIP 검증→유휴 gate→보호 staging→pending transaction→SCM image 전환→45초 ready→commit이다. 실패/중간 종료는 직전 정상 버전으로 rollback하며 최고 승인 버전을 낮추지 않는다. 이전 동의는 재사용하지 않는다. 실제 설치·부하·다른 NAT/두 PC는 준비된 V/F 묶음으로 별도 검증한다.

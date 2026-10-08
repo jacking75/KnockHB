@@ -22,7 +22,7 @@ static class FileChannelRegression
             var sourceGrant=sourceGate.Grant("sid","peer",Capability.File,TimeSpan.FromMinutes(1));var targetGrant=targetGate.Grant("sid","peer",Capability.File,TimeSpan.FromMinutes(1));
             var failures=new ConcurrentQueue<string>();var audits=new ConcurrentQueue<FileAuditNotice>();
             var sourceDone=new TaskCompletionSource<FileTransferState>(TaskCreationOptions.RunContinuationsAsynchronously);var targetDone=new TaskCompletionSource<FileTransferState>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var a=new Wire();var b=new Wire();
+            await using var a=new Wire();await using var b=new Wire();
             await using(var source=new FileTransferSession(a,sourceGate,sourceGrant,(_,_)=>Task.FromResult<string?>(null),(n,_)=>{audits.Enqueue(n);return Task.CompletedTask;},failures.Enqueue,s=>sourceDone.TrySetResult(s),CancellationToken.None))
             await using(var target=new FileTransferSession(b,targetGate,targetGrant,(_,_)=>Task.FromResult<string?>(deny?null:to),(n,_)=>{audits.Enqueue(n);return Task.CompletedTask;},failures.Enqueue,s=>targetDone.TrySetResult(s),CancellationToken.None))
             {
@@ -45,12 +45,16 @@ static class FileChannelRegression
             try{Directory.Delete(root,true);}catch(IOException ex){Console.Error.WriteLine("FILE TEST CLEANUP: "+ex.GetType().Name);}
         }
     }
-    sealed class Wire:IFileTransferTransport
+    sealed class Wire:IFileTransferTransport,IAsyncDisposable
     {
+        readonly System.Threading.Channels.Channel<Action> deliveries=System.Threading.Channels.Channel.CreateBounded<Action>(new System.Threading.Channels.BoundedChannelOptions(64){SingleReader=true});
+        readonly Task worker;
+        public Wire(){worker=Task.Run(async ()=>{await foreach(var action in deliveries.Reader.ReadAllAsync())action();});}
         public FileTransferSession Peer=null!;public bool Tamper;public int Binary;
         public ConcurrentQueue<FileMessage> Messages=new();
         public bool IsOpen=>true;public ulong BufferedAmount=>0;
-        public void Send(FileMessage message){Messages.Enqueue(message);Peer.Receive(message);}
-        public void Send(byte[] packet){Binary++;var copy=packet.ToArray();if(Tamper){Tamper=false;copy[^1]^=1;}Peer.Receive(copy);}
+        public void Send(FileMessage message){Messages.Enqueue(message);if(!deliveries.Writer.TryWrite(()=>Peer.Receive(message)))throw new IOException("fake wire queue overflow");}
+        public void Send(byte[] packet){Binary++;var copy=packet.ToArray();if(Tamper){Tamper=false;copy[^1]^=1;}if(!deliveries.Writer.TryWrite(()=>Peer.Receive(copy)))throw new IOException("fake wire queue overflow");}
+        public async ValueTask DisposeAsync(){deliveries.Writer.TryComplete();await worker.WaitAsync(TimeSpan.FromSeconds(3));}
     }
 }

@@ -8,7 +8,7 @@ using RemoteAssist.Host.Core.Security;
 
 namespace RemoteAssist.Host.Core.Windows;
 
-public enum HostChildRole {Tray,Helper,AdminHelper,Recovery}
+public enum HostChildRole {Tray,Helper,AdminHelper,Recovery,RunbookWorker,AdminRunbookWorker}
 
 /// <summary>SYSTEM supervisor only. Fixed protected executables, no arbitrary command or inherited handles.</summary>
 public sealed class SessionProcess : IDisposable
@@ -54,9 +54,10 @@ public sealed class SessionProcess : IDisposable
     {
         DemandSupervisor(session);
         if(!Enum.IsDefined(role)||!Guid.TryParseExact(pipe,"N",out _)||nonce.Length!=64||!nonce.All(Uri.IsHexDigit))throw new ArgumentException("헬퍼 bootstrap 설정 오류다.");
-        var system=role is HostChildRole.AdminHelper or HostChildRole.Recovery;
+        var system=role is HostChildRole.AdminHelper or HostChildRole.Recovery or HostChildRole.AdminRunbookWorker;
+        if(role==HostChildRole.AdminRunbookWorker&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin|Capability.Runbook)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 건별 관리자 Runbook 승인이 필요하다.");
         if(role==HostChildRole.AdminHelper&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 독립 관리자 승인이 필요하다.");
-        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.Recovery=>"RemoteAssist.Host.Recovery.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
+        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.Recovery=>"RemoteAssist.Host.Recovery.exe",HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker=>"RemoteAssist.Host.RunbookWorker.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
         Enable("SeTcbPrivilege");Enable("SeIncreaseQuotaPrivilege");Enable("SeAssignPrimaryTokenPrivilege");
         KernelHandle original;
         if(system)Check(OpenProcessToken(GetCurrentProcess(),0xB,out original));else Check(WTSQueryUserToken(session,out original));
@@ -73,6 +74,7 @@ public sealed class SessionProcess : IDisposable
                 {
                     using var candidateJob=CreateJobObject(0,null);if(candidateJob.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error());
                     var limits=new JobLimits {Basic=new BasicJobLimits {Flags=0x2000}};
+                    if(role is HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker){limits.Basic.Flags|=0x308;limits.Basic.ActiveProcesses=2;limits.ProcessMemory=512*1024*1024;limits.JobMemory=1024*1024*1024;}
                     var size=Marshal.SizeOf<JobLimits>();var ptr=Marshal.AllocHGlobal(size);
                     try{Marshal.StructureToPtr(limits,ptr,false);Check(SetInformationJobObject(candidateJob,9,ptr,(uint)size));}finally{Marshal.FreeHGlobal(ptr);}
                     var startup=new StartupInfo {Size=Marshal.SizeOf<StartupInfo>(),Desktop="winsta0\\default"};

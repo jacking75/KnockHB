@@ -4,8 +4,14 @@ namespace RemoteAssist.Host.Core.Media;
 public sealed class H264ParameterSets
 {
     private byte[]? _sps, _pps;
+    public void DemandBaseline(int maximumLevel)
+    {
+        if(_sps is null)throw new InvalidDataException("SPS가 없다.");var unit=FindUnits(_sps).Single();var at=unit.Header;
+        if(_sps.Length<at+4||_sps[at+1]!=66||(_sps[at+2]&64)==0||_sps[at+3]>maximumLevel)throw new InvalidDataException("실제 H264 SPS가 협상한 profile/level과 다르다.");
+    }
     public byte[] Process(ReadOnlySpan<byte> packet)
     {
+        if(packet.Length>16*1024*1024)throw new InvalidDataException("H264 출력 크기 상한이다.");
         var units = FindUnits(packet);
         var hasSps=false;var hasPps=false;var idr=false;
         foreach(var (start,header,end) in units)

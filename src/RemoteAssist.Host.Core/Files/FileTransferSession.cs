@@ -28,12 +28,12 @@ public sealed class FileTransferSession:IAsyncDisposable
     readonly Channel<Entry> queue=Channel.CreateBounded<Entry>(32);
     readonly HashSet<string> seen=new(StringComparer.Ordinal);readonly Queue<string> seenOrder=new();
     readonly Dictionary<string,FileMessage> closed=new(StringComparer.Ordinal);
-    Transfer? current;Task? sender;long received,sent;int started,disposed;
+    Transfer? current;Task? sender;long received,sent;int started,disposed;readonly long generation;
     public Task Completion {get;private set;}=Task.CompletedTask;
     public bool IsOpen=>transport.IsOpen;
     public FileTransferSession(IFileTransferTransport transport,PermissionGate permissions,PermissionSnapshot binding,
-        Func<FileMessage,CancellationToken,Task<string?>> approve,Func<FileAuditNotice,CancellationToken,Task> audit,Action<string> fail,Action<FileTransferState> state,CancellationToken ct)
-    {this.transport=transport;this.permissions=permissions;this.binding=binding;this.approve=approve;this.audit=audit;this.fail=fail;this.state=state;lifetime=CancellationTokenSource.CreateLinkedTokenSource(ct);}
+        Func<FileMessage,CancellationToken,Task<string?>> approve,Func<FileAuditNotice,CancellationToken,Task> audit,Action<string> fail,Action<FileTransferState> state,CancellationToken ct,long generation=1)
+    {this.generation=generation;this.transport=transport;this.permissions=permissions;this.binding=binding;this.approve=approve;this.audit=audit;this.fail=fail;this.state=state;lifetime=CancellationTokenSource.CreateLinkedTokenSource(ct);}
     public void Start(){if(Interlocked.Exchange(ref started,1)!=0)throw new InvalidOperationException("파일 수신은 한 번만 시작한다.");Completion=Pump();}
     public void Receive(FileMessage message)
     {
@@ -44,7 +44,7 @@ public sealed class FileTransferSession:IAsyncDisposable
             _=FileMessage.Parse(ProtocolJson.Encode(message));
             lock(gate)
             {
-                Demand();if(message.SessionId!=binding.SessionId||message.Generation!=1||message.PermissionGeneration!=binding.Generation||message.Sequence!=received+1)throw new UnauthorizedAccessException("파일 바인딩·순번 오류다.");received++;
+                Demand();if(message.SessionId!=binding.SessionId||message.Generation!=generation||message.PermissionGeneration!=binding.Generation||message.Sequence!=received+1)throw new UnauthorizedAccessException("파일 바인딩·순번 오류다.");received++;
                 if(message.T=="file-offer")
                 {
                     Remember(message.Id);
@@ -131,8 +131,8 @@ public sealed class FileTransferSession:IAsyncDisposable
             {
                 await Capacity(total.Token);
                 await Credit(owner,total.Token);
-                int read;
-                try{read=await source.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,source.Length-count)),total.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10),total.Token);}
+                var read=(int)Math.Min(buffer.Length,source.Length-count);
+                try{await source.ReadExactlyAsync(buffer.AsMemory(0,read),total.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10),total.Token);}
                 catch(TimeoutException){Fatal("파일 청크 읽기의 기한을 넘었다.");throw;}
                 if(read==0)throw new EndOfStreamException();
                 var packet=new FileChunkHeader(Guid.ParseExact(owner.Offer.Id,"N"),sequence++,read).Encode(buffer.AsSpan(0,read));
@@ -215,8 +215,7 @@ public sealed class FileTransferSession:IAsyncDisposable
             while(await timer.WaitForNextTickAsync(owner.Token))
                 if(Stopwatch.GetElapsedTime(Interlocked.Read(ref owner.LastActivity))>=TimeSpan.FromSeconds(10)||Stopwatch.GetElapsedTime(owner.Started)>=TimeSpan.FromMinutes(10))
                 {
-                    lock(gate){if(current!=owner)return;if(owner.Phase=="completing"){Fatal("파일 저장 또는 완료 응답의 기한을 넘었다.");return;}owner.Cancel.Cancel();}
-                    await FinishFailure(owner,"failed","timeout");Clear(owner);return;
+                    lock(gate){if(current!=owner)return;if(owner.Phase=="completing"){Fatal("파일 저장 또는 완료 응답의 기한을 넘었다.");return;}owner.Result="failed";owner.Cancel.Cancel();Enqueue(new(owner,null,null));}return;
                 }
         }
         catch(OperationCanceledException){}
@@ -261,7 +260,7 @@ public sealed class FileTransferSession:IAsyncDisposable
             if(!permissions.Execute(Capability.File,binding.Generation,()=>transport.Send(value)))throw new UnauthorizedAccessException("파일 송신 승인이 종료됐다.");sent++;
         }
     }
-    FileMessage Bound(FileMessage message,long seq)=>message with {Version=1,SessionId=binding.SessionId,Generation=1,PermissionGeneration=binding.Generation,Sequence=seq};
+    FileMessage Bound(FileMessage message,long seq)=>message with {Version=1,SessionId=binding.SessionId,Generation=generation,PermissionGeneration=binding.Generation,Sequence=seq};
     void Demand(){lifetime.Token.ThrowIfCancellationRequested();if(!transport.IsOpen||!permissions.Allows(Capability.File,binding.Generation))throw new UnauthorizedAccessException("파일 채널의 현재 동의가 없다.");}
     void Remember(string id)
     {if(!Guid.TryParseExact(id,"N",out var parsed)||parsed==Guid.Empty||parsed.ToString("N")!=id||!seen.Add(id))throw new InvalidDataException("파일 전송 ID 재생이다.");seenOrder.Enqueue(id);if(seenOrder.Count>256)seen.Remove(seenOrder.Dequeue());}

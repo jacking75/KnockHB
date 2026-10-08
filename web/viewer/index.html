@@ -38,6 +38,7 @@
       <button id="hangup" type="button">세션 종료</button>
     </header>
     <p id="session-status" role="status"></p>
+    <div id="media-controls" hidden><button id="monitor-list" type="button">모니터 목록</button><select id="monitor-choice" aria-label="공유 모니터"></select><button id="monitor-select" type="button">모니터 전환 요청</button><select id="quality-mode" aria-label="영상 품질"><option value="auto">자동</option><option value="detail">글자 우선</option><option value="motion">움직임 우선</option></select><span id="quality-status"></span></div>
 
     <video id="screen" autoplay playsinline muted tabindex="0" aria-label="대상 화면과 승인된 원격 입력"></video>
     <footer class="input-bar">
@@ -46,6 +47,10 @@
       <button id="send-text" type="button" disabled>문자 입력</button>
     </footer>
     <div class="features">
+      <section id="file-panel" hidden>
+        <h2>파일 전송</h2><input id="file-source" type="file"><button id="file-send" type="button" disabled>선택 파일 전송</button>
+        <p id="file-status" role="status">파일 전송 대기다.</p><button id="file-accept" type="button" disabled>수신 파일 저장 승인</button><button id="file-reject" type="button" disabled>거부</button><button id="file-cancel" type="button" disabled>전송 취소</button>
+      </section>
       <section id="chat-panel" hidden>
         <h2>채팅</h2><pre id="chat-history" aria-live="polite"></pre>
         <label for="chat-text">대상자에게 보낼 메시지</label><textarea id="chat-text" maxlength="4096"></textarea><button id="chat-send" type="button" disabled>메시지 보내기</button>
@@ -55,6 +60,10 @@
         <label for="clipboard-text">전송하거나 읽은 텍스트</label><textarea id="clipboard-text" maxlength="8192"></textarea>
         <button id="clipboard-send" type="button" disabled>대상 PC에 전송</button><button id="clipboard-get" type="button" disabled>대상 PC에서 읽기</button><button id="clipboard-copy" type="button" disabled>읽은 텍스트 복사</button>
         <p id="feature-status" role="status"></p>
+      </section>
+      <section id="runbook-panel" hidden>
+        <h2>등록된 Runbook</h2><select id="runbook-choice" aria-label="등록 작업"></select><select id="runbook-detail" aria-label="출력 상세"><option value="summary">요약</option><option value="counts">개수</option></select>
+        <pre id="runbook-preview"></pre><button id="runbook-send" type="button" disabled>대상자에게 이번 작업 승인 요청</button><button id="runbook-cancel" type="button" disabled>작업 취소</button><pre id="runbook-result" role="status"></pre>
       </section>
       <section id="diagnostics-panel" hidden>
         <h2>읽기 전용 시스템 진단</h2><p id="diagnostics-status">수신 대기 중이다.</p><pre id="diagnostics-content"></pre>

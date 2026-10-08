@@ -12,6 +12,7 @@ public sealed unsafe class BgraFrameScaler(int maxLongEdge=1920,int maxShortEdge
     bool disposed;
     public int Width {get;private set;}
     public int Height {get;private set;}
+    public void SetLimits(int longEdge,int shortEdge){ObjectDisposedException.ThrowIf(disposed,this);_=Fit(2,2,longEdge,shortEdge);if(longEdge==maxLongEdge&&shortEdge==maxShortEdge)return;Release();maxLongEdge=longEdge;maxShortEdge=shortEdge;}
     public static (int Width,int Height) Fit(int width,int height,int maxLongEdge=1920,int maxShortEdge=1080)
     {
         FrameLayout.ValidateDimensions(width,height);

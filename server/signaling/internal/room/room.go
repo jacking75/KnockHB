@@ -47,6 +47,40 @@ type Room struct {
 	host, viewer                    *Peer
 	consumed, hostUsed, ended       bool
 	pinFailures                     int
+	negotiation                     int
+	lastRefresh                     time.Time
+}
+
+// Negotiation never changes the one-use pairing identity or consumes another PIN.
+func (r *Room) Negotiation(role, kind string, generation int) (int, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ended {
+		return 0, false
+	}
+	if r.negotiation == 0 {
+		r.negotiation = 1
+	}
+	if generation == 0 {
+		generation = 1
+	}
+	if kind == "offer" && role == RoleHost && generation == r.negotiation+1 && generation <= 256 {
+		r.negotiation = generation
+		return generation, true
+	}
+	if generation < r.negotiation {
+		return r.negotiation, false
+	}
+	return r.negotiation, generation == r.negotiation
+}
+func (r *Room) Refresh(role string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ended || role != RoleHost || r.host == nil || r.viewer == nil || !r.host.ready || !r.viewer.ready || now.Sub(r.lastRefresh) < 5*time.Second {
+		return false
+	}
+	r.lastRefresh = now
+	return true
 }
 
 func (r *Room) otherLocked(p *Peer) *Peer {

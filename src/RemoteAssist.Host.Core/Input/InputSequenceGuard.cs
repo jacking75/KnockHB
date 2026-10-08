@@ -9,6 +9,7 @@ public sealed class InputSequenceGuard(string sessionId,long connectionGeneratio
     long inputSequence,pointerSequence,pointerBarrier,epoch=1;
     public long Epoch {get{lock(gate)return epoch;}}
     public long AdvanceLocalPhase(){lock(gate){epoch=checked(epoch+1);pointerSequence=pointerBarrier=0;return epoch;}}
+    public void RebindMonitor(string identity,long generation){lock(gate){monitorIdentity=identity;topologyGeneration=generation;pointerSequence=pointerBarrier=0;}}
     public bool Accept(string channel,InputMsg message)
     {
         lock(gate)

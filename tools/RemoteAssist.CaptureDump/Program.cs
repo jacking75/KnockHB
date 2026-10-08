@@ -33,6 +33,7 @@ if (opts.List)
     return 0;
 }
 
+if(Directory.Exists(opts.OutDir)&&Directory.EnumerateFileSystemEntries(opts.OutDir).Any()){Console.Error.WriteLine("기존 캡처 결과가 있는 경로는 덮어쓰지 않는다.");return 1;}
 Directory.CreateDirectory(opts.OutDir);
 
 IScreenCapture? capture = null;

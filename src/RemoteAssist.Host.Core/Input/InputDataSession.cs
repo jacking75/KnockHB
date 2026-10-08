@@ -13,6 +13,7 @@ internal sealed class InputDataSession(InputSession input,CancellationToken ct,A
     public Task Completion {get;private set;}=Task.CompletedTask;
     public void SuspendForApproval(){input.SuspendForApproval();lock(gate)pointer=null;}
     public long ResumeLocalPhase()=>input.ResumeLocalPhase();
+    public void RebindMonitor(RemoteAssist.Host.Core.Capture.MonitorInfo monitor,long generation,IInputBackend backend)=>input.RebindMonitor(monitor,generation,backend);
     public void Start()=>Completion=Run();
     public void Attach(RTCDataChannel channel)
     {

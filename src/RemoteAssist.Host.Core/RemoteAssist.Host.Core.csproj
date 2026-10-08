@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../../deploy/runbooks/*.ps1" LogicalName="RemoteAssist.Runbooks.%(Filename).ps1" />
     <EmbeddedResource Include="../../third_party/ffmpeg/libraries.json" LogicalName="RemoteAssist.FFmpeg.Libraries" />
     <ProjectReference Include="..\RemoteAssist.Protocol\RemoteAssist.Protocol.csproj" />
   </ItemGroup>

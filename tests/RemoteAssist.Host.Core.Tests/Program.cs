@@ -11,6 +11,12 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("C#/Go/JS shared permission and channel fixtures",async()=>
+    {
+        using var fixtures=JsonDocument.Parse(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory,"features.json")));
+        foreach(var fixture in fixtures.RootElement.EnumerateArray()){var names=fixture.GetProperty("permissions").EnumerateArray().Select(x=>x.GetString()!).ToArray();var channels=fixture.GetProperty("channels").EnumerateArray().Select(x=>x.GetString()!).ToArray();var mask=fixture.GetProperty("mask").GetInt32();Check(FeatureContract.ParsePermissions(names)==mask&&FeatureContract.Channels(mask).SequenceEqual(channels),"shared feature contract drift");}
+    }),
+    ("signed release tamper, platform/protocol, ZIP escape and registered Runbook injection",DeploymentRegression.Run),
     ("file channel credit window, durable audit, denial and checksum failure preserve bounded exchange",FileChannelRegression.Run),
     ("native file handle boundary, zero/multiple chunks, collision, hash tamper and revocation",FileRegression.Run),
     ("feature permissions, bounded clipboard hashes and diagnostics revocation prevent excess collection",FeatureRegression.Run),
@@ -263,6 +269,7 @@ var tests = new (string Name, Func<Task> Run)[]
         var bad=encoded.ToArray();bad[6]=1;await Reject(()=>Task.FromResult(FileChunkHeader.Decode(bad)));
         await Reject(()=>Task.FromResult(FileChunkHeader.Decode(encoded[..^1])));
     }),
+    ("적응 품질 유지 시간과 혼잡/회복 경계", QualityRegression.Run),
     ("Host termination is idempotent, observer failures cannot reopen it", async () =>
     {
         await using var session=new ScreenShareSession(new ScreenShareOptions());
@@ -298,7 +305,7 @@ sealed class FakeEncoder(bool success, bool failConfigure) : IEncoderCandidate
     public bool Disposed; public int Forced;
     public void Configure(int width, int height, int fps, int bitrateKbps)
     { if (failConfigure) throw new InvalidOperationException("injected device init failure"); }
-    public byte[]? Encode(int width, int height, byte[] bgra) => success ? [0,0,0,1,0x67,1,0,0,0,1,0x68,2,0,0,0,1,0x65,3] : null;
+    public byte[]? Encode(int width, int height, byte[] bgra) => success ? [0,0,0,1,0x67,66,192,31,0,0,0,1,0x68,2,0,0,0,1,0x65,3] : null;
     public void ForceKeyFrame() => Forced++;
     public void Dispose() => Disposed = true;
 }

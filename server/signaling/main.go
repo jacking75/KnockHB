@@ -23,7 +23,7 @@ type settings struct {
 	cfg                           signaling.Config
 }
 
-var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "features.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
+var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "features.js": true, "files.js": true, "sha256.js": true, "runbooks.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
 
 func main() { os.Exit(run()) }
 func run() int {
@@ -40,7 +40,7 @@ func run() int {
 	handler := server.Routes()
 	if config.viewer != "" {
 		mux := http.NewServeMux()
-		for _, path := range []string{"/healthz", "/readyz", "/session", "/ws"} {
+		for _, path := range []string{"/healthz", "/readyz", "/metrics", "/audit", "/session", "/ws"} {
 			mux.Handle(path, handler)
 		}
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -122,22 +122,34 @@ func loadSettings() (settings, error) {
 		}
 	}
 	out.cfg.TURNURLs = envList("RA_TURN_URLS")
+	out.cfg.OperatorSecretFile = os.Getenv("RA_OPERATOR_SECRET_FILE")
+	out.cfg.AuditDirectory = os.Getenv("RA_AUDIT_DIR")
 	for _, url := range out.cfg.TURNURLs {
 		if !strings.HasPrefix(url, "turn:") && !strings.HasPrefix(url, "turns:") {
 			return out, errors.New("TURN URL scheme 오류")
 		}
 	}
 	if secretPath := os.Getenv("RA_TURN_SECRET_FILE"); secretPath != "" {
-		secret, err := os.ReadFile(secretPath)
-		if err != nil {
+		out.cfg.TURNSecretFile = secretPath
+		secret := signaling.ReadSecretFile(secretPath)
+		if secret == "" {
 			return out, errors.New("TURN secret 파일을 읽을 수 없다")
 		}
-		out.cfg.TURNSecret = strings.TrimSpace(string(secret))
+		out.cfg.TURNSecret = secret
 		if len(out.cfg.TURNSecret) < 32 {
 			return out, errors.New("TURN secret은 최소 32바이트여야 한다")
 		}
 	}
 	if out.mode == "production" {
+		if out.cfg.OperatorSecretFile == "" || out.cfg.AuditDirectory == "" {
+			return out, errors.New("운영 node credential과 감사 디렉터리가 필요하다")
+		}
+		if signaling.ReadSecretFile(out.cfg.OperatorSecretFile) == "" {
+			return out, errors.New("운영 node credential 검사 실패")
+		}
+		if _, err := signaling.OpenAuditStore(out.cfg.AuditDirectory); err != nil {
+			return out, errors.New("운영 감사 저장소 검사 실패")
+		}
 		if out.cert == "" || out.key == "" {
 			return out, errors.New("운영 TLS 인증서와 키가 필요하다")
 		}

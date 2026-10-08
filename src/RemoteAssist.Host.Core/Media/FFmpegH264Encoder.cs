@@ -16,6 +16,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
     private byte[] _inputBuffer=[];
     private H264ParameterSets _parameterSets = new();
     public string EncoderName { get; private set; } = "(미선택)";
+    public int MaximumLevel {get;set;}=52;
     public bool IsHardware => EncoderName != "libopenh264" && _encoder is not null;
 
     public FFmpegH264Encoder(string? preferred = null, ILogger<FFmpegH264Encoder>? log = null)
@@ -46,6 +47,8 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
             try
             {
                 var options = Options(name);
+                options["profile"]=name switch {"h264_qsv"=>"66","libopenh264"=>"constrained_baseline",_=>"baseline"};
+                if(name=="h264_nvenc")options["level"]=MaximumLevel.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 candidate = _factory.Create(name, options);
                 candidate.Configure(width, height, fps, bitrateKbps);
                 var deadline = Environment.TickCount64 + 2000;
@@ -55,7 +58,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
                 {
                     probe[0] = (byte)i;
                     var output = candidate.Encode(width, height, probe);
-                    if (output is { Length: > 0 }) { parameterSets.Process(output); emitted = true; break; }
+                    if (output is { Length: > 0 }) { parameterSets.Process(output);parameterSets.DemandBaseline(MaximumLevel); emitted = true; break; }
                 }
                 if (!emitted) throw new InvalidOperationException("시험 인코딩 출력이 없다.");
                 // The pinned SetCodec API binds an AVCodec pointer by encoder name.
@@ -95,7 +98,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
         if (forceKeyframe) _encoder.ForceKeyFrame();
         bgraFrame.Span.CopyTo(_inputBuffer);
         var encoded = _encoder.Encode(_width, _height, _inputBuffer);
-        return encoded is { Length: > 0 } ? _parameterSets.Process(encoded) : ReadOnlyMemory<byte>.Empty;
+        if(encoded is not {Length:>0})return ReadOnlyMemory<byte>.Empty;var output=_parameterSets.Process(encoded);_parameterSets.DemandBaseline(MaximumLevel);return output;
     }
     public void Dispose() { if (_disposed) return; _disposed = true; _encoder?.Dispose(); _encoder = null; System.Security.Cryptography.CryptographicOperations.ZeroMemory(_inputBuffer);_inputBuffer=[]; }
 }

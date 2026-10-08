@@ -79,20 +79,28 @@ public sealed class DxgiScreenCapture : IScreenCapture
         for (uint a = 0; factory.EnumAdapters1(a, out var adapter).Success; a++)
         {
             var keepAdapter = false;
+            try
+            {
             for (uint o = 0; adapter.EnumOutputs(o, out var output).Success; o++)
             {
+                var keepOutput=false;
+                try
+                {
                 if (output.Description.Monitor==_target.Handle && output.Description.DeviceName==_target.DeviceName)
                 {
                     foundAdapter = adapter;
                     foundOutput = output;
                     keepAdapter = true;
+                    keepOutput = true;
                     break;
                 }
-                output.Dispose();
+                }
+                finally{if(!keepOutput)output.Dispose();}
             }
 
             if (keepAdapter) break;
-            adapter.Dispose();
+            }
+            finally{if(!keepAdapter)adapter.Dispose();}
         }
 
         if (foundAdapter is null || foundOutput is null)
@@ -104,6 +112,8 @@ public sealed class DxgiScreenCapture : IScreenCapture
 
         _adapter = foundAdapter;
 
+        try
+        {
         var outDesc = foundOutput.Description;
         var rect = outDesc.DesktopCoordinates;
         Monitor = new MonitorInfo(
@@ -113,7 +123,8 @@ public sealed class DxgiScreenCapture : IScreenCapture
             rect.Left == 0 && rect.Top == 0,
             outDesc.Monitor);
 
-        try { _output = foundOutput.QueryInterface<IDXGIOutput1>(); }
+        _output = foundOutput.QueryInterface<IDXGIOutput1>();
+        }
         finally { foundOutput.Dispose(); }
 
         // DriverType은 반드시 Unknown이어야 한다. 어댑터를 명시했을 때의 규칙이다.
@@ -275,6 +286,7 @@ public sealed class DxgiScreenCapture : IScreenCapture
         }
 
         var rectSize = Marshal.SizeOf<RawRect>();
+        if(info.TotalMetadataBufferSize>4*1024*1024)throw new InvalidDataException("DXGI metadata 상한이다.");
         var needed = (int)info.TotalMetadataBufferSize / rectSize + 1;
         if (_dirtyRects.Length < needed)
         {
@@ -289,6 +301,7 @@ public sealed class DxgiScreenCapture : IScreenCapture
         }
 
         var count = (int)(usedBytes / rectSize);
+        if(usedBytes>bufferBytes||usedBytes%rectSize!=0)throw new InvalidDataException("잘린 DXGI dirty rect다.");
         var bounds = Rect.Empty;
         for (var i = 0; i < count; i++)
         {

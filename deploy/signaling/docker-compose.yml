@@ -1,0 +1,35 @@
+services:
+  signaling:
+    build:
+      context: ../..
+      dockerfile: deploy/signaling/Dockerfile
+      args:
+        GO_IMAGE: ${RA_GO_IMAGE:?set a reviewed golang 1.27.0 image digest}
+        RUNTIME_IMAGE: ${RA_RUNTIME_IMAGE:?set a reviewed distroless image digest}
+    ports: ["25001:25001/tcp"]
+    user: "65532:65532"
+    environment:
+      RA_MODE: production
+      RA_LISTEN: 0.0.0.0:25001
+      RA_VIEWER_DIR: /viewer
+      RA_TLS_CERT: /private/tls/cert.pem
+      RA_TLS_KEY: /private/tls/key.pem
+      RA_ALLOWED_ORIGINS: ${RA_ALLOWED_ORIGINS:?set exact Viewer origin}
+      RA_TURN_URLS: ${RA_TURN_URLS:?set authenticated turn and turns URLs}
+      RA_TURN_SECRET_FILE: /private/turn.secret
+      RA_OPERATOR_SECRET_FILE: /private/node.secret
+      RA_AUDIT_DIR: /audit
+    volumes:
+      - ./private:/private:ro
+      - ./audit:/audit
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    mem_limit: 512m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options: {max-size: "4m", max-file: "4"}

@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$Admin,[string]$RunDir,[ValidateRange(30,900)][int]$Seconds=600)
+param([switch]$Admin,[switch]$PrepareOnly,[string]$RunDir,[ValidateRange(30,300)][int]$Seconds=240)
 $ErrorActionPreference='Stop'
 $repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactRoot=Join-Path $repository '.artifacts'
@@ -7,13 +7,14 @@ if(!$Admin) {
     $RunDir=Join-Path $artifactRoot ('product-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     New-Item -ItemType Directory -Path $RunDir | Out-Null
     $publish=Join-Path $RunDir 'publish'
-    foreach($name in @('Service','Tray','Helper','Recovery','AdminHelper')) {
+    foreach($name in @('Service','Tray','Helper','Recovery','AdminHelper','RunbookWorker')) {
         & dotnet publish (Join-Path $repository ('src/RemoteAssist.Host.'+$name+'/RemoteAssist.Host.'+$name+'.csproj')) --no-restore -c Release --self-contained false -o $publish
         if($LASTEXITCODE -ne 0){throw '제품 publish 실패'}
     }
     $native=Join-Path $publish 'third_party/ffmpeg/bin'
     New-Item -ItemType Directory -Path $native -Force | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $repository 'third_party/ffmpeg/bin') -File | Copy-Item -Destination $native
+    Copy-Item -LiteralPath (Join-Path $repository 'deploy/runbooks') -Destination $publish -Recurse
     @{SignalingUri='http://127.0.0.1:25001';AllowLoopbackHttp=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publish 'host.settings.json') -Encoding utf8
     $manifest=@(Get-ChildItem -LiteralPath $publish -Recurse -File | ForEach-Object {
         if($_.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'publish reparse point 금지'}
@@ -21,6 +22,7 @@ if(!$Admin) {
     })
     ConvertTo-Json -InputObject $manifest -Depth 4 | Set-Content -LiteralPath (Join-Path $RunDir 'manifest.json') -Encoding utf8
     Write-Output "제품 로컬 실증 증거: $RunDir"
+    if($PrepareOnly){Write-Output $RunDir;exit 0}
     $arguments='-NoProfile -ExecutionPolicy Bypass -File "{0}" -Admin -RunDir "{1}" -Seconds {2}' -f $PSCommandPath,$RunDir,$Seconds
     $child=Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList $arguments -Wait -PassThru
     if($child.ExitCode -ne 0){throw '관리자 제품 실증 실패. installer-error.json을 확인한다'}
@@ -65,12 +67,13 @@ try {
     Start-Service -Name $serviceName
     $ownedService=Get-CimInstance Win32_Service -Filter "Name='RemoteAssistHost'"
     if($ownedService.PathName -ne ('"{0}"' -f $exe) -or $ownedService.ProcessId -le 0){throw '이 실증의 서비스 PID/경로가 아니다'}
+    @{utc=[DateTimeOffset]::UtcNow.ToString('o');ownedPid=$ownedService.ProcessId;image=$exe;deadlineSeconds=$Seconds;state='SERVICE_STARTED_NOT_FUNCTION_PASS'}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $RunDir 'ready.json') -Encoding utf8
     $clock=[Diagnostics.Stopwatch]::StartNew()
     while((Get-Service -Name $serviceName).Status -ne 'Stopped' -and $clock.Elapsed.TotalSeconds -lt $Seconds -and !(Test-Path -LiteralPath (Join-Path $RunDir 'finish'))) {
         if(Test-Path -LiteralPath (Join-Path $RunDir 'crash-service')) {
             # Explicit local fault injection, restricted to the service installed by this invocation.
             $faultTime=[DateTimeOffset]::UtcNow
-            Stop-Process -Id $ownedService.ProcessId -Force
+            $faultProcess=Get-Process -Id $ownedService.ProcessId -ErrorAction Stop;if($faultProcess.Path-ne$exe){throw '장애 주입 대상 PID 경로가 바뀌었다'};Stop-Process -Id $ownedService.ProcessId -Force
             @{utc=$faultTime.ToString('o');scenario='service-crash';ownedPid=$ownedService.ProcessId} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RunDir 'service-crash.json') -Encoding utf8
         }
         Start-Sleep -Milliseconds 100
@@ -84,7 +87,7 @@ try {
     # Recovery is outside the ordinary helper Job and must finish its up-only restoration first.
     $cleanupClock=[Diagnostics.Stopwatch]::StartNew()
     do {
-        $remaining=@(Get-Process -Name 'RemoteAssist.Host.Recovery','RemoteAssist.Host.AdminHelper','RemoteAssist.Host.Helper','RemoteAssist.Host.Tray' -ErrorAction SilentlyContinue | Where-Object {
+        $remaining=@(Get-Process -Name 'RemoteAssist.Host.Recovery','RemoteAssist.Host.AdminHelper','RemoteAssist.Host.Helper','RemoteAssist.Host.Tray','RemoteAssist.Host.RunbookWorker' -ErrorAction SilentlyContinue | Where-Object {
             $_.Path -and $_.Path.StartsWith($stage+'\',[StringComparison]::OrdinalIgnoreCase)
         })
         if($remaining.Count -eq 0){break}

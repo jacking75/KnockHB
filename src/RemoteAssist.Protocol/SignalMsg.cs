@@ -8,6 +8,7 @@ namespace RemoteAssist.Protocol;
 /// <b>필드명 기준은 <c>docs/protocol.md</c> 다.</b> 이 코드가 아니다.
 /// Go 서버·JS 뷰어가 같은 문서를 각자 구현하므로, 스키마를 바꿀 때는 문서를 먼저 고친다.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SignalMsg
 {
     [JsonPropertyName("v")] public int Version { get; init; } = 1;

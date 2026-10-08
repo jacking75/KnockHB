@@ -12,13 +12,24 @@ public static class ProtocolJson
     public static JsonElement Element<T>(T value)=>JsonSerializer.SerializeToElement(value,wire);
     public static JsonDocument Parse(ReadOnlyMemory<byte> bytes,int maxBytes)
     {
+        var document=ParseObject(bytes,maxBytes);
+        try
+        {
+            if(!document.RootElement.TryGetProperty("v",out var version)||!version.TryGetInt32(out var value)||value!=1)
+                throw new InvalidDataException("프로토콜 버전이 필요하다.");
+            return document;
+        }
+        catch {document.Dispose();throw;}
+    }
+    public static JsonDocument ParseObject(ReadOnlyMemory<byte> bytes,int maxBytes)
+    {
         if(bytes.Length>maxBytes)throw new InvalidDataException("프로토콜 크기 상한 초과다.");
         var document=JsonDocument.Parse(bytes,new JsonDocumentOptions{MaxDepth=32});
         try
         {
             ValidateDuplicates(document.RootElement);
-            if(document.RootElement.ValueKind!=JsonValueKind.Object||!document.RootElement.TryGetProperty("v",out var version)||!version.TryGetInt32(out var value)||value!=1)
-                throw new InvalidDataException("프로토콜 버전이 필요하다.");
+            if(document.RootElement.ValueKind!=JsonValueKind.Object)
+                throw new InvalidDataException("JSON 객체가 필요하다.");
             return document;
         }
         catch {document.Dispose();throw;}

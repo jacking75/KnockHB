@@ -21,7 +21,9 @@ func readMsg(ctx context.Context, c *websocket.Conn, m *Msg) error {
 	if err := validateJSON(json.NewDecoder(bytes.NewReader(data))); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, m); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(m); err != nil {
 		return err
 	}
 	if m.Version != 1 {

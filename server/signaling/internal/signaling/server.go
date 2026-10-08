@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf16"
@@ -84,9 +85,12 @@ type Config struct {
 	// SessionTTL 은 세션 코드로 참가할 수 있는 기간이다.
 	SessionTTL time.Duration
 	// OriginPatterns 는 브라우저 뷰어의 허용 Origin이다. 비우면 동일 호스트만 허용된다.
-	OriginPatterns []string
-	TURNURLs       []string
-	TURNSecret     string
+	OriginPatterns     []string
+	TURNURLs           []string
+	TURNSecret         string
+	TURNSecretFile     string
+	OperatorSecretFile string
+	AuditDirectory     string
 }
 
 // Server 는 시그널링 서버다.
@@ -102,10 +106,15 @@ type Server struct {
 	beforeACK         func(*room.Peer) // deterministic barrier, nil outside tests
 	readLease         time.Duration
 	heartbeatInterval time.Duration
+	audit             *AuditStore
+	auditRate         *requestLimiter
+	startupError      error
+	failures          atomic.Int64
 }
 
 // New 는 서버를 만든다.
 func New(cfg Config, log *slog.Logger) *Server {
+	audit, auditErr := OpenAuditStore(cfg.AuditDirectory)
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 10 * time.Minute
 	}
@@ -113,6 +122,7 @@ func New(cfg Config, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	return &Server{
+		audit: audit, auditRate: newLimiter(120, time.Minute, 4096), startupError: auditErr,
 		rooms:             room.NewManager(cfg.SessionTTL),
 		cfg:               cfg,
 		log:               log,
@@ -136,6 +146,8 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
+	mux.HandleFunc("POST /audit", s.handleAudit)
 	mux.HandleFunc("POST /session", s.handleCreateSession)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	return SecurityHeaders(mux)
@@ -156,8 +168,7 @@ type createSessionResponse struct {
 
 // handleCreateSession 은 Host 앱이 "세션 시작"을 눌렀을 때 호출한다.
 //
-// TODO(T3.1): 발급 자체에 대한 인증·레이트 리밋. 지금은 누구나 코드를 받을 수 있다.
-// 코드만으로는 아무것도 못 하지만(참가에 PIN/토큰이 필요하다), 남용 방지는 필요하다.
+// Out-of-band pairing is the selected identity model; issuance is bounded per source IP.
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		http.Error(w, "Origin 거부", http.StatusForbidden)
@@ -169,7 +180,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	rm, err := s.rooms.Create()
 	if err != nil {
-		s.log.Error("세션 생성 실패", "err", err)
+		s.log.Error("세션 생성 실패", "kind", "room-create")
 		status := http.StatusInternalServerError
 		if errors.Is(err, room.ErrCapacity) {
 			status = http.StatusServiceUnavailable
@@ -239,7 +250,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.pending--
 		s.mu.Unlock()
-		s.log.Warn("WebSocket 수락 실패", "err", err)
+		s.log.Warn("WebSocket 수락 실패", "kind", "upgrade-rejected")
 		return
 	}
 	s.mu.Lock()
@@ -286,6 +297,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer s.leave(rm, peer)
 
 	// 3) 참가 알림.
+	iceServers := s.iceServers(rm.SessionID, peer.ID, time.Now())
+	if len(s.cfg.TURNURLs) > 0 && len(iceServers) == 0 {
+		s.reject(ctx, conn, c, "unavailable", "TURN key unavailable")
+		return
+	}
 	other := rm.Other(peer)
 	present := other != nil
 	if s.beforeACK != nil {
@@ -294,7 +310,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err := conn.WriteJSON(ctx, Msg{
 		Type: "joined", Room: rm.Code, Role: peer.Role, PeerPresent: &present,
 		SessionID: rm.SessionID, ConnectionID: peer.ID, Generation: 1,
-		ICEServers: s.iceServers(rm.SessionID, peer.ID, time.Now()),
+		ICEServers: iceServers,
 	}); err != nil {
 		return
 	}
@@ -344,17 +360,52 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch m.Type {
+		case "turn-refresh":
+			if !rm.Refresh(peer.Role, time.Now()) {
+				return
+			}
+			p := rm.Other(peer)
+			if p == nil {
+				return
+			}
+			local := s.iceServers(rm.SessionID, peer.ID, time.Now())
+			remote := s.iceServers(rm.SessionID, p.ID, time.Now())
+			if len(s.cfg.TURNURLs) > 0 && (len(local) == 0 || len(remote) == 0) {
+				return
+			}
+			gen, ok := rm.Negotiation(peer.Role, "ice", m.Generation)
+			if !ok {
+				return
+			}
+			if err := p.Conn.WriteJSON(ctx, Msg{Type: "turn-credentials", SessionID: rm.SessionID, Generation: gen, ICEServers: remote}); err != nil {
+				return
+			}
+			if err := conn.WriteJSON(ctx, Msg{Type: "turn-credentials", SessionID: rm.SessionID, Generation: gen, ICEServers: local}); err != nil {
+				return
+			}
 		case "ping":
 			if err := conn.WriteJSON(ctx, Msg{Type: "pong"}); err != nil {
 				return
 			}
 		case "pong":
 		case "offer", "answer", "ice", "bye", "consent", "consent-pending", "consent-denied":
+			generation, valid := rm.Negotiation(peer.Role, m.Type, m.Generation)
+			if !valid {
+				if m.Generation < generation {
+					continue
+				}
+				return
+			}
 			if (m.Type == "offer" || m.Type == "consent" || m.Type == "consent-pending" || m.Type == "consent-denied") && peer.Role != room.RoleHost {
 				return
 			}
 			if m.Type == "answer" && peer.Role != room.RoleViewer {
 				return
+			}
+			if m.Type == "consent" {
+				if _, ok := permissionMask(m.Permissions); !ok || m.PermissionGeneration != 1 {
+					return
+				}
 			}
 			if len(m.SDP) > 96<<10 || (m.ICE != nil && len(m.ICE.Candidate) > 8192) {
 				return
@@ -366,7 +417,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					Room:      rm.Code,
 					SDP:       m.SDP,
 					ICE:       m.ICE,
-					SessionID: rm.SessionID, Generation: 1, PermissionGeneration: m.PermissionGeneration, Permissions: m.Permissions,
+					SessionID: rm.SessionID, Generation: generation, PermissionGeneration: m.PermissionGeneration, Permissions: m.Permissions,
 				}); err != nil {
 					return
 				}
@@ -425,6 +476,7 @@ func (s *Server) leave(rm *room.Room, p *room.Peer) {
 
 // reject 는 오류를 알리고 연결을 닫는다.
 func (s *Server) reject(ctx context.Context, conn *wsConn, c *websocket.Conn, code, reason string) {
+	s.failures.Add(1)
 	_ = conn.WriteJSON(ctx, errMsg(code, reason))
 	s.closeWith(c, websocket.StatusPolicyViolation, code)
 }

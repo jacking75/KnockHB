@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/RemoteAssist.Update/RemoteAssist.Update.csproj" />
+    <Project Path="src/RemoteAssist.Host.RunbookWorker/RemoteAssist.Host.RunbookWorker.csproj" />
     <Project Path="src/RemoteAssist.Host.AdminHelper/RemoteAssist.Host.AdminHelper.csproj" />
     <Project Path="src/RemoteAssist.Host.Core/RemoteAssist.Host.Core.csproj" />
     <Project Path="src/RemoteAssist.Host.Helper/RemoteAssist.Host.Helper.csproj" />

@@ -37,14 +37,14 @@ E2E 준비 부족과 반복 시행착오로 개발 시간과 사용자 화면 �
 
 ## 아키텍처
 
-현재 실행 경로는 **HostRun 콘솔 + Go 시그널링 + 웹 Viewer의 화면 공유 PoC**다.
-Service/Tray는 골격이며 제품 입력·동의 UI는 미구현이다. HostRun은 콘솔 화면 승인 뒤에만 캡처하며 TURN credential 발급·설정 전달은 존재하나 실제 allocation·갱신·복구는 미검증이다. 아래는 목표 책임 경계다.
+제품 실행 경로는 **보호 설치의 SYSTEM Service + 일반 권한 WPF Tray/Helper + Go 시그널링 + 웹 Viewer**다. HostRun은 콘솔 화면 승인 진단 도구다.
+서비스 감독·실제 동의·일반/특권 입력·보조 기능·TURN 갱신·서명 설치/업데이트 경로를 코드에 연결했다. 구현/코드 리뷰와 V/F 실제 실행·정식 배포 수용을 구분한다. 아래는 현재 책임 경계다.
 시그널링(SDP/ICE)과 미디어를 분리하고, 미디어는 P2P 우선·TURN 폴백을 목표로 한다.
 
 - **Host Agent** (대상 PC) — 서비스·사용자 UI 분리 + 사용자 세션 실행 헬퍼 설계
   - `Host.Service`: Session 0 · SYSTEM 권한. 세션·권한·헬퍼 수명 감독
   - `Host.Tray`: 사용자 세션 · 일반 권한. 동의 대화상자, 세션 코드/PIN 표시, 접속 중 배지, 종료 버튼
-  - 사용자 세션의 캡처·입력 헬퍼와 인증된 로컬 IPC로 통신한다. 인코딩·WebRTC 실행 위치와 IPC 세부는 T2.4에서 확정한다
+  - 사용자 세션의 캡처·입력 헬퍼와 인증된 로컬 IPC로 통신한다. 인코딩/WebRTC는 일반 Helper에 두며 특권 프레임은 ACL 공유 mapping으로 전달한다
 - **Viewer** (지원자) — 웹 SPA(브라우저 내장 WebRTC). 설치 불필요가 핵심 이점
 - **Signaling + Relay** (클라우드) — 세션/룸 관리, SDP·ICE 중계, coturn(STUN/TURN), 감사 로그. 미디어 원본은 저장하지 않는다
 
@@ -79,7 +79,7 @@ Host가 C#인 이유는 WinRT(Windows.Graphics.Capture)·DXGI COM·`SendInput`·
 ```
 RemoteAssist.slnx
 ├─ src/
-│  ├─ RemoteAssist.Host.Service/   # Windows 서비스 골격, 목표는 세션·권한 감독
+│  ├─ RemoteAssist.Host.Service/   # Windows 서비스: 세션/권한/Job/업데이트/감사 감독
 │  ├─ RemoteAssist.Host.Tray/      # 트레이 UI(WPF): 동의·상태
 │  ├─ RemoteAssist.Host.Core/      # 공통 로직(캡처/인코딩/입력/프로토콜)
 │  └─ RemoteAssist.Protocol/       # 데이터채널 메시지 C# DTO
@@ -98,8 +98,8 @@ RemoteAssist.slnx
 
 ## 데이터 채널 프로토콜
 
-아래는 목표 채널 구성이다. 현재 Host/Viewer는 데이터채널을 생성하지 않는다.
-입력 key/button 전이의 신뢰성과 좌표 규약은 리뷰 G02에 따라 구현 전에 확정한다.
+아래는 현재 채널 구성이다. 승인 후 필요한 채널만 생성한다.
+입력은 순번/epoch/barrier·독립 up 복원과 정규화 좌표를 사용한다. 상세는 protocol.md다.
 
 언어가 둘이므로 **공유 DTO를 코드로 나눌 수 없다.** 와이어 포맷의 기준은 `docs/protocol.md` 하나이고,
 C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것을 구현한다. 스키마 변경은 **항상 문서 → 양쪽 코드** 순서로 한다.
@@ -107,7 +107,7 @@ C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것�
 | 채널 | 신뢰성/순서 | 용도 |
 |---|---|---|
 | `input` | reliable · ordered | key/button/wheel/text/reset 전이 |
-| `pointer` | unreliable · ordered · maxRetransmits=0 | 마우스 move 최신 값 |
+| `pointer` | reliable · ordered · move 최신 값 합치기 | 마우스 move 최신 값 |
 | `control` | reliable · ordered | 세션 제어, 모니터 전환, 품질 조절 |
 | `file` | reliable · ordered | 파일 전송(≈16KB 청크, 백프레셔 적용) |
 | `chat` | reliable · ordered | 텍스트 채팅, 시스템 정보 |
@@ -150,7 +150,7 @@ C# 레코드(`RemoteAssist.Protocol`)·Go 구조체·JS 객체가 각각 그것�
 
 | 리스크 | 대응 |
 |---|---|
-| **Session 0에서 화면 캡처 불가** — WGC·DXGI 모두 사용자 세션 필요 | 서비스가 사용자 세션에 캡처 헬퍼를 띄우고 IPC로 프레임 수신 (T2.4에서 설계) |
+| **Session 0에서 화면 캡처 불가** — WGC·DXGI 모두 사용자 세션 필요 | 서비스가 사용자 세션 Helper를 감독하며 Helper가 캡처/인코딩/WebRTC를 소유한다 |
 | 데스크톱 전환(UAC) 구현 난도 | 별도 최소 예제로 먼저 검증 후 통합 |
 | **FFmpeg GPL 오염** — libx264 포함 빌드 동봉 시 제품 전체가 GPL 조건 | LGPL 빌드만 동봉 + 인코더 명시 지정. 선택된 인코더가 libx264가 아님을 로그로 확인 |
 | LGPL 준수 — 동적 링크·별도 DLL 유지(단일 파일 병합 금지), 고지·소스 제공 | 설치 패키지 설계에 반영. 부담이 크면 Media Foundation 직접 구현으로 전환 — `IVideoEncoder` 추상화가 그 보험 |

@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RemoteAssist.Host.Tray"
         mc:Ignorable="d"
-        Title="RemoteAssist — 대상자 지원" Height="620" Width="520" MinHeight="580" MinWidth="490"
+        Title="RemoteAssist — 대상자 지원" Height="730" Width="520" MinHeight="680" MinWidth="490"
         WindowStartupLocation="CenterScreen" Background="#F4F7FB">
     <Border x:Name="SessionBorder" BorderThickness="4" BorderBrush="#94A3B8" Padding="24">
         <StackPanel>
@@ -24,6 +24,10 @@
                 <Button x:Name="ChatSend" DockPanel.Dock="Right" Content="보내기" IsEnabled="False" Click="ChatClicked" Padding="12,4"/>
                 <TextBox x:Name="ChatText" MaxLength="4096" IsEnabled="False"/>
             </DockPanel>
+            <Button x:Name="FileSend" Content="내가 선택한 파일 보내기" IsEnabled="False" Click="FileClicked" Margin="0,12,0,0" Height="32"/>
+            <TextBlock x:Name="FileStatus" Text="파일 전송 대기" Margin="0,6,0,0"/>
+            <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Margin="0,6,0,0"/>
+            <Button x:Name="FileCancel" Content="파일 전송 취소" IsEnabled="False" Click="FileCancelClicked" Height="28"/>
         </StackPanel>
     </Border>
 </Window>
