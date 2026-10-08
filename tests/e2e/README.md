@@ -2,7 +2,7 @@
 
 **현재 Arm과 invoke-product-local 직접 실행은 차단됐다.** 30분 재리뷰에서 전역 deadline/독립 watchdog·유한 SCM/정리·실제 복귀 증거가 부족함을 확인했다. PrepareOnly/Finish/Abort/Collect는 유지한다. [구현계획 R30](../../원격제어-구현계획.md)와 [보수적 리뷰](../../docs_working/e2e-30-minute-review-2026-10-08.md)의 R30-05~08이 끝나기 전에는 아래 과거 Arm 절차를 실행하지 않는다.
 
-현행 준비 계획은 campaign-plan.json의 전체 1800초(기능1320·정리300·외부 복귀120·보고60)와 재시도0회다. readiness.template.json의 빈 값/false는 미확인이다. `node scripts/check-e2e-readiness.cjs tests/e2e/campaign-plan.json tests/e2e/readiness.template.json .artifacts/readiness-review.json`은 파일만 검사하고 현재 version1에서는 항상 BLOCKED_BEFORE_START/exit2다. 준비 양식을 true로 채워 runtime guard 구현을 대신하지 못한다. 입력/서비스/네트워크를 실행하지 않으며 제품 PASS를 판정하지 않는다. `node --test tests/e2e/readiness.test.cjs`로 시간 초과/누락/다른 후보/오래된 증거 거부를 검사한다.
+최신 기준은 전체 목표600초·절대 상한900초다. campaign-plan.json version1의1800초 예산은 폐기된 검토 자료이며 현재 실행 계획이 아니다. 구현계획 R30-02/03에서 새 예산과 검사기를 재설계/검증한다. readiness.template.json의 빈 값/false는 미확인이다. `node scripts/check-e2e-readiness.cjs tests/e2e/campaign-plan.json tests/e2e/readiness.template.json .artifacts/readiness-review.json`은 종전 파일 모델만 검사하고 version1에서는 항상 BLOCKED_BEFORE_START/exit2다. 이 결과는900초 준비 완료 증거가 아니다. 준비 양식을 true로 채워 runtime guard 구현을 대신하지 못한다. 입력/서비스/네트워크를 실행하지 않으며 제품 PASS를 판정하지 않는다. `node --test tests/e2e/readiness.test.cjs`는 종전 모델의 거부 회귀다.
 
 다음 설명은 기존 하네스의 계약/남은 보완 근거다. generic features 선택과180초 TURN 시나리오는 현행30분 계획의 실행 지시가 아니다. 현재 범위/증거/시간은 campaign-plan.json과 보수적 리뷰의 고정 case를 따른다.
 
