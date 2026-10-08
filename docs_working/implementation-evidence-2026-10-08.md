@@ -1,5 +1,23 @@
 # 구현 기반의 로컬 실행 증거 — 2026-10-08
 
+## 후속 활성 콘솔 실증
+
+후속 작업의 기준 HEAD는 로컬 commit `96a621e530b813e6537d1d8bd036f007e5e316c3`이며 아래 결과는 그 위의 변경을 포함한다. 09:28 KST부터 processSession=consoleSession=1, Default input desktop, 실제 DXGI 출력과 두 모니터를 확인했다. 이전 세션의 환경 차단은 이 시점에 해소됐다.
+
+WGC 4096×2160와 DXGI 세로 2160×3840의 PNG를 각각 2장 얻어 방향을 확인했다. 화면 원본은 ignored `.artifacts/local-console-20261008`에만 두며 저장소에 추가하지 않는다. 실제 HostRun 승인→Chrome 협상에서 native ICE 문자열의 `candidate:` 접두사가 빠져 Chrome이 OperationError를 반환하는 결함을 발견했다. 와이어 정규화와 실제 native fixture를 추가한 뒤 P2P 영상 수신이 성공했다. 4K 송신·표시는 30fps에 못 미쳐 성능 완료로 처리하지 않았다. 기본 출력 상한과 재사용 swscale/BGRA 버퍼를 추가한 뒤 1920×1012 실제 수신을 확인했으나 60초 평균 기준은 후속 측정 대상이다.
+
+E05 일회성 서비스 증거는 `.artifacts/boundary-20261008-094624`, `-094930`, `-095330`, `-095649`, `-095956`, `-100112`다. 매 실행에서 고유 Program Files 경로를 SYSTEM/Admin 쓰기·Users 읽기 ACL로 보호하고 배치 파일의 manifest hash를 확인했다. Session 0 SYSTEM 서비스가 WTS 일반 토큰으로 Session 1 비관리자 헬퍼를, 자기 토큰의 세션 ID를 제한해 Session 1 SYSTEM 헬퍼를 실행했다. 실제 pipe client PID를 생성한 자식과 대조했다. 일반·SYSTEM 전용 창에서 각각 SendInput mouse 3/key 2와 WM_LBUTTONDOWN 1/WM_KEYDOWN 1을 확인했다.
+
+UAC·잠금·재로그인·SAS 호출 중 Winlogon/Default 전환과 4096×2160 DXGI 프레임을 수신했다. 픽셀 원본은 저장하지 않고 크기·해시만 기록했다. 접근 0x81의 보안 데스크톱 입력은 error 5로 실패했다. 0x1FF에서는 3픽셀 이동이 실제 관찰되고 복원 입력도 1건 성공했다. 마지막 `-100112` 시험은 UIAccess 토큰 변경 없이 같은 결과를 반환했다. 창 버튼을 누르거나 비밀번호를 주입하지 않았다. SAS는 기존 SoftwareSASGeneration=1 정책에서 서비스 호출 뒤 Winlogon 전환을 관찰했으며 OS 정책은 수정하지 않았다. 모든 완료된 시험의 cleanup.json에서 serviceAbsent/stageAbsent=true를 확인했다. 다른 계정이 없다는 사용자 답에 따라 실제 계정 전환은 후속으로 남겼다.
+
+E11 `tools/RemoteAssist.MediaProbe`는 synthetic 1080p와 실제 ICE/DTLS-SRTP/SRTCP 피어를 사용했다. SDP에 없는 receiver SSRC의 bare PLI가 전달되지 않는 것을 확인했다. 현재 송신 video SSRC를 포함한 인증된 RR로 receiver SSRC를 한 번 결합한 뒤 PLI/FIR가 전달됐고, NVENC/libopenh264 모두 해당 요청으로 만든 출력이 fresh decoder에서 복구됐다. 수신 10프레임의 RTP timestamp는 0,3000,…,27000이었다. RFC 5104 FIR의 실제 8-byte FCI는 고정 SDK의 private raw-report 메서드를 테스트 도구에서만 사용해 SRTCP 보호 후 보냈다. 제품 코드는 이 reflection 경로를 사용하지 않는다. 최초 RR 이전에는 시작 IDR와 2초 복구 IDR를 사용한다.
+
+전체 빌드 중 실행 중인 시험 Host가 DLL을 잠근 한 번의 실패가 있었으며 정상 세션 종료 뒤 재빌드했다. 최종 재빌드는 경고 0/오류 0, C# 회귀 18묶음과 libopenh264 native 미디어/PLI/FIR 검사가 통과했다. 과거 자동 검사·mock 통과를 제품 IPC/관리자 승인/철회 완료로 확대하지 않는다.
+
+추가 로컬 전체 명령은 `.artifacts/local-20261008-100958/result.json`에 보존했다. .NET locked restore/build, C# 18묶음, Go build/test/vet, 명시적 실행 파일 생성, Node 19개, native 후보/피어 검사가 모두 exit 0이었다. NVENC/MF/libopenh264 synthetic 출력 처리량은 각각 161.5/142.2/96.6fps였으며 브라우저 표시 FPS가 아니다. 이후 IPC·설치 ACL 회귀를 추가해 C# 20묶음이 통과했다. 실제 unbuffered Windows Named Pipe에서 양쪽 hello 쓰기 대기가 교착하는 문제를 재현하고 동시에 읽고 쓰도록 수정했다. 정상/잘못된 nonce·분할 한글/emoji·순번 재생·잘린/과대 프레임을 검사했다. 서비스용 native endpoint·프로세스 감독은 빌드 단계이며 E14/E15 전체 완료로 표시하지 않는다.
+
+libopenh264 실제 캡처→Chrome P2P 경로의 60.0009초 측정은 `.artifacts/sw-browser-media-20261008-101628.json`이다. 실제 수신 크기는 1920×1012, totalVideoFrames 증가 1536, droppedVideoFrames 증가 354, requestVideoFrameCallback 1031회(17.183fps)였다. 실제 표시 30fps 기준에는 미달하며 E35에서 캡처/인코딩/브라우저 배압을 개선한다. 이 시험을 두 PC 수용 시험 또는 성능 PASS로 바꾸지 않는다.
+
 기준 HEAD는 `c4f0fbc80658404022f21c9f8a5e0489ff1e2c41`이며 아래 검증은 그 위 작업트리 변경을 대상으로 했다. 최종 변경 commit은 Git 이력으로 식별한다. 별도 진행표는 만들지 않으며 완료 판정은 루트 구현계획에서만 관리한다. 최종 두 PC F01~F12는 사용자 지시에 따라 이번 세션에서 실행하지 않았다. CI도 실행·변경하지 않았다.
 
 ## 환경과 차단 원인

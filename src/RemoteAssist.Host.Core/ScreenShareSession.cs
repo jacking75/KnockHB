@@ -8,6 +8,7 @@ using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Signaling;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
+using SIPSorcery.Sys;
 using SIPSorceryMedia.Abstractions;
 
 namespace RemoteAssist.Host.Core;
@@ -155,18 +156,23 @@ public sealed class ScreenShareSession : IAsyncDisposable
             foreach(var url in server.Urls)iceServers.Add(new RTCIceServer{urls=url,username=server.Username,credential=server.Credential});
         if(_options.ForceRelay&&!iceServers.Any(server=>server.urls.StartsWith("turn:",StringComparison.Ordinal)||server.urls.StartsWith("turns:",StringComparison.Ordinal)))throw new InvalidOperationException("relay 강제 모드에 TURN 설정이 없다.");
         _pc = new RTCPeerConnection(new RTCConfiguration
-        { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all });
+        { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all }, 0, new PortRange(27002, 27099));
         var pc = _pc;
+        var feedbackBinding=new RtcpFeedbackBinding();
         pc.OnReceiveReport += (_, media, report) =>
         {
-            if (Volatile.Read(ref _ended) == 0) _keyframes.Observe(media, report);
+            if (Volatile.Read(ref _ended) == 0)
+            {
+                feedbackBinding.Observe(media,report,pc.VideoLocalTrack,pc.VideoRemoteTrack);
+                _keyframes.Observe(media, report);
+            }
         };
         pc.addTrack(new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.H264, 102, 90000, "packetization-mode=1"), MediaStreamStatusEnum.SendOnly));
         pc.onicecandidate += candidate =>
         {
             if (candidate is null) return;
             Enqueue(() => _signaling.SendAsync(new SignalMsg { Type = "ice", Room = Credentials.Code,
-                Ice = new IceCandidate { Candidate = candidate.candidate, SdpMid = candidate.sdpMid, SdpMLineIndex = candidate.sdpMLineIndex } }, _lifetime.Token));
+                Ice = new IceCandidate { Candidate = IceCandidateWire.FromNative(candidate.candidate), SdpMid = candidate.sdpMid, SdpMLineIndex = candidate.sdpMLineIndex } }, _lifetime.Token));
         };
         pc.onconnectionstatechange += state =>
         {
@@ -205,29 +211,32 @@ public sealed class ScreenShareSession : IAsyncDisposable
             using var capture = WgcScreenCapture.IsSupported() ? (IScreenCapture)new WgcScreenCapture(_monitor) : new DxgiScreenCapture(_monitor);
             _monitor = capture.Monitor;
             using var encoder = new FFmpegH264Encoder(_options.PreferredEncoder, _loggerFactory?.CreateLogger<FFmpegH264Encoder>());
+            using var scaler = new BgraFrameScaler(_options.MaxOutputLongEdge,_options.MaxOutputShortEdge);
             ReadOnlyMemory<byte> lastFrame = default;
             var width = 0; var height = 0; var sent = 0;
             var clock = Stopwatch.StartNew(); var previousSend = TimeSpan.Zero;
+            var nextTick=TimeSpan.Zero;var interval=TimeSpan.FromSeconds(1d/_options.TargetFps);
+            var nextRecoveryKeyframe=TimeSpan.Zero;
             NotifyState("승인한 화면 공유 중");
             while (!_lifetime.IsCancellationRequested && _permissions.Allows(Capability.Screen, permissionGeneration))
             {
-                var tick = clock.Elapsed;
                 if (capture.TryGetFrame(TimeSpan.FromMilliseconds(5), out var frame))
                 {
                     FrameLayout.Validate(frame.Bgra, frame.Width, frame.Height, frame.Stride);
-                    if (frame.Width != width || frame.Height != height)
+                    lastFrame=scaler.Scale(frame.Bgra,frame.Width,frame.Height,frame.Stride);
+                    if (scaler.Width != width || scaler.Height != height)
                     {
-                        lastFrame = default;
-                        width = frame.Width; height = frame.Height;
+                        width = scaler.Width; height = scaler.Height;
                         encoder.Configure(width, height, _options.TargetFps, _options.BitrateKbps);
                         Volatile.Write(ref _encoderName, encoder.EncoderName);
                         _keyframes.Request();
                     }
-                    lastFrame = frame.Stride == width * 4 ? frame.Bgra : FrameLayout.Pack(frame.Bgra, width, height, frame.Stride);
                 }
                 if (!lastFrame.IsEmpty)
                 {
-                    var encoded = encoder.Encode(lastFrame, _keyframes.Consume());
+                    var periodic=clock.Elapsed>=nextRecoveryKeyframe;
+                    if(periodic)nextRecoveryKeyframe=clock.Elapsed+TimeSpan.FromSeconds(2);
+                    var encoded = encoder.Encode(lastFrame, _keyframes.Consume()||periodic);
                     if (!encoded.IsEmpty)
                     {
                         // End and the final send are serialized, without disposing a live encoder from another thread.
@@ -242,8 +251,10 @@ public sealed class ScreenShareSession : IAsyncDisposable
                         FrameSent?.Invoke(++sent, encoded.Length);
                     }
                 }
-                var wait = TimeSpan.FromSeconds(1.0 / _options.TargetFps) - (clock.Elapsed - tick);
-                if (wait > TimeSpan.Zero) _lifetime.Token.WaitHandle.WaitOne(wait);
+                nextTick+=interval;
+                if(clock.Elapsed-nextTick>interval)nextTick=clock.Elapsed;
+                var wait=nextTick-clock.Elapsed;
+                if(wait>TimeSpan.Zero)_lifetime.Token.WaitHandle.WaitOne(wait);
             }
             if (!_lifetime.IsCancellationRequested) EndSession("권한 유효기간 종료", false);
         }

@@ -26,6 +26,8 @@ v0.1 클라이언트는 v1에 참가할 수 없다. 과거 초안의 unreliable 
 
 ## 현재 구현 범위
 
+ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:` 접두사를 포함한다. SIPSorcery의 native candidate 값은 접두사를 포함하지 않을 수 있으므로 Host의 송신 adapter에서 정확히 한 번 붙인다. sdpMLineIndex는 0 이상의 미디어 순서다. empty/end-of-candidates는 실제 후보로 전달하지 않는다.
+
 시그널링 v1은 구현했다. 데이터채널은 위 계약과 C# 입력 파서·파일 청크 header까지만 존재한다. Host/Viewer는 데이터채널을 개설하지 않는다. 기능별 진행 상태는 루트 구현계획에서만 관리한다.
 
 ## 참가와 승인 예시
@@ -61,6 +63,14 @@ joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 
 파일 header 검증은 본문 길이·reserved·transfer UUID·최대 16384바이트를 검사한다. 순번·상한·백프레셔·임시 파일·최종 체크섬·취소 및 부분 파일 제거는 E31에서 구현한다. 보조 기능의 요청·응답·오류 DTO는 E31~E34에서 문서를 먼저 확장한다. 아직 존재하지 않는 요청을 현재 지원 기능으로 광고하지 않는다.
 
 ## 변경 이력
+
+## 로컬 IPC v1 (Windows Host 전용)
+
+시그널링과 별개의 인증된 Named Pipe다. 서비스가 생성한 고유 pipe 이름·32-byte nonce·서비스 PID·자식 역할을 보호된 고정 바이너리의 시작 인자로 전달한다. 서버 ACL은 SYSTEM과 대상 SID만 허용하고 실제 client PID/Session ID/SID를 서비스가 생성한 자식과 대조한다. 클라이언트도 커널의 server PID를 전달받은 서비스 PID와 대조한다. 외부 네트워크 pipe client와 다른 PID는 거부한다. nonce는 로그에 쓰지 않으며 상호 hello에만 사용한다.
+
+프레임은 uint32 LE 길이와 그 길이의 UTF-8 JSON이다. JSON 최대 32768바이트·깊이 32, 중복/미지/버전 없는 필드는 거부한다. envelope는 `v=1`, `t`, `seq`(방향별 1부터 단조 증가), `id`(요청 correlation ID), 선택적인 `nonce`(hello만), `body`다. hello의 body에는 `role`만 두며 예상 역할을 정확히 확인한다. 순번 재생·간격 누락·잘린 프레임은 연결 종료다. 쓰기 대기는 최대 128개이며 넘치면 종료한다. heartbeat는 500ms마다 전송하고 읽기 lease는 1초다. bootstrap hello는 10초 deadline을 적용한다.
+
+허용 타입은 `hello`, `heartbeat`, `config`, `start`, `stop`, `credentials`, `state`, `consent-request`, `consent`, `admin-request`, `admin-state`, `admin-revoke`, `input`, `monitor`, `file-request`, `file-response`, `clipboard-request`, `clipboard-response`, `runbook-request`, `runbook-response`, `error`다. 역할별 방향과 요청의 session/peer/permission generation은 서비스 감독이 추가로 검사한다. 세션 승인은 `consent-request`의 현재 correlation ID와 일치하는 로컬 UI 응답만 소비한다. 임의 권한 JSON·Viewer 패킷을 이 경로의 로컬 승인으로 역직렬화하지 않는다. `body`가 credentials인 경우 코드/PIN은 로컬 표시용이며 일반 진단 로그에서 제외한다.
 
 | 버전 | 날짜 | 내용 |
 |---|---|---|

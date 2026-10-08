@@ -130,6 +130,7 @@ export class ViewerConnection {
     };
     pc.onconnectionstatechange = () => {
       if (!this.live() || this.pc !== pc) return;
+      if (pc.connectionState === 'connected') this.onState('대상자가 승인한 기능으로 연결됐다.');
       if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) this.end('WebRTC 연결이 종료됐다.', pc.connectionState !== 'closed');
     };
     await pc.setRemoteDescription({ type: 'offer', sdp }); if (!this.live()) return;

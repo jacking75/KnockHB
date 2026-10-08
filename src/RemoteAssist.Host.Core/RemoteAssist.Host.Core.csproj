@@ -3,6 +3,7 @@
   <!-- 캡처·인코딩·입력 주입 등 Host 공통 로직. Windows 전용. -->
   <PropertyGroup>
     <TargetFramework>$(WindowsTfm)</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
   </PropertyGroup>
 

@@ -9,6 +9,8 @@
     <Project Path="tools/RemoteAssist.CaptureDump/RemoteAssist.CaptureDump.csproj" />
     <Project Path="tools/RemoteAssist.HostRun/RemoteAssist.HostRun.csproj" />
     <Project Path="tools/RemoteAssist.SessionProbe/RemoteAssist.SessionProbe.csproj" />
+    <Project Path="tools/RemoteAssist.BoundaryProbe/RemoteAssist.BoundaryProbe.csproj" />
+    <Project Path="tools/RemoteAssist.MediaProbe/RemoteAssist.MediaProbe.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RemoteAssist.Host.Core.Tests/RemoteAssist.Host.Core.Tests.csproj" />

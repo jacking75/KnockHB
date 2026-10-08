@@ -11,6 +11,52 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("protected installation ACL allows readers but rejects writers and non-admin owners",async()=>
+    {
+        var admin=new System.Security.Principal.SecurityIdentifier("S-1-5-32-544");
+        var users=new System.Security.Principal.SecurityIdentifier("S-1-5-32-545");
+        var acl=new System.Security.AccessControl.FileSecurity();acl.SetOwner(admin);
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(users,System.Security.AccessControl.FileSystemRights.ReadAndExecute,System.Security.AccessControl.AccessControlType.Allow));
+        RemoteAssist.Host.Core.Windows.ProtectedInstallation.CheckAcl(acl);
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(users,System.Security.AccessControl.FileSystemRights.WriteData,System.Security.AccessControl.AccessControlType.Allow));
+        await Reject(()=>{RemoteAssist.Host.Core.Windows.ProtectedInstallation.CheckAcl(acl);return Task.CompletedTask;});
+        var badOwner=new System.Security.AccessControl.FileSecurity();badOwner.SetOwner(users);
+        await Reject(()=>{RemoteAssist.Host.Core.Windows.ProtectedInstallation.CheckAcl(badOwner);return Task.CompletedTask;});
+        await Reject(()=>Task.FromResult(RemoteAssist.Host.Core.Windows.SessionProcess.Start(RemoteAssist.Host.Core.Windows.HostChildRole.AdminHelper,1,Guid.NewGuid().ToString("N"),new string('A',64))));
+    }),
+    ("local IPC real pipe authentication, partial UTF8 frames, replay and truncation",IpcRegression.Run),
+    ("authenticated RTCP receiver binding requires the known media SSRC and refuses replacement",()=>
+    {
+        var format=new SIPSorceryMedia.Abstractions.VideoFormat(SIPSorceryMedia.Abstractions.VideoCodecsEnum.H264,102,90000,"packetization-mode=1");
+        var local=new MediaStreamTrack(format,MediaStreamStatusEnum.SendOnly) {Ssrc=11};
+        var remote=new MediaStreamTrack(format,MediaStreamStatusEnum.RecvOnly) {Ssrc=0};
+        RTCPCompoundPacket RR(uint sender,uint media)=>new(new RTCPReceiverReport(sender,[new ReceptionReportSample(media,0,0,0,0,0,0)]).GetBytes());
+        var binding=new RtcpFeedbackBinding();
+        Check(!binding.Observe(SDPMediaTypesEnum.audio,RR(33,11),local,remote),"audio bound video");
+        Check(!binding.Observe(SDPMediaTypesEnum.video,RR(33,22),local,remote),"unrelated target bound");
+        Check(!binding.Observe(SDPMediaTypesEnum.video,RR(11,11),local,remote),"own sender reflected");
+        Check(binding.Observe(SDPMediaTypesEnum.video,RR(33,11),local,remote)&&remote.Ssrc==33,"recvonly SSRC not learned");
+        Check(!binding.Observe(SDPMediaTypesEnum.video,RR(44,11),local,remote)&&remote.Ssrc==33,"learned SSRC replaced");
+        return Task.CompletedTask;
+    }),
+    ("scaled media retains monitor aspect and even output in both orientations", async()=>
+    {
+        Check(BgraFrameScaler.Fit(4096,2160)==(1920,1012),"4K oversized media");
+        Check(BgraFrameScaler.Fit(2160,3840)==(1080,1920),"portrait rotated incorrectly");
+        Check(BgraFrameScaler.Fit(1920,1080)==(1920,1080),"1080p changed");
+        Check(BgraFrameScaler.Fit(101,51)==(100,50),"odd encoder dimensions");
+        await Reject(()=>Task.FromResult(BgraFrameScaler.Fit(1,100)));
+        await Reject(()=>Task.FromResult(BgraFrameScaler.Fit(4096,2160,100,1080)));
+    }),
+    ("native ICE body includes the browser candidate prefix once", async () =>
+    {
+        var native = "162828898 1 udp 2113937151 127.0.0.1 27002 typ host";
+        var wire = IceCandidateWire.FromNative(native);
+        Check(wire == "candidate:" + native, "browser rejected native candidate body");
+        Check(IceCandidateWire.FromNative(wire) == wire, "candidate prefix duplicated");
+        await Reject(() => Task.FromResult(IceCandidateWire.FromNative("")));
+        await Reject(() => Task.FromResult(IceCandidateWire.FromNative(native + "\r\n")));
+    }),
     ("missing and substituted FFmpeg DLL fail before native load", async () =>
     {
         var directory = Path.Combine(Path.GetTempPath(), "remoteassist-test-" + Guid.NewGuid());

@@ -13,6 +13,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
     private IEncoderCandidate? _encoder;
     private int _width, _height;
     private bool _disposed;
+    private byte[] _inputBuffer=[];
     private H264ParameterSets _parameterSets = new();
     public string EncoderName { get; private set; } = "(미선택)";
     public bool IsHardware => EncoderName != "libopenh264" && _encoder is not null;
@@ -36,6 +37,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
         if (fps is < 1 or > 60 || bitrateKbps is < 100 or > 50000) throw new ArgumentOutOfRangeException(nameof(fps));
         _factory.Prepare(_log);
         _encoder?.Dispose(); _encoder = null; EncoderName = "(미선택)";
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(_inputBuffer);_inputBuffer=[];
         var errors = new List<string>();
         var probe = new byte[checked(width * height * 4)];
         foreach (var name in _preferred is null ? AllowedEncoders : new[] { _preferred })
@@ -62,6 +64,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
                 _encoder = candidate; candidate = null;
                 _parameterSets = parameterSets;
                 EncoderName = name; _width = width; _height = height;
+                _inputBuffer=new byte[checked(width*height*4)];
                 _log.LogInformation("H.264 실제 초기화·출력 성공: {Encoder}, {W}x{H}, {Fps}fps", name, width, height, fps);
                 return;
             }
@@ -90,8 +93,9 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
         if (_encoder is null) throw new InvalidOperationException("Configure를 먼저 호출해야 한다.");
         if (bgraFrame.Length != checked(_width * _height * 4)) throw new ArgumentException("BGRA 길이가 인코더 크기와 다르다.");
         if (forceKeyframe) _encoder.ForceKeyFrame();
-        var encoded = _encoder.Encode(_width, _height, bgraFrame.ToArray());
+        bgraFrame.Span.CopyTo(_inputBuffer);
+        var encoded = _encoder.Encode(_width, _height, _inputBuffer);
         return encoded is { Length: > 0 } ? _parameterSets.Process(encoded) : ReadOnlyMemory<byte>.Empty;
     }
-    public void Dispose() { if (_disposed) return; _disposed = true; _encoder?.Dispose(); _encoder = null; }
+    public void Dispose() { if (_disposed) return; _disposed = true; _encoder?.Dispose(); _encoder = null; System.Security.Cryptography.CryptographicOperations.ZeroMemory(_inputBuffer);_inputBuffer=[]; }
 }

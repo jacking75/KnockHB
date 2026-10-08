@@ -12,10 +12,14 @@ public sealed record ScreenShareOptions
     public string? PreferredEncoder { get; init; }
     public string[] StunServers { get; init; } = [];
     public bool ForceRelay { get; init; }
+    public int MaxOutputLongEdge { get; init; } = 1920;
+    public int MaxOutputShortEdge { get; init; } = 1080;
 
     public void Validate(int monitorCount)
     {
         ValidateEndpoint(SignalingUri,AllowLoopbackHttp);
+        if(MaxOutputShortEdge is < 2 or > 2160 || MaxOutputLongEdge < MaxOutputShortEdge || MaxOutputLongEdge > 3840)
+            throw new ArgumentOutOfRangeException(nameof(MaxOutputLongEdge), "출력 크기 상한이 지원 범위를 벗어났다.");
         if (TargetFps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(TargetFps), "FPS는 1~60이어야 한다.");
         if (BitrateKbps is < 100 or > 50000) throw new ArgumentOutOfRangeException(nameof(BitrateKbps), "비트레이트는 100~50000kbps이어야 한다.");
         if (MonitorIndex < 0 || MonitorIndex >= monitorCount) throw new ArgumentOutOfRangeException(nameof(MonitorIndex));

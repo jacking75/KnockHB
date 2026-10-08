@@ -28,10 +28,15 @@ try {
     Invoke-Check 'build' 'dotnet' @('build','RemoteAssist.slnx','--no-restore','-v','minimal') $root
     Invoke-Check 'core-tests' 'dotnet' @('run','--project','tests/RemoteAssist.Host.Core.Tests','--no-build') $root
     Invoke-Check 'go-build' 'go' @('build','./...') (Join-Path $root 'server/signaling')
+    Invoke-Check 'go-executable' 'go' @('build','-o',(Join-Path $Output 'signaling.exe'),'.') (Join-Path $root 'server/signaling')
     Invoke-Check 'go-tests' 'go' @('test','./...') (Join-Path $root 'server/signaling')
     Invoke-Check 'go-vet' 'go' @('vet','./...') (Join-Path $root 'server/signaling')
     Invoke-Check 'viewer-tests' 'node' @('--test','web/viewer/tests/*.test.js') $root
-    if ($Native) { Invoke-Check 'encoders' 'dotnet' @('run','--project','tools/RemoteAssist.HostRun','--no-build','--','--encoder-check','--out',(Join-Path $Output 'encoders')) $root }
+    if ($Native) {
+        Invoke-Check 'encoders' 'dotnet' @('run','--project','tools/RemoteAssist.HostRun','--no-build','--','--encoder-check','--out',(Join-Path $Output 'encoders')) $root
+        Invoke-Check 'native-media-nvenc' 'dotnet' @('run','--project','tools/RemoteAssist.MediaProbe','--no-build') $root
+        Invoke-Check 'native-media-openh264' 'dotnet' @('run','--project','tools/RemoteAssist.MediaProbe','--no-build','--','--encoder','libopenh264') $root
+    }
 } finally {
     $sha = (& git -C $root rev-parse HEAD | Out-String).Trim()
     $dirty = (& git -C $root status --porcelain | Out-String).Trim().Length -gt 0

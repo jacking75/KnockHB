@@ -18,6 +18,7 @@
 | PreferredEncoder | null은 후보 순서; 지정은 단일 후보 강제 |
 | StunServers | 빈 목록; 구성한 stun/stuns만 허용 |
 | ForceRelay | false; --relay는 TURN 필요 |
+| MaxOutputLongEdge / MaxOutputShortEdge | 1920 / 1080; 출력 방향에 맞춰 종횡비를 유지하며 짝수 크기로 축소 |
 
 HostRun CLI는 --signaling/--dev-loopback/--monitor/--fps/--bitrate/--encoder/--relay/--encoder-check/--out이다. 중복·미지원·누락·비숫자 값은 실패한다. RequestLocalConsent callback이 없으면 거절한다. 현재 콘솔의 '화면 승인' 입력만 screen을 부여한다. 캡처와 PeerConnection은 그 뒤 만든다. 코드/PIN은 로컬 콘솔에만 표시하며 일반 ILogger에 기록하지 않는다.
 
@@ -43,6 +44,12 @@ GET /healthz는 HTTP 프로세스 상태다. GET /readyz는 현재 서버 종료
 join은 10초, 시그널링 read lease는 15초, heartbeat는 5초, 쓰기는 5초, 상대 이탈 통지는 3초다. HTTP 종료 deadline은 5초이며 별도로 hijacked WebSocket을 추적해 닫는다. 룸은 메모리 저장이며 서버 재시작 뒤 승인을 복원하지 않는다.
 
 ## 캡처·영상
+
+SIPSorcery 10.0.16의 단독 RTCP feedback은 송신자 SSRC 또는 SDP의 SSRC 속성으로 stream을 찾는다. recvonly 브라우저가 SDP에 SSRC를 넣지 않으면 첫 단독 PLI/FIR이 누락될 수 있다. 인증·복호화 후 `OnReceiveReport`에 전달된 video receiver report가 현재 local video SSRC를 포함할 때만 그 receiver SSRC를 동일 PeerConnection의 remote video track에 한 번 결합한다. 다른 미디어·다른 송신 대상·후속 SSRC 교체는 거부한다. 최초 IDR와 2초 주기의 복구 IDR를 함께 사용해 첫 RR 이전 요청 누락도 제한한다. 암호화되지 않은 UDP나 다른 피어의 값을 직접 이 결합 경로에 넣지 않는다.
+
+원본 모니터 좌표와 인코딩 크기를 분리한다. 기본 출력은 긴 변 1920·짧은 변 1080 이하이며 확대하지 않는다. 4096×2160 모니터는 1920×1012, 세로 2160×3840 모니터는 1080×1920으로 전송한다. 정규화 좌표는 전체 원본 모니터에 대응하며 종횡비만 유지하는 축소가 입력 좌표를 바꾸지 않는다. FFmpeg swscale의 BGRA 축소 context와 padding을 포함한 입력·출력 버퍼는 캡처 스레드가 재사용하고 크기 변경/종료 때 폐기한다. 인코더도 BGRA 입력 배열을 재사용한다. 시간 누적 오차를 피하도록 송신 tick은 절대 경과 시간으로 예약하고 늦은 tick을 무한히 따라잡지 않는다. 실제 30fps 수용 여부는 별도 측정하며 축소 구현만으로 통과 처리하지 않는다.
+
+Host의 WebRTC UDP listener는 27002~27099 범위를 사용한다. coturn listener/relay 대역과 겹치지 않는다. 브라우저의 동적 소스 포트는 이 고정 범위와 구분한다.
 
 승인 모니터는 시작 시 handle+deviceName으로 고정한다. WGC/DXGI에서 같은 공통 모니터를 확인하며 backend 열거 순서로 재선택하지 않는다. BGRA 프레임은 실제 width/height/stride/monitorIdentity/generation을 포함한다. 크기·stride·최대 256MiB 버퍼를 검사한다. WGC resize는 이전 프레임을 폐기하고 RT device를 재사용한다. COM 초기화 횟수는 소유 스레드에서 균형을 맞춘다. DXGI는 texture 크기와 회전, 컬러·monochrome·masked cursor를 반영한다. access lost는 오래된 화면을 계속 보내지 않고 실패로 종료한다. 실제 회전·해상도 변경 실증은 아직 남아 있다.
 
