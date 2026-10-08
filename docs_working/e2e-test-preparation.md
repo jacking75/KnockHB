@@ -4,6 +4,8 @@
 
 ## 현행 제품 경로의 준비
 
+**30분 준비 재리뷰 뒤 현재는 NOT READY다. Arm/제품 직접 실행을 차단했다.** [단일 계획의 R30 태스크](../원격제어-구현계획.md)와 [발견 사항·정확한 단계/판정](e2e-30-minute-review-2026-10-08.md)을 우선한다. 아래 Arm 설명과 뒤의 PoC 예시는 현재 실행 허가가 아니다. 전역 1800초·독립 watchdog·유한 정리·실제 외부 복귀 증거가 있어야 다시 준비 완료를 판정한다.
+
 실행 주체는 SYSTEM Host.Service와 대상 사용자 세션의 WPF Tray/Helper다. 관리자 승인 시 별도 AdminHelper/Recovery, 등록 Runbook 실행 시 별도 worker가 소유 Job에서 실행된다. HostRun 콘솔 화면 승인을 제품 동의나 관리자 승인으로 사용하지 않는다.
 
 현행 명령·판정은 [제품 하네스 계약](../tests/e2e/README.md), [시나리오](../tests/e2e/scenarios.json), [설치/업데이트](../deploy/installation.md), [실행 가이드](../docs/development-guide.md)를 따른다. 준비된 후보의 commit/hash를 고정하고 깨끗한 시험 환경에서 `powershell -NoProfile -File scripts/product-e2e-harness.ps1 -Action Prepare -Seconds 240`으로 화면 없는 publish/계정/도구 기록을 만든다. 이 명령의 완료는 기능 PASS가 아니다.

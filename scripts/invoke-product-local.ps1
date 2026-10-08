@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param([switch]$Admin,[switch]$PrepareOnly,[string]$RunDir,[ValidateRange(30,300)][int]$Seconds=240)
 $ErrorActionPreference='Stop'
+if($Admin-or!$PrepareOnly){throw '30분 전역 deadline/독립 watchdog/유한 정리 준비 전 제품 실행을 차단한다. 현재는 -PrepareOnly만 허용한다. 구현계획 R30-05~08을 따른다.'}
 $repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactRoot=Join-Path $repository '.artifacts'
 if(!$Admin) {

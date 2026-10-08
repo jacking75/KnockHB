@@ -1,5 +1,7 @@
 {
   "version": 1,
+  "status": "LEGACY_ARM_BLOCKED",
+  "supersededBy": "campaign-plan.json",
   "scenarios": [
     {"id":"view-consent","validation":["V16","V19","V24"],"seconds":120,"steps":["후보 hash·서비스 PID/경로·실제 Tray·Viewer를 확인한다","코드/PIN을 대역 외 전달하고 실제 Tray에서 화면만 승인한다","영상 크기·디코딩 프레임 증가·상시 표시를 확인한다","대상자 종료 버튼을 누르고 새 송신 차단과 정리를 측정한다"],"pass":"승인 전 영상 0, 승인 후 decodedFrames 증가, 로컬 종료 후 새 송신 1초 이내 차단, cleanup 모두 true","evidence":["candidate hash","Tray approval observation","browser stats","monotonic stop timing","cleanup.json"]},
     {"id":"input-focus","validation":["V21","V22","V23"],"seconds":180,"steps":["실제 전경·입력 대상 창 PID/경로·좌표를 기록한다","화면과 일반 제어를 직접 승인한다","소유 시험 창에서 모서리·drag·휠·한글/비BMP·조합키를 확인한다","blur/reset ACK와 키 해제를 확인하고 종료한다"],"pass":"대상 창 이벤트와 좌표/문자가 일치하고 reset/종료 뒤 눌림 상태 0","evidence":["target event log","foreground/geometry","channel ACK","cleanup.json"]},

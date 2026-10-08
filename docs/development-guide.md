@@ -26,6 +26,8 @@ HostRun의 --encoder-check는 화면/네트워크가 없는 synthetic 출력·de
 
 ## 제품 묶음과 중단
 
+현재 product-e2e-harness의 Arm과 invoke-product-local의 직접 실행은 차단됐다. [30분 재리뷰](../docs_working/e2e-30-minute-review-2026-10-08.md)에서 확인한 전역 deadline/독립 watchdog·SCM/정리 timeout·실제 복귀 증거를 [R30 태스크](../원격제어-구현계획.md)에 따라 먼저 완료한다. 아래 Arm 절차는 이 gate 재마감 이후에만 사용한다. 파일 검사기 check-e2e-readiness.cjs는 현재 BLOCKED/exit2를 반환하며 제품 실행이나 준비 완료를 허가하지 않는다.
+
 [하네스 계약](../tests/e2e/README.md)·[준비표](../docs_working/e2e-test-preparation.md)·scenarios.json에서 한 묶음을 선택한다. build/publish/hash·인증서/포트·계정/Session/desktop·실제 대상 창/좌표/foreground·로그·복귀/소유 정리를 먼저 준비한다.
 
 product-e2e-harness.ps1 Prepare는 화면 없는 준비다. Arm은 reviewed readiness JSON과 후보 hash/실제 Tray 준비를 확인한다. 화면 점유 목적·예상240초/최대300초·실패 중단을 실행 직전 알린다. 대상자 직접 승인 뒤 기능 관찰을 기록한다. 첫 실패/신호 누락/timeout은 Abort→Collect 정리 판정이며 화면 점유 중 수정/탐색/추가 시나리오를 하지 않는다.
