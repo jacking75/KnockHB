@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using RemoteAssist.Protocol;
 
 namespace RemoteAssist.Host.Core.Ipc;
 
@@ -21,8 +22,8 @@ public sealed class LocalIpcChannel(Stream stream) : IAsyncDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed)!=0,this);
-                var message=new LocalIpcMessage {Type=type,Sequence=sent+1,Id=id,Nonce=nonce,Body=body is null?null:JsonSerializer.SerializeToElement(body)};
-                var bytes=JsonSerializer.SerializeToUtf8Bytes(message);LocalIpcMessage.Parse(bytes);
+                var message=new LocalIpcMessage {Type=type,Sequence=sent+1,Id=id,Nonce=nonce,Body=body is null?null:ProtocolJson.Element(body)};
+                var bytes=ProtocolJson.Encode(message);LocalIpcMessage.Parse(bytes);
                 var prefix=new byte[4];BinaryPrimitives.WriteUInt32LittleEndian(prefix,(uint)bytes.Length);
                 await stream.WriteAsync(prefix,ct);await stream.WriteAsync(bytes,ct);await stream.FlushAsync(ct);sent++;
             }

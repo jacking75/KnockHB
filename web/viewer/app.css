@@ -138,3 +138,10 @@ button {
 .input-bar button {margin:0;padding:.35rem .6rem;}
 button:disabled {opacity:.45;cursor:default;}
 #screen:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;}
+.features {display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;padding:1rem;max-height:50vh;overflow:auto;}
+.features section {border:1px solid var(--line);padding:1rem;border-radius:8px;}
+.features h2 {margin:0;font-size:1rem;}
+.features p {font-size:.85rem;color:var(--muted);}
+.features textarea {width:100%;min-height:5rem;font:inherit;resize:vertical;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;}
+.features button {margin:.4rem .3rem 0 0;font-size:.8rem;}
+.features pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:12rem;overflow:auto;font:inherit;font-size:.82rem;}

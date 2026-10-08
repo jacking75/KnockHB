@@ -11,6 +11,8 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("native file handle boundary, zero/multiple chunks, collision, hash tamper and revocation",FileRegression.Run),
+    ("feature permissions, bounded clipboard hashes and diagnostics revocation prevent excess collection",FeatureRegression.Run),
     ("admin requires second local approval and shared frame slots reject stale or cleared data",AdminRegression.Run),
     ("audit binds durable closed metadata, rotates bounded files and rejects storage failures",AuditRegression.Run),
     ("independent input recovery reserves before down and retains repeated Unicode partial prefixes",RecoveryRegression.Run),
@@ -158,9 +160,10 @@ var tests = new (string Name, Func<Task> Run)[]
         var clock = new FakeTime(); var gate = new PermissionGate(clock);
         Check(!gate.Allows(Capability.Screen, 0), "pre-consent screen allowed");
         await Reject(() => Task.FromResult(gate.Grant("sid", "peer", Capability.Control, TimeSpan.FromMinutes(1))));
-        var grant = gate.Grant("sid", "peer", Capability.Screen | Capability.Admin, TimeSpan.FromMinutes(1));
+        await Reject(() => Task.FromResult(gate.Grant("sid", "peer", Capability.Screen|Capability.Admin, TimeSpan.FromMinutes(1))));
+        var grant = gate.Grant("sid", "peer", Capability.Screen | Capability.Control | Capability.Admin, TimeSpan.FromMinutes(1));
         Check(gate.Allows(Capability.Screen, grant.Generation), "screen denied");
-        Check(!gate.Allows(Capability.Control, grant.Generation), "admin implied control");
+        Check(gate.Allows(Capability.Control, grant.Generation), "explicit control denied");
         Check(!gate.Allows(Capability.File, grant.Generation), "admin implied file");
         await Reject(() => Task.FromResult(gate.Grant("sid", "other", Capability.Screen, TimeSpan.FromMinutes(1))));
         clock.Utc = clock.Utc.AddMinutes(1); Check(!gate.Allows(Capability.Screen, grant.Generation), "expired lease allowed");

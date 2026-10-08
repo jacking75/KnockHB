@@ -1,7 +1,7 @@
 namespace RemoteAssist.Host.Core.Security;
 
 [Flags]
-public enum Capability { None=0, Screen=1, Control=2, Admin=4, File=8, Clipboard=16, Diagnostics=32, Runbook=64 }
+public enum Capability { None=0, Screen=1, Control=2, Admin=4, File=8, Clipboard=16, Diagnostics=32, Runbook=64, Chat=128 }
 public sealed record SupporterIdentity(string ConnectionId, string DisplayName);
 public sealed record PermissionSnapshot(string SessionId, string ConnectionId, long Generation,
     Capability Capabilities, DateTimeOffset ExpiresAt);
@@ -20,7 +20,7 @@ public sealed class PermissionGate(TimeProvider? time = null)
     {
         if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(connectionId)) throw new ArgumentException("승인 주체가 필요하다.");
         if (lease <= TimeSpan.Zero || lease > TimeSpan.FromHours(8)) throw new ArgumentOutOfRangeException(nameof(lease));
-        if ((capabilities & ~((Capability)127)) != 0) throw new ArgumentException("알 수 없는 권한이다.");
+        if ((capabilities & ~((Capability)255)) != 0||capabilities.HasFlag(Capability.Admin)&&!capabilities.HasFlag(Capability.Control)) throw new ArgumentException("알 수 없거나 의존 권한이 없는 권한이다.");
         if (capabilities.HasFlag(Capability.Control) && !capabilities.HasFlag(Capability.Screen)) throw new ArgumentException("제어에는 화면 승인이 필요하다.");
         lock (_gate)
         {

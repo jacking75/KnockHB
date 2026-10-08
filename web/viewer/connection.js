@@ -1,3 +1,4 @@
+import { permissionMask, featureChannels, FeatureSession } from './features.js';
 // Each attempt owns its socket, peer connection, timers and pending ICE.
 function parseEnvelope(text, maxBytes, typeField) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).length > maxBytes) throw Error('프로토콜 크기 또는 타입 오류다.');
@@ -41,6 +42,7 @@ export class ViewerConnection {
     this.createPeer = createPeer; this.isCurrent = isCurrent; this.onState = onState;
     this.onTrack = onTrack; this.onStats = onStats; this.onEnd = onEnd;
     this.onData = onData; this.channels = new Map(); this.dataReceived = 0; this.dataSent = 0;
+    this.features=new FeatureSession(this);
     this.inputSequence = 0; this.pointerSequence = 0; this.inputEpoch = 1; this.pendingPointer = null;
     this.setTimer = setTimer; this.clearTimer = clearTimer; this.now = now;
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
@@ -104,8 +106,8 @@ export class ViewerConnection {
       case 'peer-joined': case 'consent-pending': this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
       case 'consent':
         if (!Array.isArray(message.permissions) || !Number.isSafeInteger(message.permissionGeneration) || message.permissionGeneration < 1) throw Error('잘못된 승인 통지다.');
-        if(this.granted||!['["screen"]','["screen","control"]','["screen","control","admin"]'].includes(JSON.stringify(message.permissions)))throw Error('중복 또는 미지원 승인 통지다.');
-        this.granted = message.permissions.includes('screen'); this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
+        if(this.granted||(permissionMask(message.permissions)&~183)!==0)throw Error('중복 또는 미지원 승인 통지다.');
+        this.granted = true; this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
         this.onState('대상자가 승인한 기능을 연결하는 중이다.'); break;
       case 'consent-denied': this.end('대상자가 동의를 거절했다.'); break;
       case 'ice':
@@ -128,7 +130,7 @@ export class ViewerConnection {
       if (this.live() && this.now() - this.negotiatedAt >= 30000 && pc.connectionState !== 'connected')
         this.end('WebRTC 협상 시간 초과다.', true);
     }, 1000));
-    pc.ontrack = event => { if (this.live() && this.pc === pc) this.onTrack(event); };
+    pc.ontrack = event => { if (this.live() && this.pc === pc) {if(!this.permissions.includes('screen'))this.end('승인하지 않은 화면 트랙이다.',true);else this.onTrack(event);} };
     pc.ondatachannel = event => { if (this.live() && this.pc === pc) this.acceptChannel(event.channel); else event.channel.close(); };
     pc.onicecandidate = event => {
       if (this.live() && this.pc === pc && event.candidate)
@@ -172,11 +174,22 @@ export class ViewerConnection {
     }, 1000));
   }
   acceptChannel(channel) {
-    if (!(['control', ...(this.permissions?.includes('control') ? ['input', 'pointer'] : [])].includes(channel.label)) || this.channels.has(channel.label) || channel.ordered !== true
+    if (!(featureChannels(this.permissions).includes(channel.label)) || this.channels.has(channel.label) || channel.ordered !== true
         || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) { channel.close(); this.end('미지원 또는 중복 기능 채널이다.', true); return; }
     this.channels.set(channel.label, channel);
     channel.onclose = () => { if (this.live()) this.end('기능 채널이 종료됐다.', true); };
     channel.onerror = () => { if (this.live()) this.end('기능 채널 전송 실패다.', true); };
+    channel.onopen=()=>{if(this.live())this.onData({t:'feature-ready'});};
+    if(['chat','telemetry'].includes(channel.label)) {
+      let chain=Promise.resolve(),queued=0;
+      channel.onmessage=event=>{
+        if(!this.live())return;
+        if(++queued>64){this.end('보조 채널 수신 큐 상한이다.',true);return;}
+        let message;try{message=parseData(event.data);}catch{this.end('보조 채널 JSON 오류다.',true);return;}
+        chain=chain.then(()=>this.live()&&this.features.receive(channel.label,message)).catch(()=>{if(this.live())this.end('보조 채널 계약 오류다.',true);}).finally(()=>queued--);
+      };
+      return;
+    }
     if (channel.label !== 'control') {
       channel.onmessage = () => this.end('입력 채널에서 예상하지 않은 응답이다.', true);
       return;
@@ -192,17 +205,17 @@ export class ViewerConnection {
         const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : [])];
         if (Object.keys(message).some(key => !allowed.includes(key))) throw Error('알 수 없는 제어 필드다.');
         if (message.t === 'data-ready') {
-          const control = this.permissions.includes('control');
-          if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(control ? ['control','input','pointer'] : ['control'])
-              || JSON.stringify(message.permissions) !== JSON.stringify(this.permissions) || !this.permissions.includes('screen')) throw Error('기능 채널 준비 오류다.');
+          if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(featureChannels(this.permissions))
+              || JSON.stringify(message.permissions) !== JSON.stringify(this.permissions)) throw Error('기능 채널 준비 오류다.');
           const m = message.monitor;
-          if (!m || typeof m.identity !== 'string' || m.identity.length < 1 || m.identity.length > 128 || m.topologyGeneration !== 1
+          if (this.permissions.includes('screen')?(!m || typeof m.identity !== 'string' || m.identity.length < 1 || m.identity.length > 128 || m.topologyGeneration !== 1
               || Object.keys(m).some(key=>!['identity','topologyGeneration','x','y','width','height'].includes(key))
-              || ![m.x, m.y, m.width, m.height].every(Number.isSafeInteger) || m.x < -2147483648 || m.x > 2147483647 || m.y < -2147483648 || m.y > 2147483647 || m.width < 2 || m.height < 2 || m.width > 16384 || m.height > 16384) throw Error('모니터 계약 오류다.');
-          this.monitor = Object.freeze({ ...m }); this.dataReady = true; this.pingId = message.id;
+              || ![m.x, m.y, m.width, m.height].every(Number.isSafeInteger) || m.x < -2147483648 || m.x > 2147483647 || m.y < -2147483648 || m.y > 2147483647 || m.width < 2 || m.height < 2 || m.width > 16384 || m.height > 16384):m!==undefined) throw Error('모니터 계약 오류다.');
+          this.monitor = m?Object.freeze({ ...m }):null; this.dataReady = true; this.pingId = message.id;
           this.lastPong = this.now(); this.ping();
           this.timers.push(this.setTimer(() => {
             if (!this.live()) return;
+            this.features.expire();if(!this.live())return;
             if (this.pendingReset && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
             else if (this.now() - this.lastPong >= 2000) this.end('기능 채널 생존 확인 시간 초과다.', true); else this.ping();
           }, 500));
@@ -277,6 +290,7 @@ export class ViewerConnection {
     this.reason ??= reason; this.closed = true; this.pin = '';
     for (const timer of this.timers.splice(0)) this.clearTimer(timer);
     this.pendingIce.length = 0;
+    this.features.clear();
     for (const channel of this.channels.values()) channel.close(); this.channels.clear();
     this.pc?.close();
     if (this.ws.readyState < 2) this.ws.close(); // CONNECTING is also owned

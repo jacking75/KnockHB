@@ -8,6 +8,7 @@ using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Signaling;
 using RemoteAssist.Host.Core.Windows;
 using RemoteAssist.Host.Core.Input;
+using RemoteAssist.Host.Core.Diagnostics;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
@@ -42,6 +43,8 @@ public sealed class ScreenShareSession : IAsyncDisposable
     private InputDataSession? _inputData;
     private ControlDataSession? _controlData;
     private AdminFrameSource? _adminFrame;
+    private FeatureDataChannel? _chat,_telemetry;
+    private Task? _diagnosticsTask;
     private readonly Queue<IceCandidate> _remoteIce = new();
     public SessionCredentials? Credentials { get; private set; }
     public Task<SessionOutcome> Completion => _completion.Task;
@@ -54,6 +57,10 @@ public sealed class ScreenShareSession : IAsyncDisposable
     public Func<PermissionSnapshot,IInputBackend>? CreateInputBackend {get;set;}
     public Action? InputLeaseObserved {get;set;}
     public Action<ControlMessage>? AdminCommand {get;set;}
+    public Action<FeatureMessage>? ChatReceived {get;set;}
+    public Func<FeatureMessage,CancellationToken,Task<FeatureMessage>>? ClipboardOperation {get;set;}
+    public IDiagnosticsProvider DiagnosticsProvider {get;set;}=new DiagnosticsCollector();
+    public void SendChat(string text,string id)=>_chat!.Send(new(){T="chat",Id=id,Text=text},Capability.Chat);
     public AdminFrameSource? AdminFrame=>Volatile.Read(ref _adminFrame);
     public void ActivateAdmin(AdminFrameSource source)
     {
@@ -171,9 +178,9 @@ public sealed class ScreenShareSession : IAsyncDisposable
         consentDeadline.Token.ThrowIfCancellationRequested();
         if (_lifetime.IsCancellationRequested || capability == Capability.None) { EndSession("대상자가 승인을 거절했다", false); return; }
         // Only implemented capabilities can be granted. Future features stay denied.
-        if ((capability & ~(Capability.Screen|Capability.Control|Capability.Admin)) != 0||capability.HasFlag(Capability.Control)&&CreateInputBackend==null||capability.HasFlag(Capability.Admin)&&(!capability.HasFlag(Capability.Control)||AdminCommand==null)) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
+        if ((capability & ~(Capability.Screen|Capability.Control|Capability.Admin|Capability.Chat|Capability.Clipboard|Capability.Diagnostics)) != 0||capability.HasFlag(Capability.Control)&&CreateInputBackend==null||capability.HasFlag(Capability.Admin)&&(!capability.HasFlag(Capability.Control)||AdminCommand==null)||capability.HasFlag(Capability.Clipboard)&&ClipboardOperation==null||capability.HasFlag(Capability.Chat)&&ChatReceived==null) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
         var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, TimeSpan.FromHours(2));
-        await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = capability.HasFlag(Capability.Admin)?["screen","control","admin"]:capability.HasFlag(Capability.Control)?["screen","control"]:["screen"], PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
+        await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = FeatureContract.Permissions((int)capability), PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
         var iceServers = _options.StunServers.Select(url => new RTCIceServer {urls=url}).ToList();
         foreach(var server in _signaling.JoinedAck?.IceServers ?? [])
             foreach(var url in server.Urls)iceServers.Add(new RTCIceServer{urls=url,username=server.Username,credential=server.Credential});
@@ -194,6 +201,25 @@ public sealed class ScreenShareSession : IAsyncDisposable
             _inputData.Attach(await pc.createDataChannel("input",new RTCDataChannelInit {ordered=true}));
             _inputData.Attach(await pc.createDataChannel("pointer",new RTCDataChannelInit {ordered=true}));_inputData.Start();
         }
+        if((capability&(Capability.Chat|Capability.Clipboard))!=0)
+        {
+            _chat=new(await pc.createDataChannel("chat",new RTCDataChannelInit {ordered=true}),_permissions,grant,_lifetime.Token,async (message,token)=>
+            {
+                if(message.T=="chat")
+                {if(!_permissions.Execute(Capability.Chat,grant.Generation,()=>ChatReceived!(message)))throw new UnauthorizedAccessException("채팅 승인이 종료됐다.");}
+                else
+                {
+                    if(!_permissions.Allows(Capability.Clipboard,grant.Generation))throw new UnauthorizedAccessException("클립보드 승인이 없다.");
+                    var reply=await ClipboardOperation!(message,token);if(reply.Id!=message.Id||reply.T is not ("clipboard-text" or "clipboard-applied" or "clipboard-rejected"))throw new InvalidDataException("클립보드 응답 방향 오류다.");
+                    _chat!.Send(reply,Capability.Clipboard);
+                }
+            },reason=>EndSession(reason,true));_chat.Attach();
+        }
+        if(capability.HasFlag(Capability.Diagnostics))
+        {
+            _telemetry=new(await pc.createDataChannel("telemetry",new RTCDataChannelInit {ordered=true}),_permissions,grant,_lifetime.Token,(_,_)=>throw new InvalidDataException("Viewer가 telemetry를 보낼 수 없다."),reason=>EndSession(reason,true));_telemetry.Attach();
+            _diagnosticsTask=ObserveDiagnostics(grant);
+        }
         pc.ondatachannel+=_=>EndSession("미지원 또는 중복 기능 채널이다.",true);
         var feedbackBinding=new RtcpFeedbackBinding();
         pc.OnReceiveReport += (_, media, report) =>
@@ -204,7 +230,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
                 _keyframes.Observe(media, report);
             }
         };
-        pc.addTrack(new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.H264, 102, 90000, "packetization-mode=1"), MediaStreamStatusEnum.SendOnly));
+        if(capability.HasFlag(Capability.Screen))pc.addTrack(new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.H264, 102, 90000, "packetization-mode=1"), MediaStreamStatusEnum.SendOnly));
         pc.onicecandidate += candidate =>
         {
             if (candidate is null) return;
@@ -216,7 +242,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             if (state is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected)
                 EndSession("WebRTC 연결 종료: " + state, state != RTCPeerConnectionState.closed);
             else if (state == RTCPeerConnectionState.connected)
-                Enqueue(() => { if (_captureThread is null && _permissions.Allows(Capability.Screen, grant.Generation)) StartStreaming(grant.Generation); return Task.CompletedTask; });
+                Enqueue(() => { if (_captureThread is null && _permissions.Allows(Capability.Screen, grant.Generation)) StartStreaming(grant.Generation);else if(!grant.Capabilities.HasFlag(Capability.Screen))NotifyState("승인한 보조 기능 연결 중");return Task.CompletedTask; });
         };
         // ICE callbacks enqueue behind this operation; offer therefore precedes candidates.
         var offer = pc.createOffer(null);
@@ -230,6 +256,12 @@ public sealed class ScreenShareSession : IAsyncDisposable
     {
         try { await Task.Delay(TimeSpan.FromSeconds(30), _lifetime.Token); if (pc.connectionState != RTCPeerConnectionState.connected) EndSession("협상 시간 초과", true); }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+    }
+    private async Task ObserveDiagnostics(PermissionSnapshot grant)
+    {
+        try{await DiagnosticsLoop.Run(DiagnosticsProvider,_permissions,grant,()=>_telemetry!.IsOpen,message=>_telemetry!.Send(message,Capability.Diagnostics),_lifetime.Token);}
+        catch(OperationCanceledException)when(_lifetime.IsCancellationRequested){}
+        catch(Exception){EndSession("진단 수집이 실패하거나 기한을 넘었다.",true);}
     }
     private async Task WatchPairingAsync(int expiresIn)
     {
@@ -346,7 +378,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             if (!stopped) throw new TimeoutException("네이티브 캡처가 정지하지 않았다. 살아 있는 스레드의 자원은 해제하지 않는다. 헬퍼 감독 종료가 필요하다.");
         }
         if (_signaling is not null) await _signaling.DisposeAsync();
-        var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask,_inputData?.Completion }.OfType<Task>();
+        var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask,_inputData?.Completion,_chat?.Completion,_telemetry?.Completion,_diagnosticsTask }.OfType<Task>();
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(Math.Max(.1, 5 - clock.Elapsed.TotalSeconds)));
         _pc?.close(); _pc?.Dispose();
         _adminFrame?.Dispose();

@@ -23,10 +23,11 @@ public sealed record ControlMessage:DataMessage
         if(message.T=="data-ready")
         {
             var m=message.Monitor;
-            var screenOnly=message.Channels is ["control"]&&message.Permissions is ["screen"];
-            var control=message.Channels is ["control","input","pointer"]&&message.Permissions is ["screen","control"] or ["screen","control","admin"];
-            if((!screenOnly&&!control)||m is null||m.Identity is null||m.Identity.Length is <1 or >128||
-                m.TopologyGeneration!=1||m.Width is <2 or >16384||m.Height is <2 or >16384)throw new InvalidDataException("기능 준비 계약 오류다.");
+            var mask=FeatureContract.ParsePermissions(message.Permissions);
+            if(message.Channels is null||!message.Channels.SequenceEqual(FeatureContract.Channels(mask)))throw new InvalidDataException("기능 채널 준비 계약 오류다.");
+            if((mask&1)!=0)
+            {if(m is null||m.Identity is null||m.Identity.Length is <1 or >128||m.TopologyGeneration!=1||m.Width is <2 or >16384||m.Height is <2 or >16384)throw new InvalidDataException("모니터 준비 계약 오류다.");}
+            else if(m!=null)throw new InvalidDataException("화면 승인 없는 모니터 전달이다.");
         }
         else if(message.Channels!=null||message.Permissions!=null||message.Monitor!=null)throw new InvalidDataException("생존 메시지의 추가 필드를 거부한다.");
         var phase=message.T=="admin-state"&&message.State is "active" or "denied";

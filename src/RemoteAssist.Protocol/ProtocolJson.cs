@@ -1,9 +1,15 @@
 using System.Text.Json;
+using System.Text.Encodings.Web;
 
 namespace RemoteAssist.Protocol;
 
 public static class ProtocolJson
 {
+    // Transport JSON is never embedded in HTML. Keep Unicode within the documented UTF-8 limits.
+    static readonly JsonSerializerOptions wire=CreateWire();
+    static JsonSerializerOptions CreateWire(){var value=new JsonSerializerOptions {Encoder=JavaScriptEncoder.UnsafeRelaxedJsonEscaping};value.MakeReadOnly(populateMissingResolver:true);return value;}
+    public static byte[] Encode<T>(T value)=>JsonSerializer.SerializeToUtf8Bytes(value,wire);
+    public static JsonElement Element<T>(T value)=>JsonSerializer.SerializeToElement(value,wire);
     public static JsonDocument Parse(ReadOnlyMemory<byte> bytes,int maxBytes)
     {
         if(bytes.Length>maxBytes)throw new InvalidDataException("프로토콜 크기 상한 초과다.");

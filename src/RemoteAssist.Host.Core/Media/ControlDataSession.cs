@@ -15,7 +15,7 @@ internal sealed class ControlDataSession(RTCDataChannel channel,PermissionGate p
     {
         channel.onopen+=()=>
         {
-            try{lock(gate){ready=true;var control=binding.Capabilities.HasFlag(Capability.Control);Send("data-ready",Guid.NewGuid().ToString("N"),control?["control","input","pointer"]:["control"],binding.Capabilities.HasFlag(Capability.Admin)?["screen","control","admin"]:control?["screen","control"]:["screen"],new(monitor.DeviceName,1,monitor.X,monitor.Y,monitor.Width,monitor.Height));}}
+            try{lock(gate){ready=true;Send("data-ready",Guid.NewGuid().ToString("N"),FeatureContract.Channels((int)binding.Capabilities),FeatureContract.Permissions((int)binding.Capabilities),binding.Capabilities.HasFlag(Capability.Screen)?new(monitor.DeviceName,1,monitor.X,monitor.Y,monitor.Width,monitor.Height):null);}}
             catch {fail("기능 채널 준비 실패다.");}
         };
         channel.onclose+=()=>fail("기능 채널이 종료됐다.");
@@ -29,7 +29,7 @@ internal sealed class ControlDataSession(RTCDataChannel channel,PermissionGate p
                 lock(gate)
                 {
                     if(!ready||message.SessionId!=binding.SessionId||message.Generation!=1||message.PermissionGeneration!=binding.Generation||message.Sequence!=received+1||
-                        !permissions.Allows(Capability.Screen,binding.Generation))throw new InvalidDataException("오래되거나 다른 제어 채널이다.");
+                        !permissions.Allows(binding.Capabilities,binding.Generation))throw new InvalidDataException("오래되거나 다른 제어 채널이다.");
                     received=message.Sequence;
                     if(message.T=="data-ping")
                     {if(binding.Capabilities.HasFlag(Capability.Control))inputLease?.Invoke();Send("data-pong",message.Id);}
@@ -51,7 +51,7 @@ internal sealed class ControlDataSession(RTCDataChannel channel,PermissionGate p
             var message=new ControlMessage {T=type,SessionId=binding.SessionId,Generation=1,PermissionGeneration=binding.Generation,Sequence=sent+1,Id=id,
                 Channels=channels,Permissions=capabilities,Monitor=descriptor,InputEpoch=inputEpoch,State=state,AdminGeneration=adminGeneration};
             var bytes=JsonSerializer.SerializeToUtf8Bytes(message);ControlMessage.Parse(bytes);
-            if(!permissions.Execute(Capability.Screen,binding.Generation,()=>channel.send(System.Text.Encoding.UTF8.GetString(bytes))))throw new UnauthorizedAccessException("화면 권한이 폐기됐다.");
+            if(!permissions.Execute(binding.Capabilities,binding.Generation,()=>channel.send(System.Text.Encoding.UTF8.GetString(bytes))))throw new UnauthorizedAccessException("기능 권한이 폐기됐다.");
             sent++;
         }
     }

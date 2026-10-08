@@ -30,6 +30,7 @@ sealed class HelperRuntime : IAsyncDisposable
     TaskCompletionSource<Capability>? consent;
     readonly IpcAcknowledgements acknowledgements=new();
     readonly IpcInputRequests adminInputs=new();
+    readonly IpcFeatureRequests clipboard=new();
     public async Task Handle(LocalIpcMessage message,CancellationToken ct)
     {
         switch(message.Type)
@@ -43,14 +44,16 @@ sealed class HelperRuntime : IAsyncDisposable
                 owned.CreateInputBackend=grant=>new ReservedInputBackend(grant.SessionId,grant.Generation,new AdminRoutingInputBackend(new WindowsInputBackend(owned.Monitor),()=>owned.AdminFrame),reservation=>acknowledgements.Request(Peer,"recovery-reserve",reservation,Peer.Token).GetAwaiter().GetResult());
                 owned.InputLeaseObserved=()=>Peer.Post("recovery-lease");
                 owned.AdminCommand=message=>Peer.Post(message.T=="admin-request"?"admin-request":"admin-sas",id:message.Id);
-                owned.StateChanged+=state=> {try{Peer.Post("state",new {status=state,active=state=="승인한 화면 공유 중",capabilities=(int)owned.GrantedCapabilities,
+                owned.ChatReceived=message=>Peer.Post("chat",message,message.Id);
+                owned.ClipboardOperation=(message,token)=>clipboard.Request(Peer,message,token);
+                owned.StateChanged+=state=> {try{Peer.Post("state",new {status=state,active=state is "승인한 화면 공유 중" or "승인한 보조 기능 연결 중",capabilities=(int)owned.GrantedCapabilities,
                     monitor=new RemoteAssist.Protocol.MonitorDescriptor(owned.Monitor.DeviceName,1,owned.Monitor.X,owned.Monitor.Y,owned.Monitor.Width,owned.Monitor.Height)});}catch(InvalidOperationException){owned.EndSession("로컬 감독 연결 종료");}};
                 owned.RequestLocalConsent=async (identity,token)=>
                 {
                     consent=new(TaskCreationOptions.RunContinuationsAsynchronously);pending=Guid.NewGuid().ToString("N");
                     var pairing=owned.Credentials??throw new InvalidOperationException("참가 세션이 없다.");
                     Peer.Post("consent-request",new {sessionId=pairing.SessionId,connectionId=identity.ConnectionId,displayName=identity.DisplayName,
-                        monitor=owned.Monitor.ToString(),monitorDescriptor=new RemoteAssist.Protocol.MonitorDescriptor(owned.Monitor.DeviceName,1,owned.Monitor.X,owned.Monitor.Y,owned.Monitor.Width,owned.Monitor.Height),available=new[]{"screen","control","admin"}},pending);
+                        monitor=owned.Monitor.ToString(),monitorDescriptor=new RemoteAssist.Protocol.MonitorDescriptor(owned.Monitor.DeviceName,1,owned.Monitor.X,owned.Monitor.Y,owned.Monitor.Width,owned.Monitor.Height),available=new[]{"screen","control","admin","clipboard","diagnostics","chat"}},pending);
                     try{return await consent.Task.WaitAsync(token);}finally{pending=null;consent=null;}
                 };
                 var credentials=await owned.StartAsync(ct);
@@ -59,11 +62,14 @@ sealed class HelperRuntime : IAsyncDisposable
             case "consent":
                 if(pending!=message.Id||consent==null)throw new InvalidDataException("오래되거나 다른 동의 응답이다.");
                 var caps=message.Body?.GetProperty("capabilities").GetInt32()??0;
-                if(caps is not (0 or 1 or 3 or 7))throw new InvalidDataException("미구현 권한은 부여할 수 없다.");
+                if(caps!=0){_=RemoteAssist.Protocol.FeatureContract.Permissions(caps);if((caps&~183)!=0)throw new InvalidDataException("미구현 권한은 부여할 수 없다.");}
                 consent.TrySetResult((Capability)caps);break;
             case "stop":session?.EndSession("대상자가 즉시 종료했다.");consent?.TrySetCanceled(ct);break;
             case "recovery-ack":acknowledgements.Accept(message);break;
             case "admin-input-ack":adminInputs.Accept(message);break;
+            case "clipboard-response":clipboard.Accept(message);break;
+            case "chat":
+                var local=message.Body??throw new InvalidDataException("로컬 채팅 본문 누락이다.");session!.SendChat(local.GetProperty("text").GetString()!,message.Id);break;
             case "admin-state":
                 var state=message.Body??throw new InvalidDataException("관리자 상태 누락이다.");
                 if(state.GetProperty("state").GetString()=="denied")session!.DenyAdmin(message.Id);

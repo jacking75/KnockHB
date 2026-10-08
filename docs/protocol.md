@@ -18,6 +18,14 @@
 
 데이터 JSON 공통 필드는 `v`, `t`, `sessionId`, `generation`, `permissionGeneration`, `id`(요청 ID), `seq`(양의 단조 입력 순번)다. 기능 채널은 `input` reliable ordered(key/button/wheel/text/reset), `pointer` reliable ordered(move 최신 1건 합치기), `control` reliable ordered, `file` reliable ordered, `chat` reliable ordered, `telemetry` reliable ordered로 결정한다. 서로 다른 채널의 순서는 가정하지 않으며 button/wheel은 최종 좌표를 함께 보낸다. 모든 입력은 승인된 monitor identity와 `topologyGeneration`을 포함한다. 이전 순번/세대는 폐기한다.
 
+권한 이름 순서는 `screen,control,admin,file,clipboard,diagnostics,runbook,chat`이며 승인한 항목만 넣는다. 빈 승인·중복·미지 권한·control 없는 admin·screen 없는 control을 거부한다. control은 모든 승인 세션에 만들고, control 권한에 input/pointer, file에 file, chat 또는 clipboard에 chat, diagnostics에 telemetry를 추가한다. data-ready의 모니터는 screen 승인 때만 포함한다. diagnostics만 승인한 경우 SDP에 video track을 넣거나 캡처·인코더를 만들지 않는다. 데이터 채널의 생존 확인은 승인한 기능 집합의 현재 generation을 검사한다.
+
+chat 채널의 `chat`은 1~4096 UTF-16 문자의 text를 전달하며 최대 5건/초다. clipboard는 별도 권한이며 `clipboard-get`, `clipboard-set`, `clipboard-text`, `clipboard-applied`, `clipboard-rejected`를 쓴다. set/text의 text는 UTF-8 16KiB·UTF-16 8192 이하, `hash`는 UTF-8 SHA-256 소문자 hex다. JSON escaping 후에는 로컬 IPC envelope 공간을 포함해 보조 메시지 자체를 30KiB 이하로 제한한다. clipboard-get은 본문 없이 GUID N id로 요청하고 응답은 같은 id를 사용한다. clipboard-applied는 hash만, rejected는 고정 code만 포함한다. 같은 id를 재실행하지 않으며 마지막 256개를 기억한다. clipboard는 최대 2건/초이고 자동 양방향 복사를 하지 않는다. 브라우저의 명시적 텍스트 입력·복사 버튼을 사용한다. 본문은 감사·진단에 남기지 않는다.
+
+보조 기능 요청 ID는 GUID N 소문자 32자리로 고정한다. 대소문자 변형으로 replay 검사를 우회하지 못한다.
+
+telemetry는 diagnostics 승인 뒤 2초 주기로 `telemetry`를 보낸다. 공통 envelope와 `snapshot`을 포함한다. snapshot 필드는 `utc,cpuPercent,memory,disks,network,errors,startup,services`이며 null 필드도 생략하지 않는다. memory는 `totalBytes,availableBytes`, disks는 `name,totalBytes,freeBytes`, network는 `receivedBytes,sentBytes`, errors는 `provider,eventId,utc,level`, services는 `name,state`다. eventId는 이벤트 resource ID의 상위 severity 2비트를 제외한 값이다. 모든 정수는 JavaScript safe integer 범위이며 network는 활성 인터페이스의 누적 합계로 가상 인터페이스 때문에 중복될 수 있다. 계정·호스트 이름·IP/MAC·명령줄·파일 경로·이벤트 본문을 포함하지 않는다. 접근 불가 항목은 null이며 UI에서 N/A와 마지막 수신 시간을 표시한다. provider는 2초 상한, 전체 JSON은 32KiB, 목록은 각 128개/이벤트 20개 이하로 제한한다. 지연 provider를 병렬로 계속 쌓지 않는다.
+
 pointer의 기존 maxRetransmits=0 목표는 고정 SDK의 SCTP partial reliability 구현 한계 때문에 변경했다. SIPSorcery 10.0.16의 DCEP 생성은 maxRetransmits>0만 분기하고 수신 채널 설정은 TODO이며 SCTP association에 FORWARD-TSN 처리가 없다. 지원을 가정하는 대신 reliable pointer의 송신/수신에서 최신 1건만 유지하고 2KiB bufferedAmount 상한을 적용한다. 입력 생존 lease가 만료되면 held 상태를 해제하고 세션을 중단해 지연된 조작이 복구 뒤 실행되지 않게 한다. 근거는 고정 [RTCDataChannel](https://github.com/sipsorcery-org/sipsorcery/blob/4ca86773993a875706d8a7a4c1e0108e3a885ebf/src/SIPSorcery/net/WebRTC/RTCDataChannel.cs), [SctpAssociation](https://github.com/sipsorcery-org/sipsorcery/blob/4ca86773993a875706d8a7a4c1e0108e3a885ebf/src/SIPSorcery/net/SCTP/SctpAssociation.cs) 소스다. partial reliability는 지원하는 transport로 교체하고 손실 시험을 통과하기 전에는 광고하지 않는다.
 
 좌표는 video의 실제 contain 영역에서만 0~1로 계산하고 letterbox는 입력 대상에서 제외한다. Host 픽셀은 `monitorOrigin + round(normalized * (monitorSize-1))`다. SendInput absolute는 `round((pixel-virtualOrigin)*65535/(virtualSize-1))`와 VIRTUALDESK 플래그를 쓴다. blur/숨김/철회/연결 상실은 reset으로 원격 키·버튼을 해제한다. IME 조합 중 물리 문자 key는 보내지 않고 compositionend에서 확정 문자열을 1회 보낸다.
@@ -26,7 +34,15 @@ pointer의 기존 maxRetransmits=0 목표는 고정 SDK의 SCTP partial reliabil
 
 reliable 마우스 button/wheel 전이는 필수 `pointerBarrier`(0 이상의 safe integer)를 포함한다. Viewer는 대기 pointer를 먼저 flush하고 당시 송신한 pointer 순번을 barrier로 넣는다. Host는 전이의 최종 좌표를 적용한 뒤 barrier 이하의 지연 move를 폐기한다. flush가 배압으로 보류됐으면 대기 move는 폐기한다. 따라서 독립 채널의 오래된 move가 버튼 좌표를 되돌리지 않는다. reset 해제에 성공하면 Host는 control 채널에서 같은 ID의 `input-reset-ack`와 `inputEpoch`를 응답한다. Viewer는 ACK 전 새 입력을 보내지 않으며 1초 ACK timeout은 전체 연결 종료다.
 
-파일 청크 header는 32바이트다. ASCII RAFT 4바이트, 버전 uint16 LE, reserved uint16=0, RFC4122 순서 transfer UUID 16바이트, sequence uint32 LE, payload length uint32 LE 다음에 최대 16384바이트를 붙인다. offer는 UUID/name/size/sha256을 포함하며 별도 수락 전 본문 전송은 금지한다. diagnostics는 telemetry에만 보낸다. clipboard는 별도 권한과 방향 승인, 64KiB 한도, UUID/hash echo 방지를 적용한다. Runbook은 설치된 ID/version/hash/검증 인자에 로컬 건별 승인을 묶고 원격 임의 스크립트는 거부한다. 미구현 채널/기능은 supported capabilities에 광고하지 않는다.
+파일 청크 header는 32바이트다. ASCII RAFT 4바이트, 버전 uint16 LE, reserved uint16=0, RFC4122 순서 transfer UUID 16바이트, sequence uint32 LE, payload length uint32 LE 다음에 최대 16384바이트를 붙인다. offer는 UUID/name/size/sha256을 포함하며 별도 수락 전 본문 전송은 금지한다. diagnostics는 telemetry에만 보낸다. clipboard는 위의 별도 권한·크기 한도·UUID/hash 응답 결합을 적용한다. Runbook은 설치된 ID/version/hash/검증 인자에 로컬 건별 승인을 묶고 원격 임의 스크립트는 거부한다. 미구현 채널/기능은 supported capabilities에 광고하지 않는다.
+
+### 파일 전송 상세
+
+file 채널의 JSON은 공통 envelope와 `file-offer`(name,size,hash), `file-accept`, `file-reject`(code), `file-complete`(size,hash), `file-received`(size,hash), `file-cancel`(code)다. id는 소문자 GUID N이며 binary header의 transfer UUID와 일치한다. name은 Windows의 안전한 파일명 한 개이며 경로·ADS·장치명·끝의 공백/마침표를 금지한다. size는 0~256MiB 정수, hash는 전체 파일 SHA-256 소문자 hex다. 청크 seq는 0부터 연속 증가하며 길이는 1~16384바이트다. 빈 파일은 청크 없이 complete로 진행한다. JSON의 seq는 채널 방향별 독립 순번이다. file-reject/cancel code는 `declined,busy,timeout,io-error,hash-mismatch,cancelled,too-large`만 허용한다.
+
+동시에 진행하는 전송은 방향을 합쳐 1개이며 최근 256개 ID를 재사용하지 않는다. 개별 수락은 30초 기한, 수락 후 무진행 10초·전체 10분 상한이다. sender는 bufferedAmount 64KiB에서 대기하고 256KiB 이상이면 중단한다. receiver 큐는 최대 32개 청크이며 늦거나 중복·누락·다른 UUID·size 초과 청크를 즉시 거부한다. complete를 검증해 저장을 확정한 뒤 file-received를 보낸다. offer와 accept 이전 본문은 허용하지 않는다. 취소/철회/오류는 저장을 확정하지 않으며 임시 파일을 삭제한다. 재연결에 전송을 승계하지 않는다.
+
+Host의 파일 I/O는 일반 사용자 Helper에서만 수행한다. 로컬 선택 경로를 Viewer에게 전달하지 않는다. 1차 저장 대상은 로컬 고정 NTFS 볼륨이다. 선택 폴더의 조상을 handle-relative NtCreateFile로 열어 reparse를 거부하고 rename/delete 공유를 막는다. 임시 파일은 CreateNew·DeleteOnClose로 만들며 hash/size 검증과 flush 후 같은 폴더 안에 handle 기반 NTFS hard link를 원자적으로 생성해 확정한다. 최종 이름이 존재하면 실패한다. 임시 이름은 정상 종료와 프로세스 강제 종료 때 OS가 삭제하고, 확정 이름만 남는다. 기존 파일 자동 덮어쓰기·실행·SYSTEM 쓰기를 금지한다. Viewer는 사용자 gesture로 선택한 File System Access write stream을 우선 쓰고 검증 후 close/실패 시 abort한다. API가 없으면 8MiB 이하만 메모리 수신·명시적 다운로드로 제한하며 큰 파일은 거부한다. upload hash는 작은 청크로 계산하고 전체 파일을 무제한 arrayBuffer로 적재하지 않는다. 감사는 transfer ID·방향·크기·결과만 기록하고 파일 이름/경로/내용은 기록하지 않는다.
 
 v0.1 클라이언트는 v1에 참가할 수 없다. 과거 초안의 unreliable key/button과 좌표 공식은 폐기했다.
 

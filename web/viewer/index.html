@@ -30,7 +30,7 @@
 
   <section id="session" hidden>
     <header class="bar">
-      <span class="badge">● 원격 화면 · E2E 암호화</span>
+      <span class="badge">● 원격 지원 · E2E 암호화</span>
       <span id="stats"></span>
       <button id="admin-request" type="button" disabled>관리자 지원 요청</button>
       <button id="admin-sas" type="button" disabled>Ctrl+Alt+Del</button>
@@ -45,6 +45,21 @@
       <input id="remote-text" maxlength="4096" placeholder="IME 확정 문자는 자동 입력하며 다른 문자는 버튼으로 보낸다" aria-label="대상 PC에 입력할 문자" disabled>
       <button id="send-text" type="button" disabled>문자 입력</button>
     </footer>
+    <div class="features">
+      <section id="chat-panel" hidden>
+        <h2>채팅</h2><pre id="chat-history" aria-live="polite"></pre>
+        <label for="chat-text">대상자에게 보낼 메시지</label><textarea id="chat-text" maxlength="4096"></textarea><button id="chat-send" type="button" disabled>메시지 보내기</button>
+      </section>
+      <section id="clipboard-panel" hidden>
+        <h2>텍스트 클립보드</h2><p>여기에 붙여넣은 텍스트만 전송한다. 자동 동기화하지 않는다.</p>
+        <label for="clipboard-text">전송하거나 읽은 텍스트</label><textarea id="clipboard-text" maxlength="8192"></textarea>
+        <button id="clipboard-send" type="button" disabled>대상 PC에 전송</button><button id="clipboard-get" type="button" disabled>대상 PC에서 읽기</button><button id="clipboard-copy" type="button" disabled>읽은 텍스트 복사</button>
+        <p id="feature-status" role="status"></p>
+      </section>
+      <section id="diagnostics-panel" hidden>
+        <h2>읽기 전용 시스템 진단</h2><p id="diagnostics-status">수신 대기 중이다.</p><pre id="diagnostics-content"></pre>
+      </section>
+    </div>
   </section>
 
   <script type="module" src="app.js"></script>

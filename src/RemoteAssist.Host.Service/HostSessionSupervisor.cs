@@ -83,8 +83,9 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     var body=message.Body??throw new InvalidDataException("동의 본문 누락");
                     if(body.GetProperty("sessionId").GetString()!=sessionBinding||body.GetProperty("connectionId").GetString()!=supporterBinding)throw new InvalidDataException("동의 대상 바인딩 불일치");
                     caps=body.GetProperty("capabilities").GetInt32();
-                    if(caps is not (0 or 1 or 3 or 7))throw new InvalidDataException("현재 구현하지 않은 권한이다.");
+                    if(caps!=0){_=FeatureContract.Permissions(caps);if((caps&~183)!=0)throw new InvalidDataException("현재 구현하지 않은 권한이다.");}
                     approvedScope=helper;currentSession=sessionBinding!;currentConnection=supporterBinding!;consentId=null;
+                    approvedScope.Capabilities=(Capability)caps;
                     if((caps&4)!=0)approvedScope.AdminAuthorization=new(new(currentSession,currentConnection,1,(Capability)caps,DateTimeOffset.UtcNow.AddHours(2)));
                 }
                 audit!.Append(caps==0?AuditKind.ConsentDenied:AuditKind.ConsentGranted,caps==0?AuditResult.Denied:AuditResult.Allowed,currentSession,currentConnection,caps==0?0:1);
@@ -115,7 +116,26 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     reason=>{lock(gate){if(helper==adminOwner)StopHelper(reason);}});
                 adminOwner.Token.ThrowIfCancellationRequested();
                 adminOwner.Peer!.Post("admin-state",new {state="active",approval=approved,mapping=privileged.Mapping},message.Id);
-                tray?.Post("state",new {status="관리자 지원 중 · 보안 화면은 Ctrl+Alt+Shift+F9 또는 현장 종료 버튼으로 종료한다.",active=true,capabilities=7,monitor});
+                tray?.Post("state",new {status="관리자 지원 중 · 보안 화면은 Ctrl+Alt+Shift+F9 또는 현장 종료 버튼으로 종료한다.",active=true,capabilities=(int)adminOwner.Capabilities,monitor});
+                break;
+            case "chat":
+                lock(gate)
+                {
+                    var owner=helper??throw new UnauthorizedAccessException("진행 중인 지원이 없다.");
+                    if((owner.Capabilities&Capability.Chat)==0||!Guid.TryParseExact(message.Id,"N",out _))throw new UnauthorizedAccessException("로컬 채팅 승인이 없다.");
+                    var text=message.Body?.GetProperty("text").GetString()??throw new InvalidDataException("채팅 본문 누락이다.");
+                    if(text.Length is <1 or >4096||!FeatureMessage.ValidUnicode(text)||text.Contains('\0')||!owner.LocalChatQuota.Allow())throw new InvalidDataException("로컬 채팅 본문·빈도 오류다.");
+                    owner.Peer!.Post("chat",new {text},message.Id);
+                }
+                break;
+            case "clipboard-response":
+                lock(gate)
+                {
+                    var owner=helper??throw new UnauthorizedAccessException("진행 중인 지원이 없다.");var response=BoundFeature(owner,message,Capability.Clipboard);
+                    if(!owner.ClipboardPending.Remove(message.Id,out var request)||DateTimeOffset.UtcNow>request.Expires||response.T is not ("clipboard-text" or "clipboard-applied" or "clipboard-rejected")||
+                        response.T!="clipboard-rejected"&&(request.Message.T=="clipboard-get"?response.T!="clipboard-text":response.T!="clipboard-applied"||response.Hash!=request.Message.Hash))throw new InvalidDataException("클립보드 응답 요청·방향 오류다.");
+                    owner.Peer!.Post("clipboard-response",response,message.Id);
+                }
                 break;
             default:throw new InvalidDataException("Tray에 허용되지 않은 IPC다.");
         }
@@ -189,6 +209,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     break;
                 case "recovery-lease":
                     (scope.Recovery??throw new UnauthorizedAccessException("복원 승인이 없다.")).Lease();scope.Admin?.Lease();break;
+                case "chat":
+                    var chat=BoundFeature(scope,message,Capability.Chat);if(chat.T!="chat")throw new InvalidDataException("채팅 방향 오류다.");tray?.Post("chat",chat,message.Id);break;
+                case "clipboard-request":
+                    var clipboard=BoundFeature(scope,message,Capability.Clipboard);
+                    if(clipboard.T is not ("clipboard-get" or "clipboard-set")||scope.ClipboardPending.Count>=16||!scope.ClipboardPending.TryAdd(message.Id,(clipboard,DateTimeOffset.UtcNow.AddSeconds(2))))throw new InvalidDataException("클립보드 요청·대기 상한 오류다.");
+                    tray?.Post("clipboard-request",clipboard,message.Id);break;
                 case "admin-request":
                     if(scope.Monitor is null||scope.AdminAuthorization is null||message.Body!=null)throw new UnauthorizedAccessException("관리자 요청 승인 범위가 없다.");
                     scope.AdminAuthorization.Request(message.Id);
@@ -201,6 +227,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 default:throw new InvalidDataException("일반 헬퍼의 허용되지 않은 통지다.");
             }
         }
+    }
+    FeatureMessage BoundFeature(HelperScope scope,LocalIpcMessage message,Capability capability)
+    {
+        var value=message.Body?.Deserialize<FeatureMessage>()??throw new InvalidDataException("보조 기능 본문 누락이다.");
+        _=FeatureMessage.Parse(ProtocolJson.Encode(value));
+        if(helper!=scope||(scope.Capabilities&capability)!=capability||value.Id!=message.Id||value.SessionId!=sessionBinding||value.PermissionGeneration!=1||value.Generation!=1)throw new UnauthorizedAccessException("현재 보조 기능 승인과 일치하지 않는다.");return value;
     }
     void StopHelper(string reason)
     {
@@ -245,6 +277,9 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         public AdminApproval? AdminApproval {get;set;}
         public MonitorDescriptor? Monitor {get;set;}
         public string SupporterName {get;set;}="지원자";
+        public Capability Capabilities {get;set;}
+        public RemoteAssist.Host.Core.Media.FeatureQuota LocalChatQuota {get;}=new(5);
+        public Dictionary<string,(FeatureMessage Message,DateTimeOffset Expires)> ClipboardPending {get;}=new(StringComparer.Ordinal);
         public RecoveryScope? Recovery {get{lock(ownership)return recovery;}}
         public SessionProcess? Child {get{lock(ownership)return child;}}
         public IpcPeerSession? Peer {get{lock(ownership)return peer;}}

@@ -1,5 +1,17 @@
 # 구현 기반의 로컬 실행 증거 — 2026-10-08
 
+## 13:44 KST 채팅·클립보드·진단 연결과 코드 리뷰
+
+`1a71587` 뒤 구현에서 chat/clipboard/diagnostics 독립 권한을 Service→Tray→Helper→Viewer에 연결했다. 화면 없는 진단 승인은 video track·캡처·인코더를 만들지 않는 분기로 구현했고, data-ready도 monitor 없이 control/telemetry만 협상한다. 일반 사용자 진단은 CPU/메모리/고정 디스크/활성 인터페이스 누적 값과 이벤트 ID/시작 항목 이름/서비스 상태만 읽는다. 이벤트 본문·IP/MAC·명령줄은 수집하지 않는다. 항목 실패는 null/N/A, 지연은 2초 deadline 후 세션 종료이며 같은 지연 호출을 반복 생성하지 않는다.
+
+보조 채널에는 양방향 세션·권한 generation·채널별 순번·소문자 GUID 요청 ID·큐/빈도/크기 제한을 적용했다. 클립보드는 명시적 읽기/전송만 수행하고 SHA-256·방향·ID·2초 응답을 검사한다. 코드 리뷰에서 Unicode JSON escaping의 크기 증가, hash 계산 뒤 취소, 수집 중 권한 철회, 이벤트 ID 16비트 절단, 서비스 객체 전체 Dispose, 로컬 ACK 처리와 clipboard 대기의 충돌을 점검·수정했다. IPC actor가 clipboard 응답을 기다리며 복원 ACK를 막지 않도록 별도 대기 객체를 사용한다.
+
+전체 C# 빌드와 29개 회귀 그룹, Viewer 34개 검사, Go 전체 검사가 통과했다. 이후 추가한 JSON escaping 회귀와 UTC 검사는 다음 체크포인트에서 확인한다. 화면·입력·UAC·잠금·서비스 설치·브라우저를 사용하는 E2E는 추가 실행하지 않았다. 실제 WPF clipboard 왕복·새 UI·진단 전용 SDP/수신의 제품 실증은 마지막 짧은 시험 항목이며 E32/E33을 아직 완료 체크하지 않는다.
+
+13:55~13:56 KST 비대화형 추가 검사에서는 전체 solution 경고/오류 0개, C# 30개 그룹·Viewer 35개 시험이 통과했다. E31의 파일 DTO/순번·size/hash 경계와 Windows x64의 handle-relative NTFS 저장 기반을 추가했다. 원래 rename 설계는 DeleteOnClose를 해제할 수 없으므로 같은 폴더 안에 덮어쓰기 없는 hard link를 확정하는 방식으로 기준 문서를 먼저 변경했다. 임시 파일만 OS DeleteOnClose로 지워지고 확정한 이름은 남는다. 실제 로컬 NTFS에서 0바이트·16387바이트 파일, 저장 충돌, hash 변조, 중복/유실 청크, 철회, 파일 write 공유 거부, 임시 링크 제거를 확인했다. 디스크 full은 주입된 Stream 오류이며 실제 디스크를 채우지 않았다. UI/브라우저/서비스를 실행하지 않았고, 파일 채널·양방향 UI·감사 통합·reparse 경합·강제 종료 실증은 아직 남아 E31을 미체크로 유지한다.
+
+핸들 API 판단 근거는 [CreateFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea), [FILE_DISPOSITION_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info), [FILE_LINK_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)이다. 일반 파일 disposition 변경으로 DeleteOnClose를 취소할 수 없다는 조건을 반영했다.
+
 ## 12:40 KST 검증 방침 변경과 입력 통합 증거
 
 13:14 KST까지 추가 대화형 시험 없이 관리자 제품 경로를 구현했다. 최초 admin 토글은 요청 범위이며 30초 기한의 2차 로컬 승인과 최대 2분 lease가 실제 특권 Helper를 만든다. Helper는 네트워크 없이 shared BGRA와 고정 native input만 처리한다. 보안 desktop의 고정 종료 창·F9·30초 제한, Session/SID/monitor/세대 최종 검사, 서비스 SAS 정책 진단을 연결했다. 코드 리뷰에서 원격으로 2차 승인 창을 클릭할 위험을 발견해 해당 창을 열기 전에 입력을 중단·해제하고 응답 뒤 epoch를 증가시켰다. 이 경계의 allow/deny·stale epoch와 shared mapping 크기/세대/clear 회귀를 포함해 C# 28개 그룹과 Node 29개 시험이 통과했다. 전체 solution은 경고/오류 0개다. 실제 새 관리자 실행·Winlogon 종료 표시·Global mapping ACL·SAS 전환은 미실행이다. 이 상태를 E25/E26 완료로 처리하지 않는다.

@@ -17,6 +17,7 @@ public partial class MainWindow
     SharingIndicator? indicator;
     string? currentSession,pendingId;
     bool closed;
+    int capabilities;
     void InitializeRuntime()
     {
         SourceInitialized+=(_,_)=>icon=new NativeTrayIcon(this,StopLocal);
@@ -43,11 +44,16 @@ public partial class MainWindow
                 var active=state.TryGetProperty("active",out var sharing)&&sharing.GetBoolean();
                 if(active)
                 {
-                    var monitor=state.GetProperty("monitor").Deserialize<MonitorDescriptor>()??throw new InvalidDataException("모니터 표시 바인딩 누락");
-                    indicator??=new SharingIndicator(monitor,StopLocal);
-                    Status.Text=(state.GetProperty("capabilities").GetInt32()&2)!=0?"화면 공유·원격 제어 중 · Ctrl+Alt+Shift+F10으로 즉시 종료":"화면 공유 중 · Ctrl+Alt+Shift+F10으로 즉시 종료";
+                    capabilities=state.GetProperty("capabilities").GetInt32();_=FeatureContract.Permissions(capabilities);
+                    if((capabilities&1)!=0)
+                    {
+                        var monitor=state.GetProperty("monitor").Deserialize<MonitorDescriptor>()??throw new InvalidDataException("모니터 표시 바인딩 누락");
+                        indicator??=new SharingIndicator(monitor,StopLocal);
+                    }
+                    Status.Text=((capabilities&2)!=0?"화면 공유·원격 제어 중":(capabilities&1)!=0?"화면 공유 중":"승인한 진단·보조 기능 연결 중")+" · Ctrl+Alt+Shift+F10으로 즉시 종료";
                 }
-                else {indicator?.Dispose();indicator=null;}
+                else {capabilities=state.TryGetProperty("capabilities",out var caps)?caps.GetInt32():0;indicator?.Dispose();indicator=null;}
+                ChatText.IsEnabled=ChatSend.IsEnabled=active&&(capabilities&128)!=0;
                 SessionBorder.BorderBrush=active?Brushes.Crimson:Brushes.SlateGray;
                 Topmost=active;icon?.SetActive(active);
                 break;
@@ -63,7 +69,7 @@ public partial class MainWindow
                     Show();WindowState=WindowState.Normal;Activate();dialog.ShowDialog();
                     if(pendingId!=id||currentSession!=session||consent!=dialog)return;
                     pendingId=null;consent=null;
-                    TryPost("consent",new {sessionId=session,connectionId=connection,capabilities=dialog.ApprovedScreen?(dialog.ApprovedControl?(dialog.ApprovedAdmin?7:3):1):0},id);
+                    TryPost("consent",new {sessionId=session,connectionId=connection,capabilities=dialog.SelectedCapabilities},id);
                 }));
                 break;
             case "admin-request":
@@ -80,15 +86,49 @@ public partial class MainWindow
                     adminPending=null;adminConsent=null;
                     TryPost("admin-response",new {sessionId=adminSession,connectionId=adminConnection,permissionGeneration=generation,approved=adminDialog.Approved},adminId);
                 }));break;
+            case "chat":
+                var chat=ReadFeature(message,128);if(chat.T!="chat")throw new InvalidDataException("채팅 방향 오류다.");AppendChat("지원자: "+chat.Text);break;
+            case "clipboard-request":
+                var clipboard=ReadFeature(message,16);FeatureMessage response;
+                try
+                {
+                    if(clipboard.T=="clipboard-get")
+                    {
+                        var text=Clipboard.ContainsText(TextDataFormat.UnicodeText)?Clipboard.GetText(TextDataFormat.UnicodeText):"";
+                        response=FeatureMessage.ClipboardTextReply(clipboard,text);
+                    }
+                    else if(clipboard.T=="clipboard-set")
+                    {
+                        if(clipboard.Text!.Length==0)Clipboard.Clear();else Clipboard.SetText(clipboard.Text,TextDataFormat.UnicodeText);
+                        response=clipboard with {T="clipboard-applied",Text=null};
+                    }
+                    else throw new InvalidDataException("클립보드 요청 방향 오류다.");
+                }
+                catch(System.Runtime.InteropServices.ExternalException){response=clipboard with {T="clipboard-rejected",Text=null,Hash=null,Code="clipboard-busy"};}
+                TryPost("clipboard-response",response,message.Id);break;
             default:throw new InvalidDataException("Tray 상태 메시지 오류");
         }
     }
+    FeatureMessage ReadFeature(LocalIpcMessage message,int permission)
+    {
+        var value=message.Body?.Deserialize<FeatureMessage>()??throw new InvalidDataException("보조 기능 본문 누락이다.");_=FeatureMessage.Parse(ProtocolJson.Encode(value));
+        if((capabilities&permission)!=permission||value.SessionId!=currentSession||value.Generation!=1||value.PermissionGeneration!=1||value.Id!=message.Id)throw new UnauthorizedAccessException("현재 로컬 보조 기능 승인이 아니다.");return value;
+    }
+    void ChatClicked(object sender,RoutedEventArgs e)
+    {
+        if((capabilities&128)==0||string.IsNullOrEmpty(ChatText.Text))return;
+        var text=ChatText.Text;if(!FeatureMessage.ValidUnicode(text)||text.Contains('\0'))return;
+        TryPost("chat",new {text},Guid.NewGuid().ToString("N"));AppendChat("나: "+text);ChatText.Clear();
+    }
+    void AppendChat(string text)
+    {var lines=(ChatHistory.Text+text+Environment.NewLine);if(lines.Length>8192)lines=lines[^8192..];ChatHistory.Text=lines;ChatHistory.ScrollToEnd();}
     void StartClicked(object sender,RoutedEventArgs e){StartButton.IsEnabled=false;Status.Text="지원 코드를 준비 중이다.";TryPost("start");}
     void StopClicked(object sender,RoutedEventArgs e)=>StopLocal();
     void StopLocal(){TryPost("stop");EndLocal();Status.Text="종료 요청을 보냈다.";}
     void EndLocal()
     {
         pendingId=null;currentSession=null;
+        capabilities=0;ChatText.IsEnabled=ChatSend.IsEnabled=false;ChatText.Clear();ChatHistory.Clear();
         adminPending=null;var adminDialog=adminConsent;adminConsent=null;adminDialog?.Close();
         var dialog=consent;consent=null;dialog?.Close();
         indicator?.Dispose();indicator=null;

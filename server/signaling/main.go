@@ -23,7 +23,7 @@ type settings struct {
 	cfg                           signaling.Config
 }
 
-var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
+var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "features.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
 
 func main() { os.Exit(run()) }
 func run() int {

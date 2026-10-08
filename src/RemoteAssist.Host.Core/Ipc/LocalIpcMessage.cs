@@ -14,7 +14,7 @@ public sealed class LocalIpcMessage
     [JsonPropertyName("nonce"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public string? Nonce {get;init;}
     [JsonPropertyName("body"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public JsonElement? Body {get;init;}
     public const int MaxBytes=32768;
-    static readonly HashSet<string> Types=new(StringComparer.Ordinal) {"hello","heartbeat","config","start","stop","credentials","state","consent-request","consent","admin-request","admin-response","admin-config","admin-ready","admin-state","admin-revoke","admin-input","admin-input-ack","admin-lease","admin-sas","input","monitor","file-request","file-response","clipboard-request","clipboard-response","runbook-request","runbook-response","error","recovery-bind","recovery-reserve","recovery-ack","recovery-lease","recovery-admin"};
+    static readonly HashSet<string> Types=new(StringComparer.Ordinal) {"hello","heartbeat","config","start","stop","credentials","state","consent-request","consent","admin-request","admin-response","admin-config","admin-ready","admin-state","admin-revoke","admin-input","admin-input-ack","admin-lease","admin-sas","input","monitor","file-request","file-response","clipboard-request","clipboard-response","chat","runbook-request","runbook-response","error","recovery-bind","recovery-reserve","recovery-ack","recovery-lease","recovery-admin"};
     public static LocalIpcMessage Parse(ReadOnlyMemory<byte> bytes)
     {
         using var doc=ProtocolJson.Parse(bytes,MaxBytes);

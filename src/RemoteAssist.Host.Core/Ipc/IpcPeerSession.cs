@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using System.Text.Json;
+using RemoteAssist.Protocol;
 
 namespace RemoteAssist.Host.Core.Ipc;
 
@@ -37,8 +38,8 @@ public sealed class IpcPeerSession : IAsyncDisposable
     public void Post(string type,object? body=null,string id="")
     {
         if(Volatile.Read(ref stopped)!=0)throw new InvalidOperationException("종료한 IPC다.");
-        var snapshot=body is null?(JsonElement?)null:JsonSerializer.SerializeToElement(body);
-        LocalIpcMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(new LocalIpcMessage {Type=type,Body=snapshot,Id=id,Sequence=1}));
+        var snapshot=body is null?(JsonElement?)null:ProtocolJson.Element(body);
+        LocalIpcMessage.Parse(ProtocolJson.Encode(new LocalIpcMessage {Type=type,Body=snapshot,Id=id,Sequence=1}));
         if(!outgoing.Writer.TryWrite(new(type,snapshot,id))){Stop("IPC 송신 큐 상한 초과");throw new InvalidOperationException("IPC 송신 큐 상한 초과");}
     }
     async Task Read()

@@ -26,7 +26,7 @@ Host당 승인된 지원 세션은 하나다. 최소 신원 방식은 코드/PIN
 
 ## 권한
 
-screen/control/admin/file/clipboard/diagnostics/runbook은 독립 승인 항목이다. control에는 screen이 필요하다. admin은 관리자 요청을 허용할 범위이며 실제 진입에는 별도의 만료 있는 현장 승인이 필요하다. admin은 다른 기능을 자동 부여하지 않는다. 진단만 승인하면 화면과 입력은 0이다. 파일은 기능 승인 외에도 전송 건별 수락과 로컬 저장 위치 선택이 필요하다. Runbook은 고정 본문 hash와 인자에 대한 건별 승인이다. Viewer가 보낸 consent/granted로 Host 권한을 변경하지 않는다.
+screen/control/admin/file/clipboard/diagnostics/runbook/chat은 독립 승인 항목이다. control에는 screen이 필요하며 admin 요청에는 control도 필요하다. admin은 관리자 요청을 허용할 범위이며 실제 진입에는 별도의 만료 있는 현장 승인이 필요하다. admin은 다른 기능을 자동 부여하지 않는다. 진단만 승인하면 화면과 입력은 0이다. chat 동의 없이 clipboard만 승인하면 같은 전송 채널을 사용해도 chat 메시지를 실행하지 않는다. 파일은 기능 승인 외에도 전송 건별 수락과 로컬 저장 위치 선택이 필요하다. Runbook은 고정 본문 hash와 인자에 대한 건별 승인이다. Viewer가 보낸 consent/granted로 Host 권한을 변경하지 않는다.
 
 ## 시험 정책
 
