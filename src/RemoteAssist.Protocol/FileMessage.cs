@@ -11,18 +11,21 @@ public sealed record FileMessage:DataMessage
     [JsonPropertyName("size"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]public long? Size {get;init;}
     [JsonPropertyName("hash"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]public string? Hash {get;init;}
     [JsonPropertyName("code"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]public string? Code {get;init;}
+    [JsonPropertyName("nextChunk"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]public int? NextChunk {get;init;}
     public static FileMessage Parse(ReadOnlyMemory<byte> bytes)
     {
         using var doc=ProtocolJson.Parse(bytes,32768);var value=JsonSerializer.Deserialize<FileMessage>(bytes.Span)??throw new InvalidDataException("파일 메시지 누락이다.");
         if(value.SessionId is not {Length:>0 and <=64}||value.Generation is <1 or >9007199254740991L||value.PermissionGeneration is <1 or >9007199254740991L||value.Sequence is <1 or >9007199254740991L||!Guid.TryParseExact(value.Id,"N",out var id)||id==Guid.Empty||value.Id!=id.ToString("N"))throw new InvalidDataException("파일 바인딩 오류다.");
         switch(value.T)
         {
+            case "file-progress":if(value.Name!=null||value.Hash!=null||value.Code!=null||!Sized(value.Size)||value.NextChunk is null or <1 or >16384)throw new InvalidDataException("파일 진행 확인 오류다.");break;
             case "file-offer":if(!SafeName(value.Name)||!Sized(value.Size)||!Hashed(value.Hash)||value.Code!=null)throw new InvalidDataException("파일 제안 오류다.");break;
             case "file-complete":case "file-received":if(value.Name!=null||!Sized(value.Size)||!Hashed(value.Hash)||value.Code!=null)throw new InvalidDataException("파일 완료 오류다.");break;
             case "file-accept":if(value.Name!=null||value.Size!=null||value.Hash!=null||value.Code!=null)throw new InvalidDataException("파일 수락 오류다.");break;
             case "file-reject":case "file-cancel":if(value.Name!=null||value.Size!=null||value.Hash!=null||value.Code is not ("declined" or "busy" or "timeout" or "io-error" or "hash-mismatch" or "cancelled" or "too-large"))throw new InvalidDataException("파일 거부 오류다.");break;
             default:throw new InvalidDataException("파일 명령 오류다.");
         }
+        if(value.T!="file-progress"&&value.NextChunk!=null)throw new InvalidDataException("파일 명령의 추가 credit 필드다.");
         return value;
     }
     static bool Sized(long? value)=>value is >=0 and <=MaxSize;

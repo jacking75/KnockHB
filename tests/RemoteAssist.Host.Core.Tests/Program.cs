@@ -11,6 +11,7 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("file channel credit window, durable audit, denial and checksum failure preserve bounded exchange",FileChannelRegression.Run),
     ("native file handle boundary, zero/multiple chunks, collision, hash tamper and revocation",FileRegression.Run),
     ("feature permissions, bounded clipboard hashes and diagnostics revocation prevent excess collection",FeatureRegression.Run),
     ("admin requires second local approval and shared frame slots reject stale or cleared data",AdminRegression.Run),

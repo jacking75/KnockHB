@@ -236,6 +236,8 @@
           "RemoteAssist.Protocol": "[1.0.0, )",
           "SIPSorcery": "[10.0.16, )",
           "SIPSorceryMedia.FFmpeg": "[10.0.16, )",
+          "System.Diagnostics.EventLog": "[10.0.11, )",
+          "System.ServiceProcess.ServiceController": "[10.0.11, )",
           "Vortice.DXGI": "[3.8.3, )",
           "Vortice.Direct3D11": "[3.8.3, )"
         }
@@ -276,6 +278,21 @@
           "FFmpeg.AutoGen": "8.1.0",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
           "SIPSorceryMedia.Abstractions": "10.0.16"
+        }
+      },
+      "System.Diagnostics.EventLog": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "QTXEoQBzz00SFWbo7nAg1Ogd4f99lwqcO9uAJ7MYSLEUR28f6As32QktrqG2Fr9cfAfd1GjLyGYspE7Ipj7P6w=="
+      },
+      "System.ServiceProcess.ServiceController": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "khROyIQ3GAZy5MbCabfmlbvxf9nuvdveFP2XbRCteZ9Lq8OFEvImmrjV6acl1LegRu/9T6VMxi9Lr+KZu29VHg==",
+        "dependencies": {
+          "System.Diagnostics.EventLog": "10.0.11"
         }
       },
       "Vortice.Direct3D11": {

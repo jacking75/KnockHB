@@ -57,3 +57,15 @@ test('unsolicited admin active state cannot grant privileges',()=>{
   s.channel.onmessage({data:JSON.stringify({v:1,t:'admin-state',sessionId:'sid',generation:1,permissionGeneration:1,id:'spoofed',seq:2,state:'active',adminGeneration:1,inputEpoch:2})});
   assert.equal(s.viewer.closed,true);assert.equal(s.viewer.adminGeneration,undefined);
 });
+test('file approval suspends input and resolves reset versus local epoch races without accepting unknown ACKs',()=>{
+  for(const epoch of [2,3]) {
+    const s=session();s.viewer.permissions=['screen','control','file'];s.ready.permissions=[...s.viewer.permissions];s.ready.channels=['control','input','pointer','file'];
+    for(const label of ['input','pointer','file'])s.viewer.channels.set(label,{readyState:'open',bufferedAmount:0,send(){},close(){}});
+    s.viewer.acceptChannel(s.channel);s.channel.onmessage({data:JSON.stringify(s.ready)});s.viewer.resetInput();const resetId=s.viewer.pendingReset.id;
+    const id='0123456789abcdef0123456789abcdef',base={v:1,sessionId:'sid',generation:1,permissionGeneration:1,id,t:'local-approval',kind:'file'};
+    s.channel.onmessage({data:JSON.stringify({...base,seq:2,state:'pending'})});assert.equal(s.viewer.canControl(),false);
+    s.channel.onmessage({data:JSON.stringify({...base,seq:3,state:'resumed',inputEpoch:epoch})});assert.equal(s.viewer.canControl(),true);assert.equal(s.viewer.inputEpoch,epoch);
+    s.channel.onmessage({data:JSON.stringify({...base,t:'input-reset-ack',kind:undefined,id:resetId,seq:4,state:undefined,inputEpoch:2})});assert.equal(s.viewer.closed,false);
+    s.channel.onmessage({data:JSON.stringify({...base,t:'input-reset-ack',kind:undefined,id:'unknown',seq:5,state:undefined,inputEpoch:2})});assert.equal(s.viewer.closed,true);
+  }
+});

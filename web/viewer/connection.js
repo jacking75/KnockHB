@@ -44,6 +44,7 @@ export class ViewerConnection {
     this.onData = onData; this.channels = new Map(); this.dataReceived = 0; this.dataSent = 0;
     this.features=new FeatureSession(this);
     this.inputSequence = 0; this.pointerSequence = 0; this.inputEpoch = 1; this.pendingPointer = null;
+    this.supersededResets=new Map();
     this.setTimer = setTimer; this.clearTimer = clearTimer; this.now = now;
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
     this.forceRelay = forceRelay; this.iceServers = [];
@@ -202,7 +203,7 @@ export class ViewerConnection {
             || !Number.isSafeInteger(message.seq) || message.seq !== this.dataReceived + 1 || typeof message.id !== 'string' || message.id.length < 1 || message.id.length > 64)
           throw Error('다른 기능 채널 바인딩이다.');
         this.dataReceived = message.seq;
-        const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : [])];
+        const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : message.t==='local-approval'?['kind','state','inputEpoch']:[])];
         if (Object.keys(message).some(key => !allowed.includes(key))) throw Error('알 수 없는 제어 필드다.');
         if (message.t === 'data-ready') {
           if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(featureChannels(this.permissions))
@@ -216,20 +217,28 @@ export class ViewerConnection {
           this.timers.push(this.setTimer(() => {
             if (!this.live()) return;
             this.features.expire();if(!this.live())return;
-            if (this.pendingReset && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
+            if (this.pendingReset && !this.localApprovalId && !this.adminRequestId && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
             else if (this.now() - this.lastPong >= 2000) this.end('기능 채널 생존 확인 시간 초과다.', true); else this.ping();
           }, 500));
           this.timers.push(this.setTimer(() => this.flushPointer(), 16));
+        } else if(message.t==='local-approval') {
+          if(!['file','runbook'].includes(message.kind)||!this.permissions.includes(message.kind)||!['pending','resumed'].includes(message.state)||!/^[a-f0-9]{32}$/.test(message.id))throw Error('로컬 승인 응답 오류다.');
+          if(message.state==='pending'){if(this.localApprovalId||this.adminRequestId||message.inputEpoch!==undefined)throw Error('승인 UI 중복이다.');this.localApprovalId=message.id;this.localApprovalKind=message.kind;this.pendingPointer=null;}
+          else {
+            if(this.localApprovalId!==message.id||this.localApprovalKind!==message.kind||!this.permissions.includes('control')&&message.inputEpoch!==undefined)throw Error('로컬 승인 epoch·바인딩 오류다.');
+            if(this.permissions.includes('control'))this.resumeEpoch(message.inputEpoch);this.pointerSequence=0;this.pendingPointer=null;this.localApprovalId=this.localApprovalKind=null;
+          }
         } else if(message.t === 'admin-state') {
           if(!this.permissions.includes('admin')||message.id!==this.adminRequestId||!['pending','denied','active'].includes(message.state))throw Error('예상하지 않은 관리자 응답이다.');
           if(message.state === 'pending') {if(message.adminGeneration!==undefined||message.inputEpoch!==undefined)throw Error('잘못된 관리자 대기 응답이다.');}
           else {
-            if(!Number.isSafeInteger(message.inputEpoch)||message.inputEpoch!==this.inputEpoch+1)throw Error('관리자 입력 epoch 오류다.');
+            this.resumeEpoch(message.inputEpoch);
             if(message.state === 'active' ? !Number.isSafeInteger(message.adminGeneration)||message.adminGeneration<1 : message.adminGeneration!==undefined)throw Error('관리자 세대 오류다.');
             this.inputEpoch=message.inputEpoch;this.pointerSequence=0;this.pendingPointer=null;this.adminRequestId=null;
             this.adminGeneration=message.state === 'active'?message.adminGeneration:null;
           }
         } else if (message.t === 'input-reset-ack') {
+          if(this.supersededResets.get(message.id)===message.inputEpoch&&message.inputEpoch<=this.inputEpoch){this.supersededResets.delete(message.id);return;}
           if(!this.pendingReset || message.id !== this.pendingReset.id || message.inputEpoch !== this.inputEpoch) throw Error('오래되거나 다른 입력 해제 응답이다.');
           this.pendingReset = null;
         } else if (message.t !== 'data-pong' || !this.dataReady || message.id !== this.pingId) throw Error('예상하지 않은 제어 응답이다.');
@@ -238,13 +247,18 @@ export class ViewerConnection {
       } catch { this.end('잘못된 기능 채널 메시지다.', true); }
     };
   }
+  resumeEpoch(epoch) {
+    if(!Number.isSafeInteger(epoch)||(epoch!==this.inputEpoch+1&&!(this.pendingReset&&epoch===this.inputEpoch)))throw Error('로컬 승인 입력 epoch 오류다.');
+    if(this.pendingReset){this.supersededResets.set(this.pendingReset.id,this.inputEpoch);if(this.supersededResets.size>16)this.supersededResets.delete(this.supersededResets.keys().next().value);this.pendingReset=null;}
+    this.inputEpoch=epoch;
+  }
   ping() {
     const channel = this.channels.get('control');
     if (!this.live() || channel?.readyState !== 'open' || channel.bufferedAmount > 256 * 1024) { this.end('기능 채널 송신 상한이다.', true); return; }
     try { channel.send(JSON.stringify({ v: 1, t: 'data-ping', sessionId: this.sessionId, generation: 1, permissionGeneration: this.permissionGeneration, id: this.pingId, seq: ++this.dataSent })); }
     catch { this.end('기능 채널 송신 실패다.', true); }
   }
-  canControl() { return this.live() && !this.pendingReset && !this.adminRequestId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
+  canControl() { return this.live() && !this.pendingReset && !this.adminRequestId && !this.localApprovalId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
   controlCommand(t,fields={},id) {
     const channel=this.channels.get('control');
     if(!this.live()||channel?.readyState!=='open'||channel.bufferedAmount>256*1024){this.end('기능 제어 송신 상태 오류다.',true);return false;}
@@ -291,6 +305,7 @@ export class ViewerConnection {
     for (const timer of this.timers.splice(0)) this.clearTimer(timer);
     this.pendingIce.length = 0;
     this.features.clear();
+    this.supersededResets.clear();
     for (const channel of this.channels.values()) channel.close(); this.channels.clear();
     this.pc?.close();
     if (this.ws.readyState < 2) this.ws.close(); // CONNECTING is also owned

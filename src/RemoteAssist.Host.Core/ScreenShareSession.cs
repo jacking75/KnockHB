@@ -26,6 +26,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
     private readonly ILogger _log;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly PermissionGate _permissions = new();
+    private readonly LocalApprovalGate _localApproval=new();
     private readonly Channel<Func<Task>> _events = Channel.CreateBounded<Func<Task>>(128);
     private readonly TaskCompletionSource<SessionOutcome> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _endGate = new();
@@ -71,9 +72,28 @@ public sealed class ScreenShareSession : IAsyncDisposable
             {source.Dispose();throw new UnauthorizedAccessException("현재 관리자 프레임 승인이 아니다.");}
             Volatile.Write(ref _adminFrame,source);_keyframes.Request();
         }
-        _controlData!.AdminState(source.Approval.RequestId,"active",source.Approval.AdminGeneration,_inputData!.ResumeLocalPhase());
+        var epoch=_inputData!.ResumeLocalPhase();
+        _localApproval.Complete(source.Approval.RequestId,"admin");
+        _controlData!.AdminState(source.Approval.RequestId,"active",source.Approval.AdminGeneration,epoch);
     }
-    public void DenyAdmin(string requestId)=>_controlData!.AdminState(requestId,"denied",inputEpoch:_inputData!.ResumeLocalPhase());
+    public void DenyAdmin(string requestId){var epoch=_inputData!.ResumeLocalPhase();_localApproval.Complete(requestId,"admin");_controlData!.AdminState(requestId,"denied",inputEpoch:epoch);}
+    public async Task<T?> WithLocalApproval<T>(string kind,string id,Func<CancellationToken,Task<T?>> request,CancellationToken ct)
+    {
+        var capability=kind switch {"file"=>Capability.File,"runbook"=>Capability.Runbook,_=>throw new ArgumentException("지원하는 로컬 승인 종류가 아니다.")};
+        var grant=_permissions.Current;if(grant is null||!_permissions.Allows(capability,grant.Generation))throw new UnauthorizedAccessException("로컬 승인 기능의 현재 동의가 없다.");
+        if(AdminFrame!=null||!_localApproval.TryBegin(id,kind))return default;
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,_lifetime.Token);timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try
+        {
+            _inputData?.SuspendForApproval();_controlData!.LocalApproval(id,kind,"pending");
+            return await request(timeout.Token).WaitAsync(timeout.Token);
+        }
+        finally
+        {
+            if(!_lifetime.IsCancellationRequested){var epoch=_inputData?.ResumeLocalPhase();if(_localApproval.Complete(id,kind))_controlData!.LocalApproval(id,kind,"resumed",epoch);}
+            else _localApproval.Complete(id,kind);
+        }
+    }
 
     public ScreenShareSession(ScreenShareOptions options, ILoggerFactory? loggerFactory = null)
     {
@@ -192,7 +212,8 @@ public sealed class ScreenShareSession : IAsyncDisposable
         var control=new ControlDataSession(controlChannel,_permissions,grant,_monitor,reason=>EndSession(reason,true),InputLeaseObserved,message=>
         {
             if(message.T is "admin-sas" or "admin-revoke"&&AdminFrame?.Approval.AdminGeneration!=message.AdminGeneration)throw new UnauthorizedAccessException("현재 관리자 세대가 아니다.");
-            if(message.T=="admin-request")_inputData!.SuspendForApproval();
+            if(message.T=="admin-request")
+            {if(!_localApproval.TryBegin(message.Id,"admin"))throw new UnauthorizedAccessException("다른 로컬 승인 창이 열려 있다.");_inputData!.SuspendForApproval();}
             if(message.T=="admin-revoke")EndSession("지원자가 관리자 모드와 지원 세션을 해제했다.");else AdminCommand!(message);
         });_controlData=control;control.Attach();
         if(capability.HasFlag(Capability.Control))
@@ -356,6 +377,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         {
             if (Interlocked.Exchange(ref _ended, 1) != 0) return;
             _permissions.End();
+            _localApproval.End();
             try {_lifetime.Cancel();}catch(AggregateException){_log.LogWarning("취소 관찰자 오류다. 기능 권한은 이미 폐기했다.");}
             _events.Writer.TryComplete();
             _completion.TrySetResult(new SessionOutcome(reason, failed));

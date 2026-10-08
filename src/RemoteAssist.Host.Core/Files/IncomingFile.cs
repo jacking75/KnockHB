@@ -12,6 +12,7 @@ public sealed class IncomingFile:IDisposable
     readonly object gate=new();
     readonly IncrementalHash hash;
     long received;uint sequence;bool completed,disposed;
+    public long Received {get{lock(gate)return received;}}
     public IncomingFile(FileMessage offer,PermissionGate permissions,long generation,Stream stream,Action commit,Action abort)
     {
         _=FileMessage.Parse(ProtocolJson.Encode(offer));if(offer.T!="file-offer")throw new InvalidDataException("수신 제안이 아니다.");
@@ -24,7 +25,7 @@ public sealed class IncomingFile:IDisposable
         lock(gate)try
         {
         ObjectDisposedException.ThrowIf(disposed,this);if(completed)throw new InvalidDataException("확정 후 청크를 거부한다.");
-        var header=FileChunkHeader.Decode(packet);if(header.TransferId!=Guid.ParseExact(offer.Id,"N")||header.Sequence!=sequence||header.Length<1||received+header.Length>offer.Size)throw new InvalidDataException("파일 청크 순서·ID·크기 오류다.");
+        var header=FileChunkHeader.Decode(packet);if(header.TransferId!=Guid.ParseExact(offer.Id,"N")||header.Sequence!=sequence||header.Length<1||header.Length!=Math.Min(FileChunkHeader.MaxPayload,offer.Size!.Value-received))throw new InvalidDataException("파일 청크 순서·ID·크기 오류다.");
         var payload=packet[FileChunkHeader.Size..].ToArray();
         if(!permissions.Execute(Capability.File,generation,()=>stream.Write(payload)))throw new UnauthorizedAccessException("파일 수신 승인이 철회됐다.");
         hash.AppendData(payload);received+=header.Length;sequence++;

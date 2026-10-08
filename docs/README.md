@@ -78,7 +78,7 @@ RemoteAssist는 대상자의 동의를 받아 Windows PC를 진단하고 조작�
 | 제품 구조·현재 동작·목표 구조 | [아키텍처](architecture.md), [기술 사양](technical-specification.md) |
 | JSON 필드·메시지 의미 | [protocol.md](protocol.md) 하나가 기준 |
 | 패키지 고정값 | [Directory.Packages.props](../Directory.Packages.props), [go.mod](../server/signaling/go.mod) |
-| 태스크·완료 상태 | [통합 구현계획](../원격제어-구현계획.md): E01~E41 구현·F01~F12 최종 E2E. 기존 T는 대응표, 과거 PoC는 이력으로 관리 |
+| 태스크·완료 상태 | [통합 구현계획](../원격제어-구현계획.md): E01~E41 구현·코드 리뷰 → V01~V41 후속 실행 검증 → F01~F12 별도 최종 E2E. 기존 T는 대응표, 과거 PoC는 이력으로 관리 |
 | 발견된 결함·회귀 조건 | [리뷰·태스크 리스크](../docs_working/code-review-task-risks-2026-10-07.md) |
 | 실측값과 과거 검증 | [stack.md](stack.md)의 날짜별 기록; 현재 환경의 보증으로 읽지 않는다 |
 

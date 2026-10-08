@@ -43,13 +43,14 @@ internal sealed class ControlDataSession(RTCDataChannel channel,PermissionGate p
     }
     public void ResetAcknowledged(InputMsg message)=>Send("input-reset-ack",message.Id,inputEpoch:message.InputEpoch);
     public void AdminState(string id,string state,long? adminGeneration=null,long? inputEpoch=null)=>Send("admin-state",id,state:state,adminGeneration:adminGeneration,inputEpoch:inputEpoch);
-    void Send(string type,string id,string[]? channels=null,string[]? capabilities=null,MonitorDescriptor? descriptor=null,long? inputEpoch=null,string? state=null,long? adminGeneration=null)
+    public void LocalApproval(string id,string kind,string state,long? inputEpoch=null)=>Send("local-approval",id,inputEpoch:inputEpoch,state:state,kind:kind);
+    void Send(string type,string id,string[]? channels=null,string[]? capabilities=null,MonitorDescriptor? descriptor=null,long? inputEpoch=null,string? state=null,long? adminGeneration=null,string? kind=null)
     {
         lock(gate)
         {
             if(channel.readyState!=RTCDataChannelState.open||channel.bufferedAmount>256*1024)throw new IOException("기능 채널 송신 상한/상태 오류다.");
             var message=new ControlMessage {T=type,SessionId=binding.SessionId,Generation=1,PermissionGeneration=binding.Generation,Sequence=sent+1,Id=id,
-                Channels=channels,Permissions=capabilities,Monitor=descriptor,InputEpoch=inputEpoch,State=state,AdminGeneration=adminGeneration};
+                Channels=channels,Permissions=capabilities,Monitor=descriptor,InputEpoch=inputEpoch,State=state,AdminGeneration=adminGeneration,Kind=kind};
             var bytes=JsonSerializer.SerializeToUtf8Bytes(message);ControlMessage.Parse(bytes);
             if(!permissions.Execute(binding.Capabilities,binding.Generation,()=>channel.send(System.Text.Encoding.UTF8.GetString(bytes))))throw new UnauthorizedAccessException("기능 권한이 폐기됐다.");
             sent++;

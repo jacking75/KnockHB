@@ -11,6 +11,7 @@ static class FeatureRegression
     static void Reject(Action action){try{action();}catch{return;}throw new Exception("expected rejection did not occur");}
     public static async Task Run()
     {
+        var approvals=new LocalApprovalGate();var request=Guid.NewGuid().ToString("N");Check(approvals.TryBegin(request,"file")&&!approvals.TryBegin(Guid.NewGuid().ToString("N"),"admin"),"approval dialogs overlapped");Reject(()=>approvals.Complete(Guid.NewGuid().ToString("N"),"file"));Check(approvals.Complete(request,"file"),"current local approval not consumed");approvals.End();Check(!approvals.TryBegin(request,"file")&&!approvals.Complete(request,"file"),"ended approval reopened");
         foreach(var invalid in new[]{0,2,4,5,256})Reject(()=>FeatureContract.Permissions(invalid));
         foreach(var invalid in new[]{new[]{"chat","screen"},new[]{"diagnostics","diagnostics"},new[]{"unknown"}})Reject(()=>FeatureContract.ParsePermissions(invalid));
         Check(FeatureContract.Channels(32).SequenceEqual(new[]{"control","telemetry"}),"diagnostics only demanded input/video");

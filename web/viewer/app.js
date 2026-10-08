@@ -54,7 +54,8 @@ el['join-form'].addEventListener('submit', event => {
     onStats: text => { el.stats.textContent = text; },
     onData: message => {
       updateFeatures(connection,message);
-      if(message.t==='input-paused'||message.t==='admin-state')input?.clearLocalState();
+      if(message.t==='input-paused'||message.t==='admin-state'||message.t==='local-approval')input?.clearLocalState();
+      if(message.t==='local-approval')status(message.state==='pending'?'대상자의 건별 승인을 기다린다. 원격 입력을 일시 중단한다.':'대상자의 승인 응답을 처리했다.');
       if(message.t==='admin-state')status(message.state==='active'?'관리자 지원 중 · 보안 화면은 대상자가 즉시 종료하거나 30초 뒤 종료된다.':message.state==='denied'?'대상자가 관리자 지원을 거부했다.':'대상자의 별도 관리자 승인을 기다리는 중이다. 입력을 일시 중단한다.');
       el.session.dataset.controlState = message.t;
       const ready=connection.canControl();el.session.dataset.inputReady=String(ready);

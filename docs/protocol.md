@@ -40,7 +40,17 @@ reliable 마우스 button/wheel 전이는 필수 `pointerBarrier`(0 이상의 sa
 
 file 채널의 JSON은 공통 envelope와 `file-offer`(name,size,hash), `file-accept`, `file-reject`(code), `file-complete`(size,hash), `file-received`(size,hash), `file-cancel`(code)다. id는 소문자 GUID N이며 binary header의 transfer UUID와 일치한다. name은 Windows의 안전한 파일명 한 개이며 경로·ADS·장치명·끝의 공백/마침표를 금지한다. size는 0~256MiB 정수, hash는 전체 파일 SHA-256 소문자 hex다. 청크 seq는 0부터 연속 증가하며 길이는 1~16384바이트다. 빈 파일은 청크 없이 complete로 진행한다. JSON의 seq는 채널 방향별 독립 순번이다. file-reject/cancel code는 `declined,busy,timeout,io-error,hash-mismatch,cancelled,too-large`만 허용한다.
 
+수신자는 저장한 누적 byte count인 size와 다음 청크 순번인 nextChunk를 포함한 `file-progress`를 4개 청크마다 또는 마지막 청크 뒤 보낸다. 중간 청크는 항상 16384바이트이며 마지막 청크만 작을 수 있다. sender는 수신 확인되지 않은 청크를 16개 이내로 제한하고 credit를 10초 안에 받지 못하면 중단한다. nextChunk는 증가해야 하며 보낸 청크 수를 넘거나 대응 size가 다르면 거부한다. 이것은 SCTP 자체 수신 ACK와 별개로 브라우저 파일 쓰기의 완료를 반영한다.
+
+종료한 최근 256개 전송의 취소·해당 size/hash의 늦은 receipt와 이미 전송 중이던 binary는 저장·재실행 없이 폐기한다. 이전 offer/accept/complete 재생으로 전송을 재개하지 않는다.
+
 동시에 진행하는 전송은 방향을 합쳐 1개이며 최근 256개 ID를 재사용하지 않는다. 개별 수락은 30초 기한, 수락 후 무진행 10초·전체 10분 상한이다. sender는 bufferedAmount 64KiB에서 대기하고 256KiB 이상이면 중단한다. receiver 큐는 최대 32개 청크이며 늦거나 중복·누락·다른 UUID·size 초과 청크를 즉시 거부한다. complete를 검증해 저장을 확정한 뒤 file-received를 보낸다. offer와 accept 이전 본문은 허용하지 않는다. 취소/철회/오류는 저장을 확정하지 않으며 임시 파일을 삭제한다. 재연결에 전송을 승계하지 않는다.
+
+파일 수락·송신 파일 선택·Runbook 승인 UI를 열기 전에 Host가 원격 입력을 중단하고 보유 키를 해제한다. control의 `local-approval`은 kind=`file|runbook`, state=`pending|resumed`를 보낸다. 요청 ID는 UI correlation ID이며 pending에는 inputEpoch가 없고, resumed에는 control 승인 때 증가한 inputEpoch를 포함한다. control 권한이 없으면 resumed에도 inputEpoch가 없다. Viewer는 pending부터 입력과 관리자 요청을 막고 resumed에서 로컬 보유 상태와 포인터 순번을 비운다. 관리자 승인과 다른 로컬 승인 UI를 겹치지 않으며 관리자 활성 상태에서 파일 선택/수락은 거부한다. 사용자 응답은 30초 제한이고 취소·세션 종료 뒤 늦은 UI 응답으로 파일을 실행하지 않는다.
+
+파일 감사 IPC는 `file-audit`→`file-audit-ack`다. body는 `id,sessionId,permissionGeneration,phase,direction,size,outcome`이며 phase=`started|finished`, direction=`to-host|from-host`, outcome=`allowed|denied|completed|failed|stopped`만 허용한다. started는 allowed, finished는 나머지 결과다. 서비스의 보호 저널 기록·flush ACK 전에 offer/accept/본문을 보내지 않는다. 완료 감사는 저장 확정/상대 receipt 뒤 기록한다. 감사 실패는 세션을 종료하며 이미 확정한 정상 파일을 임의 삭제하지 않는다. SIPSorcery 10.0.16에는 bufferedamountlow 이벤트가 구현되지 않아 Host는 10ms 간격으로 bounded bufferedAmount를 확인하며 10초 무진행 제한을 함께 적용한다.
+
+로컬 승인과 Viewer reset이 경합하면 resumed/관리자 응답의 Host epoch는 Viewer 현재 값+1이어야 한다. Viewer reset ACK가 아직 대기 중이면 Host가 그 reset을 처리하기 전에 로컬 phase를 전환했을 수 있으므로 현재 값과 같은 epoch도 허용한다. 이때 reset 대기를 폐기하고 마지막 16개 폐기 reset ID/epoch와 정확히 맞는 늦은 ACK만 무시한다. 미지 ACK·다른 epoch는 거부한다. pending 로컬 승인 중 reset ACK의 1초 타임아웃을 중단하며 control lease는 계속 확인한다. 새 phase 뒤의 이전 epoch 입력은 Host가 폐기한다.
 
 Host의 파일 I/O는 일반 사용자 Helper에서만 수행한다. 로컬 선택 경로를 Viewer에게 전달하지 않는다. 1차 저장 대상은 로컬 고정 NTFS 볼륨이다. 선택 폴더의 조상을 handle-relative NtCreateFile로 열어 reparse를 거부하고 rename/delete 공유를 막는다. 임시 파일은 CreateNew·DeleteOnClose로 만들며 hash/size 검증과 flush 후 같은 폴더 안에 handle 기반 NTFS hard link를 원자적으로 생성해 확정한다. 최종 이름이 존재하면 실패한다. 임시 이름은 정상 종료와 프로세스 강제 종료 때 OS가 삭제하고, 확정 이름만 남는다. 기존 파일 자동 덮어쓰기·실행·SYSTEM 쓰기를 금지한다. Viewer는 사용자 gesture로 선택한 File System Access write stream을 우선 쓰고 검증 후 close/실패 시 abort한다. API가 없으면 8MiB 이하만 메모리 수신·명시적 다운로드로 제한하며 큰 파일은 거부한다. upload hash는 작은 청크로 계산하고 전체 파일을 무제한 arrayBuffer로 적재하지 않는다. 감사는 transfer ID·방향·크기·결과만 기록하고 파일 이름/경로/내용은 기록하지 않는다.
 
