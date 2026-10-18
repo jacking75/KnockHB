@@ -11,7 +11,7 @@
 - `docs_working/`: 개발 과정에서 임시로 만드는 리뷰·조사·분석·작업 메모·태스크 리스크 문서. 앞으로 새 임시 개발 문서는 여기에 작성한다.
 - 통합 구현계획은 사용자 지시에 따라 `docs_working/원격제어-구현계획.md`에 둔다.
 - RemoteAssist 제품 구현·검증 진행 상태는 `docs_working/원격제어-구현계획.md`에서 관리한다. E01~E41은 구현·코드 리뷰, V01~V41은 E 전체 완료 뒤 실행 검증, F01~F12는 V 뒤 별도 최종 E2E이며, 기존 T는 대응표와 과거 기록으로 보존한다.
-- 개발자용 시험 도구 DesktopTestDriver는 저장소 루트의 독립 `desktop-test-driver/` 프로젝트로 구현한다. 조작 PC의 Server와 조작될 시험 PC의 Client로 구성한다. 세부 구현 D01~D20의 진행 상태는 `docs_working/e2e-desktop-driver-plan.md` 상단 목록에서 관리하고, RemoteAssist 연동 H01~H14 마일스톤은 통합 구현계획에서 추적한다. 제품 구현계획 상단의 전체 태스크 목록은 본문 상태 변경 후 `python scripts/update-task-overview.py`로 갱신하고 `--check`로 일치를 확인한다.
+- 개발자용 시험 도구 DesktopTestDriver는 저장소 루트의 독립 `desktop-test-driver/` 프로젝트로 구현한다. 조작 PC의 Server와 조작될 시험 PC의 Client로 구성하며, Server가 SSH로 시험 PC에 Client를 배치한다. 세부 구현 D01~D23의 진행 상태는 `docs_working/e2e-desktop-driver-plan.md` 상단 목록에서 관리하고, RemoteAssist 연동 H01~H14 마일스톤은 통합 구현계획에서 추적한다. 제품 구현계획 상단의 전체 태스크 목록은 본문 상태 변경 후 `python scripts/update-task-overview.py`로 갱신하고 `--check`로 일치를 확인한다.
 
 ## E2E 검증 준비 — 필수 지침
 
