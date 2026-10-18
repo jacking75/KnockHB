@@ -4,7 +4,6 @@
 - [x] C# 계약·고장 주입 검사 18개 묶음을 통과한다.
 - [x] loopback SSH/SFTP 검사 11개를 통과한다.
 - [x] 게시된 Server로 inventory CLI 검증을 통과한다.
-- [ ] D08의 실제 Windows VM 배치·일반 콘솔 기동·제거를 검증한다.
 
 검사 종료 시각은 시스템 시계 기준 2026-10-18 19:48:23 KST다. `verify.ps1`은 제품과 실제 데스크톱 입력을 실행하지 않았다. 이 문서는 실행 결과와 검증 한계를 기록하며 상세 D 상태는 [구현계획](../../docs_working/e2e-desktop-driver-plan.md)의 목록을 원본으로 삼는다.
 
@@ -36,10 +35,10 @@ Set-Location C:/github_dev/KnockHB/desktop-test-driver
 
 C# 검사 18개 묶음, Python 검사 11개가 모두 통과했고 게시된 Server의 `validate inventory/example.json`은 `valid:true, machines:1`을 반환했다. 주입 명령은 접수 증거와 기능 판정을 분리하며 `verified:false`를 반환한다.
 
-## 미검증과 차단
+## 후속 실제 머신 E2E
 
-D08의 원래 완료 조건에는 로컬 VM 실검증도 포함되므로 체크박스를 남겼다. `Get-VM`은 현재 계정의 권한 부족으로 거부됐고 `vmrun.exe list`는 실행 VM 0대를 반환했다. 승인된 Windows VM inventory·자격증명·콘솔 세션·복귀 증거가 확보되지 않아 VM을 새로 만들거나 기존 VM을 시작하지 않았다. 이 상황을 loopback 모의 SSH 성공으로 대체하지 않는다.
+D01~D11의 완료 범위는 구현과 로컬·모의 검증이다. D08은 SSH 배치·전송·제어 CLI/API 구현과 loopback SSH/SFTP 검사로 완료한다. 실제 시험 머신의 설치·콘솔 기동·관측·입력·복귀·제거는 뒤의 D21~D23 E2E에서 검증한다.
 
-실제 GDI 화면·UIA·DPI 및 SendInput, Interactive 예약 작업의 콘솔 기동, 실제 물리 입력 경합·키 복원, 다른 계정/RDP, 실제 VM/KVM 복귀는 NOT RUN이다. 이 항목은 D08 잔여 VM 검사와 D13/D19/D21/D22에서 준비 계획과 함께 확인해야 한다. UAC·SAS·잠금·재부팅·OS hang은 실제 R2 복귀 실증 전 BLOCKED다. D12~D23과 RemoteAssist H/V/F를 완료 처리하지 않는다.
+실제 GDI 화면·UIA·DPI 및 SendInput, Interactive 예약 작업의 콘솔 기동, 물리 입력 경합·키 복원, 다른 계정/RDP와 독립 복귀는 실제 머신 E2E의 검증 대상이다. UAC·SAS·잠금·재부팅·OS hang은 실제 R2 복귀 실증 뒤 수행한다. D12~D23과 RemoteAssist H/V/F는 각 단계의 완료 조건에 따라 별도로 판정한다.
 
 코드 리뷰에서는 timeout·메시지 상한, 제품 참조 부재, 범위 밖 경로/재분석 지점 거부, 미정리 예약 유지, 부분 주입 ledger 보존, 소유 PID·생성 시각·이미지 hash 확인, 인증 비밀의 출력·수집 제외를 확인했다. 실제 Windows 동작과 보안 수용이 끝났다는 의미는 아니다.

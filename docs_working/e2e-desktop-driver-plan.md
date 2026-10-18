@@ -6,29 +6,29 @@
 
 ## 구현 태스크 목록
 
-이 목록은 독립 도구의 세부 진행 상태 원본이다. 완료할 때 구현 파일·검사 명령·증거 경로를 해당 항목에 덧붙인다. **[1PC]는 개발 PC 한 대의 코드·모의 환경·로컬 VM에서 완료할 수 있고, [2PC]는 조작 PC의 Server와 별도 시험 PC의 Client가 실제로 필요한 실행 검증**이다. 1PC 결과를 2PC PASS로 승계하지 않는다. 2PC 항목은 맨 뒤에 모아 한 번의 준비·배치 캠페인에서 순서대로 수행한다. [통합 구현계획](원격제어-구현계획.md)의 H01~H14는 RemoteAssist 연동 마일스톤이며 D 완료만으로 H 또는 V/F를 완료 처리하지 않는다.
+이 목록은 독립 도구의 세부 진행 상태 원본이다. 완료할 때 구현 파일·검사 명령·증거 경로를 해당 항목에 덧붙인다. **[1PC]는 개발 PC 한 대의 코드·모의 환경에서 완료하고, [2PC]는 조작 PC의 Server와 별도 실제 시험 머신의 Client를 사용하는 실행 검증**이다. 1PC 결과를 2PC PASS로 승계하지 않는다. 실제 머신의 배치·입력·복귀 검증은 맨 뒤 D21~D23에 모아 한 번의 준비·배치 캠페인에서 순서대로 수행한다. [통합 구현계획](원격제어-구현계획.md)의 H01~H14는 RemoteAssist 연동 마일스톤이며 D 완료만으로 H 또는 V/F를 완료 처리하지 않는다.
 
 ### 1PC — 구현·계약·로컬 리허설
 
 - [x] D01 [1PC] 독립 프로젝트 경계, 지원 OS/세션, 위임·권한·위협 모델과 명령 계약을 확정한다. [계약](../desktop-test-driver/docs/contracts-9.md)을 문서 리뷰했다.
 - [x] D02 [1PC] 저장소 루트의 독립 디렉터리와 자체 빌드·패키징·버전 체계를 만든다. `desktop-test-driver/build.ps1 -Package`의 독립 빌드·win-x64 게시·0.1.0 파일별 hash manifest 생성과 대조가 통과했다.
 - [x] D03 [1PC] 머신 inventory, 역할, 예약·충돌 방지, 배치와 구성 검증을 구현한다. `Inventory.cs`의 역할 검증·원자 예약·미정리 예약 유지·동시 경합 검사가 통과했다.
-- [x] D04 [1PC] Client의 일반 권한 콘솔 실행부, 인증된 로컬 IPC, 세션 변경 감지를 구현한다. `Client`·`Client.Broker`·`Ipc.cs`를 구현했다. 실제 로컬 pipe의 정상 전달과 인증 거부 검사가 통과했다. 실제 콘솔 기동은 D13 이후다.
-- [x] D05 [1PC] 화면·창·UIA·모니터·DPI·foreground 관측과 프레임 신원 검증을 구현한다. `WindowsDesktop.cs`에 GDI PNG·timeout UIA·프로세스 생성 시각/hash를 구현했다. 프레임 계약 모의 검사가 통과했으며 실제 화면 실증은 D13 이후다.
+- [x] D04 [1PC] Client의 일반 권한 콘솔 실행부, 인증된 로컬 IPC, 세션 변경 감지를 구현한다. `Client`·`Client.Broker`·`Ipc.cs`를 구현했다. 실제 로컬 pipe의 정상 전달과 인증 거부 검사가 통과했다. 실제 시험 머신의 콘솔 기동은 D21에서 확인한다.
+- [x] D05 [1PC] 화면·창·UIA·모니터·DPI·foreground 관측과 프레임 신원 검증을 구현한다. `WindowsDesktop.cs`에 GDI PNG·timeout UIA·프로세스 생성 시각/hash를 구현했다. 프레임 계약 모의 검사가 통과했으며 실제 시험 머신의 화면 실증은 D22에서 수행한다.
 - [x] D06 [1PC] 키·마우스·휠·드래그·문자 입력과 소유 키/버튼 ledger를 구현한다. `Input.cs`·`WindowsInput`·`CommandEngine`의 Unicode·음수 원점·부분 주입·해제 실패 검사가 통과했다. 실제 OS 입력은 실행하지 않았다.
 - [x] D07 [1PC] 프레임·창·세션 전제 조건, 제한된 wait, 멱등 명령과 오류 코드를 구현한다. stale·DPI·HWND 재사용·foreground·세션 검증, wait 중 stop 우선, 재전송 멱등성·순번 검사가 통과했다.
-- [ ] D08 [1PC] Server의 SSH 배치·전송·제어 CLI/API를 모의 SSH 대상과 로컬 VM으로 구현·검사한다. **구현·모의 SSH/SFTP 검증 완료, 로컬 Windows VM 실검증 BLOCKED**다. `Server`·`SshTransport`·`transport/ssh_transport.py`와 Python CLI를 구현했고 실제 loopback SSH/SFTP 대상의 host key pin·배치 hash·응답 유실 검사가 통과했다. Hyper-V 조회 권한 부족, VMware 실행 VM 0대로 VM 완료 조건을 미충족했다.
+- [x] D08 [1PC] Server의 SSH 배치·전송·제어 CLI/API를 구현하고 모의 SSH 대상으로 검사한다. `Server`·`SshTransport`·`transport/ssh_transport.py`와 Python CLI를 구현했고 실제 loopback SSH/SFTP 대상의 host key pin·배치 hash·응답 유실·rollback·수집·제거 검사가 통과했다. 실제 시험 머신의 배치·기동·제거는 D21~D23 E2E에서 검증한다.
 - [x] D09 [1PC] Server의 다중 Client 예약·barrier·deadline·전역 종료 정책을 모의 노드로 구현·검사한다. `Campaign.cs`의 barrier·최초 실패·단조 deadline·전체 stop·미정리 차단 검사가 통과했다.
-- [x] D10 [1PC] Client의 독립 watchdog, 강제 stop, 입력 해제와 소유 자원 정리를 로컬 고장 주입으로 검증한다. 별도 watchdog과 가짜 입력 backend에서 Client/Watchdog 프로세스 각각 강제 종료·소유 PID/hash 정리 검사가 통과했다. 실제 키 해제 실증은 D13/D19다.
+- [x] D10 [1PC] Client의 독립 watchdog, 강제 stop, 입력 해제와 소유 자원 정리를 로컬 고장 주입으로 검증한다. 별도 watchdog과 가짜 입력 backend에서 Client/Watchdog 프로세스 각각 강제 종료·소유 PID/hash 정리 검사가 통과했다. 실제 시험 머신의 키 해제 실증은 D22에서 수행한다.
 - [x] D11 [1PC] 복귀 등급·UAC/잠금/재부팅 지원 계약과 외부 콘솔 어댑터를 설계·모의 검증한다. `RecoveryGate`·`IRecoveryAdapter`·`ExternalConsoleAdapter`의 유한 호출·모의 복귀 검사가 통과했다. 모의 receipt는 실환경 위험 시험을 승인하지 않는다.
 - [ ] D12 [1PC] 회차별 권한 위임, 시험 범위 allowlist, 감사·비밀·증거 보관 정책을 구현한다.
-- [ ] D13 [1PC] 제품 없는 모의 창·로컬 VM에서 기능·고장 주입 자체 검증을 완료한다.
+- [ ] D13 [1PC] 제품 없는 모의 창·모의 노드에서 기능·고장 주입 자체 검증을 완료한다.
 - [ ] D14 [1PC] 범용 시나리오 정의와 플러그인/어댑터 계약, 결과 판정 엔진을 구현한다.
 - [ ] D15 [1PC] RemoteAssist 어댑터의 실제 Tray 동의·거절·종료와 Viewer 조작 로직을 구현·로컬 검증한다.
 - [ ] D16 [1PC] RemoteAssist 영상·입력·권한·파일·채팅·모니터·품질의 출처별 관측 로직을 구현·로컬 검증한다.
 - [ ] D17 [1PC] 설치/업데이트/rollback·서비스·UAC/SAS·TLS/TURN/NAT·장시간 시험 fixture와 복귀 절차를 작성·모의 검증한다.
 - [ ] D18 [1PC] RemoteAssist V/F 매핑, 고정 실행 계획, 증거 묶음, 리포트와 수용 기준을 검토한다.
-- [ ] D19 [1PC] 입력 없는 준비 검사와 로컬 VM 정리/복귀 리허설을 완료한다. 실제 두 PC 제품 PASS로 세지 않는다.
+- [ ] D19 [1PC] 입력 없는 준비 검사와 모의 환경의 정리/복귀 리허설을 완료한다. 실제 두 PC 제품 PASS로 세지 않는다.
 - [ ] D20 [1PC] 다른 제품/시험에 사용할 예제와 독립 설치·제거·운영 문서를 완성한다.
 
 ### 2PC — 맨 마지막 공동 캠페인
@@ -37,7 +37,7 @@
 - [ ] D22 [2PC] 제품 없이 Server↔Client 화면·입력·명령·중단·장애 복귀 E2E를 한 배치에서 검증한다.
 - [ ] D23 [2PC] 같은 배치에서 RemoteAssist의 두 PC 필수 V/F 시나리오를 고정된 회차별로 실행·수집·정리한다. 추가 GPU/VM/NAT/장시간 요구는 해당 환경이 확보된 별도 하위 회차로 판정한다.
 
-작성일: 2026-10-18. 현재 단계: D01~D11 코드 구현과 로컬·모의 검증 완료, D08의 Windows VM 실검증은 환경 미확보로 BLOCKED다. [운영 문서](../desktop-test-driver/README-10.md)와 [검증 증거](../desktop-test-driver/docs/verification-11.md)를 참조한다.
+작성일: 2026-10-18. 현재 단계: D01~D11 구현과 로컬·모의 검증 완료다. 실제 시험 머신의 배치·입력·복귀는 뒤의 D21~D23 E2E에서 검증한다. [운영 문서](../desktop-test-driver/README-10.md)와 [검증 증거](../desktop-test-driver/docs/verification-11.md)를 참조한다.
 
 사용자 요청에 따라 기존 E2E는 종료한 상태를 유지한다. 이전 회차의 서비스·설치·시험 작업 제거와 정상 화면 복귀는 기존 기록이다. 이번 구현에서는 제품 실행·실제 화면 입력·원격 PC 배치를 하지 않았다. 독립 도구의 D 태스크는 위 목록에서, RemoteAssist 연동의 H 태스크는 통합 구현계획에서 각각 추적하며 H/V/F를 완료로 승격하지 않는다.
 
@@ -222,7 +222,7 @@ r5는 사용자의 승인 응답 후 영상 timeout이 발생했고 Helper 조�
 | H05 | H02 | D03/D08/D09 다중 Client SSH 중계·CLI·예약·barrier·명령 멱등성을 모의 노드로 구현·검사. 실제 SSH 설치는 D21 |
 | H06 | H04,H05 | D07 프레임/창/foreground 전제 조건과 조건부 wait, stale/포커스 탈취/부분 주입 차단 |
 | H07 | H04,H05 | D10/D11 독립 Client watchdog·긴급 stop·복귀 ledger의 로컬 고장 주입. 실제 두 PC 장애 복귀는 D22 |
-| H08 | H06,H07 | D13 제품 없는 한 PC/로컬 VM 자체 검증. 두 PC 실증은 D22/H12로 이관 |
+| H08 | H06,H07 | D13 제품 없는 한 PC 모의 환경 자체 검증. 실제 머신 실증은 D22/H12에서 수행 |
 | H09 | H08 | D14/D15 실제 Tray 동의/거절/종료 어댑터. 요청 신원/토글/결과 검증 |
 | H10 | H08 | 기존 Helper 실패 진단·관측 보완 및 제품 원인 수정·영향 회귀. 원인 미확정이면 제품 재시험 차단 |
 | H11 | H09,H10 | D16/D18 Viewer 입력/대상자 입력 분리와 RemoteAssist V/F별 출처·판정·시나리오 고정 |
@@ -237,18 +237,18 @@ r5는 사용자의 승인 응답 후 영상 timeout이 발생했고 Helper 조�
 | 단계 | D 태스크 | 게이트와 완료 증거 |
 |---|---|---|
 | A 계약·격리 | D01~D03,D12 | 독립 빌드·inventory·위임/권한·명령/복귀 계약 리뷰. RemoteAssist 없이 설치 가능 |
-| B 단일 머신 핵심 | D04~D08 | 실제 일반 desktop의 시험 창 관측·조작, 제한/오류/입력 해제 재현 |
-| C 무인 기반의 로컬 검증 | D09~D13 | 모의 여러 노드·로컬 VM으로 예약·barrier·stop·watchdog·복귀 상태기계를 검증. 실제 두 PC PASS는 아님 |
+| B 단일 머신 핵심 | D04~D08 | 모의 시험 창의 관측·조작 계약, 제한/오류/입력 해제 재현. 실제 머신 실증은 D22 |
+| C 무인 기반의 로컬 검증 | D09~D13 | 모의 여러 노드로 예약·barrier·stop·watchdog·복귀 상태기계를 검증. 실제 두 PC PASS는 아님 |
 | D 범용 자동화 | D14,D20 | 시나리오·어댑터 계약, 다른 예제 앱, 독립 설치/제거/운영 문서로 재사용 확인 |
 | E RemoteAssist 어댑터 | D15~D18 | V/F 조건별 동작·관측·판정·증거·복귀 경로를 코드 리뷰 |
-| F 1PC 준비 마감 | D19 | 입력 없는 준비 검사·로컬 VM 정리/복귀 리허설. 두 PC 배치 전 게이트 |
+| F 1PC 준비 마감 | D19 | 입력 없는 준비 검사·모의 환경 정리/복귀 리허설. 실제 머신 배치 전 게이트 |
 | G 두 PC 공동 캠페인 | D21~D23 | SSH Client 설치 한 번, 제품 없는 두 PC 검증, 고정된 RemoteAssist V/F 하위 회차와 최종 제거/복귀 |
 
 D13의 1PC 자체 검증에는 모의 전송 끊김, Server/Client 콘솔 실행부/Client watchdog 중 하나의 종료, heartbeat 만료, 중복 명령, stale 프레임, DPI/모니터 변경, foreground 탈취, Session 전환, 사용자 입력 경합, 부분 정리, 시간 상한을 포함한다. D22에서 동일 경계의 실제 두 PC 실증을 수행한다. 실제 제품 화면 입력·서비스·UAC 시험은 별도 실행 계획과 복귀 증거를 갖춘 뒤에만 시작한다.
 
-D18에서 시나리오별 목적·대응 V/F·전제 조건·정확한 단계·PASS/FAIL·증거·중단·정리·예상 시간·기존 검사 재사용 여부를 고정한다. D19는 한 PC/로컬 VM에 한정한다. D21 전에는 후보 commit/바이너리 hash, 양쪽 설정·인증서·포트·계정/Session/desktop·창/좌표·소유 PID/경로·수집/복귀 수단을 입력 없이 확인한다. 준비 검사 성공이나 Client 프로세스 기동을 기능 PASS로 세지 않는다.
+D18에서 시나리오별 목적·대응 V/F·전제 조건·정확한 단계·PASS/FAIL·증거·중단·정리·예상 시간·기존 검사 재사용 여부를 고정한다. D19는 한 PC의 모의 환경에 한정한다. D21 전에는 후보 commit/바이너리 hash, 양쪽 설정·인증서·포트·계정/Session/desktop·창/좌표·소유 PID/경로·수집/복귀 수단을 입력 없이 확인한다. 준비 검사 성공이나 Client 프로세스 기동을 기능 PASS로 세지 않는다.
 
-1. D01~D20을 한 PC/로컬 VM에서 끝낸다. 입력 없는 계약 검사와 모의 노드, InputTarget 자체 검증은 각기 필요한 화면 예산과 사전 계획을 적용한다. 이 단계에서는 실제 두 PC E2E를 시작하지 않는다.
+1. D01~D20의 구현·준비 검증을 한 PC의 모의 환경에서 끝낸다. 입력 없는 계약 검사와 모의 노드·시험 창의 자체 검증을 수행한다. 실제 시험 머신의 관측·입력·복귀 검증은 D21~D23 E2E에서 수행한다.
 2. D21에서 고정 후보의 Client를 SSH로 시험 PC에 한 번 배치하고 입력 없는 준비 신호·독립 복귀를 확인한다. 설치가 실패하면 D22/D23을 시작하지 않는다.
 3. D22에서 제품 없는 두 PC 경로를 실증한다. 도구 자체가 실패하면 캠페인을 중단·정리하고 제품 시험을 시작하지 않는다.
 4. D23에서 RemoteAssist 일반 desktop V/F를 고정 순서로 수행한다. 화면 점유 회차는 각각 목표 10분, 절대 상한 15분이다. 첫 실패에서 전체 캠페인을 중단하며 같은 배치에서 재시도·추가 시나리오를 하지 않는다.

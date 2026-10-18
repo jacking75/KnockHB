@@ -18,6 +18,6 @@ try {
     } finally { $env:DTD_TEST_PACKAGE = $previousPackage }
     & (Join-Path $package 'Server/Server.exe') validate inventory/example.json | Tee-Object -FilePath (Join-Path $evidence 'cli.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Published CLI validation failed' }
-    @{ at=[DateTimeOffset]::UtcNow.ToString('O'); package=$package; evidence=$evidence; realDesktopInput=$false; windowsVm='NOT RUN'; twoPc='NOT RUN' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'summary.json') -Encoding UTF8
+    @{ at=[DateTimeOffset]::UtcNow.ToString('O'); package=$package; evidence=$evidence; realDesktopInput=$false; twoPc='NOT RUN'; plannedE2e='D21-D23 physical machines' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'summary.json') -Encoding UTF8
     Write-Output "Evidence: $evidence"
 } finally { Pop-Location }
