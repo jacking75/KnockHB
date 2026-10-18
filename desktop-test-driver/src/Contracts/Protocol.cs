@@ -7,7 +7,7 @@ namespace DesktopTestDriver;
 
 public static class Wire
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const int MaxMessage = 1_048_576;
     public static void ConfigureConsole()
     {
@@ -70,6 +70,14 @@ public sealed record UiNode(string Name, string AutomationId, string ControlType
 public sealed record Observation(int Session, string Desktop, long Foreground, WindowIdentity[] Windows, MonitorInfo[] Monitors, bool Elevated);
 public sealed record Frame(string Id, long CapturedTick, DateTimeOffset ObservedAt, Observation Observation, WindowIdentity Window, string? ImagePath, string? ImageHash, UiNode[] Controls);
 public sealed record WindowScope(string ImagePath, string ImageHash, string Title);
+public sealed record EvidencePolicy(int RetainHours = 24, long MaxBytes = 67_108_864, bool Images = false);
+public sealed record Delegation(string Owner, string Requester, string KeyId, string[] Scenarios, string[] Actions,
+    string[] ProductPermissions, EvidencePolicy Evidence, string Signature)
+{
+    public Dictionary<string, string> ScenarioHashes { get; init; } = [];
+}
+public sealed record OwnerKey(string Owner, string KeyId, string PublicKey);
+public sealed record ArtifactScope(string Id, string Path, int MaxBytes, string Kind);
 public sealed record RunConfig
 {
     public int ProtocolVersion { get; init; } = Wire.Version;
@@ -88,6 +96,8 @@ public sealed record RunConfig
     public bool AllowInput { get; init; }
     public WindowScope[] Windows { get; init; } = [];
     public int[] AllowedKeys { get; init; } = [];
+    public Delegation? Delegation { get; init; }
+    public ArtifactScope[] ObservationFiles { get; init; } = [];
     public void Validate()
     {
         if (ProtocolVersion != Wire.Version || !Enum.IsDefined(Recovery) || !Wire.Id(RunId) || !Wire.Id(MachineId) || !Wire.Id(Role) || TargetSession <= 0 || ExpectedDesktop != "Default" ||
@@ -97,6 +107,10 @@ public sealed record RunConfig
         if (AllowInput && (Recovery < RecoveryGrade.R1 || string.IsNullOrWhiteSpace(RecoveryEvidence) || Windows.Length == 0))
             throw new DriverException(Error.RecoveryRequired);
         if (Windows.Any(w => !Path.IsPathFullyQualified(w.ImagePath) || !IsHash(w.ImageHash) || w.Title.Length is < 1 or > 512))
+            throw new DriverException(Error.InvalidRequest);
+        if (ObservationFiles.Length > 16 || ObservationFiles.Select(f => f.Id).Distinct().Count() != ObservationFiles.Length ||
+            ObservationFiles.Any(f => !Wire.Id(f.Id) || !Path.IsPathFullyQualified(f.Path) || f.Path.StartsWith("\\\\", StringComparison.Ordinal) ||
+                f.MaxBytes < 1 || f.MaxBytes > (f.Kind == "file" ? 67_108_864 : 524288) || f.Kind is not ("json" or "ndjson" or "file")))
             throw new DriverException(Error.InvalidRequest);
     }
     public static bool IsHash(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);

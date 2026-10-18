@@ -18,6 +18,7 @@ public sealed class RunStore
         CheckPrivate(Root);
         Config = Wire.Decode<RunConfig>(File.ReadAllText(Path.Combine(Root, "run.json")));
         Config.Validate();
+        Authorization.Verify(Config);
         ManifestHash = Wire.FileHash(Path.Combine(Root, "run.json"));
     }
     public static RunStore Create(string root, string configPath)
@@ -25,18 +26,13 @@ public sealed class RunStore
         root = Path.GetFullPath(root);
         var config = Wire.Decode<RunConfig>(File.ReadAllText(configPath));
         config.Validate();
+        Authorization.Verify(config);
         if (config.ExpiresAt <= DateTimeOffset.UtcNow) throw new DriverException(Error.Expired);
         // The leaf must be new. Do not change ACLs on an existing user's directory.
         if (Directory.Exists(root)) throw new DriverException(Error.ReservationConflict);
         var parent = Path.GetDirectoryName(root)!;
         if (!Directory.Exists(parent)) throw new DriverException(Error.InvalidRequest);
-        var security = new DirectorySecurity();
-        var sid = WindowsIdentity.GetCurrent().User!;
-        security.SetOwner(sid);
-        security.SetAccessRuleProtection(true, false);
-        security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-        FileSystemAclExtensions.CreateDirectory(security, root);
+        CreatePrivateDirectory(root);
         // Never traverse a reparse point, including an ancestor.
         CheckPrivate(root);
         File.WriteAllBytes(Path.Combine(root, "run.json"), File.ReadAllBytes(configPath));
@@ -44,7 +40,20 @@ public sealed class RunStore
         var store = new RunStore(root);
         store.Write("ledger.json", new InputLedger([], []));
         store.Pulse("server-heartbeat");
+        EvidenceVault.Audit(store, null, "delegated", Error.None);
         return store;
+    }
+    public static void CreatePrivateDirectory(string root)
+    {
+        if (!Path.IsPathFullyQualified(root) || Directory.Exists(root)) throw new DriverException(Error.ReservationConflict);
+        var security = new DirectorySecurity();
+        var sid = WindowsIdentity.GetCurrent().User!;
+        security.SetOwner(sid);
+        security.SetAccessRuleProtection(true, false);
+        security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        FileSystemAclExtensions.CreateDirectory(security, root);
+        CheckPrivate(root);
     }
     public static void CheckPrivate(string root)
     {
@@ -115,8 +124,17 @@ public static class Processes
 {
     public static ProcessIdentity Identify(Process process)
     {
-        var path = process.MainModule?.FileName ?? throw new DriverException(Error.ObservationUnavailable);
-        return new(process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(path), Wire.FileHash(path));
+        // A newly spawned process can exist before its main module becomes queryable.
+        var began = Stopwatch.GetTimestamp();
+        do
+        {
+            process.Refresh();
+            var path = process.MainModule?.FileName;
+            if (path != null) return new(process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(path), Wire.FileHash(path));
+            if (process.HasExited) break;
+            Thread.Sleep(5);
+        } while (Stopwatch.GetElapsedTime(began).TotalMilliseconds < 500);
+        throw new DriverException(Error.ObservationUnavailable);
     }
     public static bool Alive(ProcessIdentity identity)
     {

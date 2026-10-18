@@ -53,6 +53,13 @@ var cases = new (string Name, Func<Task> Run)[]
     ("owned process cleanup verifies creation time, path and hash", Tests.OwnedProcess),
     ("R2 adapter mocks cannot authorize real UAC, lock or reboot", Tests.Recovery),
     ("external console process validates executable hash and terminates hung adapters", Tests.ExternalConsole),
+    ("owner signature, scope denial, redacted audit and evidence retention are enforced", ExtensionTests.AuthorizationPolicy),
+    ("scenario engine binds provenance, stops on first failure and refuses false PASS", ExtensionTests.Scenarios),
+    ("Tray consent verifies identity, privileges, denial, close and actual UI selectors", ExtensionTests.Tray),
+    ("Viewer uses browser input events with URL pinning, letterbox and release", ExtensionTests.Viewer),
+    ("product observers reject stale, mixed, forged, unreleased and out-of-scope evidence", ExtensionTests.Observations),
+    ("fixture failure restores baseline and real environment gates reject mock proof", ExtensionTests.Fixtures),
+    ("coverage, evidence bundle and preparation keep simulated work out of acceptance", ExtensionTests.AcceptanceAndPreparation),
 };
 int passed = 0;
 foreach (var test in cases)
@@ -223,7 +230,7 @@ internal static class Tests
     {
         var recovery = new RecoverySettings(RecoveryGrade.R0, "unavailable", null, null, null);
         var ssh = new SshSettings("unused.invalid", 22, "lab", "ssh-ed25519", Convert.ToBase64String(new byte[32]), "password-env", "DTD_UNUSED");
-        return new(1, [new("a", "vm", "owner", "windows11", "mock", ["mock"], ["host","viewer"], "VM\\lab", "C:/Driver", ssh, recovery),
+        return new(Wire.Version, [new("a", "vm", "owner", "windows11", "mock", ["mock"], ["host","viewer"], "VM\\lab", "C:/Driver", ssh, recovery),
             new("b", "vm", "owner", "windows11", "mock", ["mock"], ["host","viewer"], "VM\\lab", "C:/Driver", ssh, recovery)]);
     }
     public static async Task Reservation()

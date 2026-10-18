@@ -1,0 +1,148 @@
+{
+  "id": "ra-f11",
+  "adapter": "remoteassist",
+  "purpose": "합의한 장시간·서버 동시 룸 부하·저대역/손실·파일과 영상 동시 전송 | 자원 추이, 제어 우선성, 품질 적응, 지연·FPS·복구 실측 기준 충족",
+  "coverage": [
+    "V35",
+    "V40",
+    "F11"
+  ],
+  "preconditions": [
+    "two-pc",
+    "long-load",
+    "D21 deployment and D22 recovery proof",
+    "candidate fixed; telemetry fresh",
+    "all per-condition fixtures reviewed separately; common round never accepts whole F"
+  ],
+  "evidence": [
+    "spec-f11-all-subconditions",
+    "matching-candidate-and-environment",
+    "independent-observation-and-cleanup"
+  ],
+  "stopCondition": "first failure or missing readiness ends round; no retry or edit",
+  "cleanup": "release browser keys; stop both nodes; verify owned cleanup and normal desktop; retain dirty reservations",
+  "reuse": "matching-candidate contracts and fixtures once; unexecuted subconditions remain NOT RUN",
+  "targetSeconds": 600,
+  "maximumSeconds": 900,
+  "screenSeconds": 300,
+  "recovery": "R1",
+  "steps": [
+    {
+      "id": "start",
+      "role": "host",
+      "action": "host-start",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "join",
+      "role": "viewer",
+      "action": "viewer-join",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "viewer"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "consent",
+      "role": "host",
+      "action": "consent",
+      "arguments": {
+        "monitor": "REPLACE_WITH_PREPARED_MONITOR",
+        "permissions": "screen",
+        "decision": "approve"
+      },
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "video",
+      "role": "viewer",
+      "action": "observe-video",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "decoded-delta",
+          "relation": "ge",
+          "expected": "1",
+          "source": "browser-decoder",
+          "role": "viewer"
+        },
+        {
+          "fact": "marker-matches",
+          "relation": "eq",
+          "expected": "true",
+          "source": "browser-decoder",
+          "role": "viewer"
+        },
+        {
+          "fact": "monitor-matches",
+          "relation": "eq",
+          "expected": "true",
+          "source": "browser-decoder",
+          "role": "viewer"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "end",
+      "role": "host",
+      "action": "target-end",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "audit",
+      "role": "host",
+      "action": "observe-audit",
+      "arguments": {
+        "kind": "3",
+        "result": "2"
+      },
+      "assertions": [
+        {
+          "fact": "audit-matches",
+          "relation": "ge",
+          "expected": "1",
+          "source": "product-audit",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    }
+  ]
+}

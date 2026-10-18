@@ -43,13 +43,22 @@ internal sealed class Fixture : IDisposable
     public bool WatchdogAlive = true;
     public WindowIdentity Window { get; } = new(123, Environment.ProcessId, DateTimeOffset.UtcNow, Environment.ProcessPath!, new string('a', 64), "Owned fixture", new(-1800, 100, 800, 600));
     private long sequence;
+    private readonly string? oldTrust = Environment.GetEnvironmentVariable("DTD_TRUST_STORE");
+    private readonly System.Security.Cryptography.ECDsa signer = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
     public Fixture(int frameAge = 1500, int heartbeat = 1000)
     {
         Directory.CreateDirectory(Parent);
+        var trust = Path.Combine(Parent, "trust"); RunStore.CreatePrivateDirectory(trust);
+        var owner = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+        File.WriteAllText(Path.Combine(trust, "owners.json"), Wire.Encode(new[] { new OwnerKey(owner, "test-owner", Convert.ToBase64String(signer.ExportSubjectPublicKeyInfo())) }));
+        Environment.SetEnvironmentVariable("DTD_TRUST_STORE", Path.Combine(trust, "owners.json"));
         var config = new RunConfig { RunId = "run-" + Guid.NewGuid().ToString("N"), MachineId = "test", Role = "host", TargetSession = 1,
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), MaxSeconds = 60, HeartbeatMilliseconds = heartbeat, MaxHoldMilliseconds = 1500,
             FrameMaxAgeMilliseconds = frameAge, AllowInput = true, Recovery = RecoveryGrade.R1, RecoveryEvidence = "mock-only-never-deploy",
-            Windows = [new(Window.ImagePath, Window.ImageHash, Window.Title)], AllowedKeys = [16, 17, 65, 66] };
+            Windows = [new(Window.ImagePath, Window.ImageHash, Window.Title)], AllowedKeys = [16, 17, 65, 66],
+            Delegation = new(owner, "fixture-requester", "test-owner", ["self-test"], Authorization.Actions, Authorization.Permissions, new(1, 67_108_864, true), "")
+                { ScenarioHashes = new() { ["self-test"] = ExtensionTests.Plan().Hash } } };
+        config = Authorization.Sign(config, signer);
         var source = Path.Combine(Parent, "source.json"); File.WriteAllText(source, Wire.Encode(config));
         Store = RunStore.Create(Path.Combine(Parent, "state"), source);
         Desktop = new(Window); Input = new(Store, Backend); Engine = new(Store, Desktop, Input, () => WatchdogAlive);
@@ -63,8 +72,12 @@ internal sealed class Fixture : IDisposable
         Tests.Check(result.ErrorCode == Error.None, "snapshot failed " + result.ErrorCode);
         return (Frame)result.Evidence!;
     }
+    public RunConfig ForPlan(ScenarioPlan plan) => Authorization.Sign(Store.Config with { Delegation = Store.Config.Delegation! with
+        { Scenarios = [plan.Id], ScenarioHashes = new() { [plan.Id] = plan.Hash } } },signer);
     public void Dispose()
     {
+        Environment.SetEnvironmentVariable("DTD_TRUST_STORE", oldTrust);
+        signer.Dispose();
         // Only this test-owned, freshly generated leaf may be removed recursively.
         if (Path.GetFullPath(Parent).StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase) && Path.GetFileName(Parent).StartsWith("DesktopTestDriver-tests-", StringComparison.Ordinal))
             Directory.Delete(Parent, true);

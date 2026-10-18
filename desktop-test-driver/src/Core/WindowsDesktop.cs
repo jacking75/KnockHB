@@ -159,7 +159,7 @@ public sealed class WindowsDesktop(RunConfig config, string clientExecutable) : 
         {
             var (element, depth) = queue.Dequeue();
             var current = element.Current; var b = current.BoundingRectangle;
-            // Text field contents are deliberately omitted; D12 will add retention policy.
+            // Editable/password contents are omitted. Raw UI labels and images remain private evidence.
             var name = current.ControlType == ControlType.Edit || current.IsPassword ? "[redacted]" : current.Name;
             string? toggle = element.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern) ? ((TogglePattern)pattern).Current.ToggleState.ToString() : null;
             nodes.Add(new(name[..Math.Min(name.Length, 512)], current.AutomationId, current.ControlType.ProgrammaticName,

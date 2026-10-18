@@ -21,15 +21,15 @@
 - [x] D09 [1PC] Server의 다중 Client 예약·barrier·deadline·전역 종료 정책을 모의 노드로 구현·검사한다. `Campaign.cs`의 barrier·최초 실패·단조 deadline·전체 stop·미정리 차단 검사가 통과했다.
 - [x] D10 [1PC] Client의 독립 watchdog, 강제 stop, 입력 해제와 소유 자원 정리를 로컬 고장 주입으로 검증한다. 별도 watchdog과 가짜 입력 backend에서 Client/Watchdog 프로세스 각각 강제 종료·소유 PID/hash 정리 검사가 통과했다. 실제 시험 머신의 키 해제 실증은 D22에서 수행한다.
 - [x] D11 [1PC] 복귀 등급·UAC/잠금/재부팅 지원 계약과 외부 콘솔 어댑터를 설계·모의 검증한다. `RecoveryGate`·`IRecoveryAdapter`·`ExternalConsoleAdapter`의 유한 호출·모의 복귀 검사가 통과했다. 모의 receipt는 실환경 위험 시험을 승인하지 않는다.
-- [ ] D12 [1PC] 회차별 권한 위임, 시험 범위 allowlist, 감사·비밀·증거 보관 정책을 구현한다.
-- [ ] D13 [1PC] 제품 없는 모의 창·모의 노드에서 기능·고장 주입 자체 검증을 완료한다.
-- [ ] D14 [1PC] 범용 시나리오 정의와 플러그인/어댑터 계약, 결과 판정 엔진을 구현한다.
-- [ ] D15 [1PC] RemoteAssist 어댑터의 실제 Tray 동의·거절·종료와 Viewer 조작 로직을 구현·로컬 검증한다.
-- [ ] D16 [1PC] RemoteAssist 영상·입력·권한·파일·채팅·모니터·품질의 출처별 관측 로직을 구현·로컬 검증한다.
-- [ ] D17 [1PC] 설치/업데이트/rollback·서비스·UAC/SAS·TLS/TURN/NAT·장시간 시험 fixture와 복귀 절차를 작성·모의 검증한다.
-- [ ] D18 [1PC] RemoteAssist V/F 매핑, 고정 실행 계획, 증거 묶음, 리포트와 수용 기준을 검토한다.
-- [ ] D19 [1PC] 입력 없는 준비 검사와 모의 환경의 정리/복귀 리허설을 완료한다. 실제 두 PC 제품 PASS로 세지 않는다.
-- [ ] D20 [1PC] 다른 제품/시험에 사용할 예제와 독립 설치·제거·운영 문서를 완성한다.
+- [x] D12 [1PC] 회차별 권한 위임, 시험 범위 allowlist, 감사·비밀·증거 보관 정책을 구현한다. `Authorization.cs`의 P-256 소유자 서명·외부 신뢰 저장소·시나리오/명령/제품 권한 상한과 비밀 본문 없는 감사·증거 예산/보존 만료 검사가 통과했다. 실제 머신 키 등록은 D21 준비다.
+- [x] D13 [1PC] 제품 없는 모의 창·모의 노드에서 기능·고장 주입 자체 검증을 완료한다. `Driver.Tests` 19개가 통과했다(`desktop-test-driver/artifacts/d12-d13-contracts.txt`). 모의 프레임/입력·실제 로컬 pipe·독립 프로세스 장애를 포함하며 실제 데스크톱 입력은 실행하지 않았다.
+- [x] D14 [1PC] 범용 시나리오 정의와 플러그인/어댑터 계약, 결과 판정 엔진을 구현한다. `Scenarios.cs`·`CounterAdapter.cs`의 JSON 계획/해시·명시 등록·출처/후보 결합·첫 실패 종료·유한 정리와 허위 PASS 거부를 검사했다(`artifacts/d14-contracts.txt`).
+- [x] D15 [1PC] RemoteAssist 어댑터의 실제 Tray 동의·거절·종료와 Viewer 조작 로직을 구현·로컬 검증한다. `TrayUi.cs`·`CdpViewer.cs`·`NodeUi.cs`에 UIA 관측→좌표 클릭, 요청 신원/권한 대조, 거절/닫기/만료, HTTPS 탭 고정과 CDP 실제 입력을 구현했다. 모의 UI/CDP 검사로 확인했으며 실제 제품 UI 실행은 D23이다(`artifacts/d15-contracts.txt`).
+- [x] D16 [1PC] RemoteAssist 영상·입력·권한·파일·채팅·모니터·품질의 출처별 관측 로직을 구현·로컬 검증한다. `ReadOnlyProductEvidence.cs`·`ProductObservations.cs`·`MarkerWindow`에 실제 디코딩/표식·입력 파일/OS held 상태·파일 hash·채팅/감사·해상도/FPS 대조를 연결했다. 모의 증거의 변조·잘못된 출처·경로 탈출·키 고착 거부 검사가 통과했다(`artifacts/d16-contracts.txt`).
+- [x] D17 [1PC] 설치/업데이트/rollback·서비스·UAC/SAS·TLS/TURN/NAT·장시간 시험 fixture와 복귀 절차를 작성·모의 검증한다. `fixtures/*.json` 5종과 `Fixtures.cs`에 환경/R2·유한 호출·최초 실패·독립 복원·2시간 최소 실측 기준을 정의했다. 정상/최초 실패/복원 실패/실환경 증거 부재의 모의 검사가 통과했다.
+- [x] D18 [1PC] RemoteAssist V/F 매핑, 고정 실행 계획, 증거 묶음, 리포트와 수용 기준을 검토한다. `acceptance.json`의 V41/F12 총 53항목과 공통 회차 12개, `Acceptance.cs`의 private bundle/hash 검증·공개 요약·후보/실환경/모의 분리 게이트를 검사했다. 공통 회차만으로 각 V/F의 모든 하위 조건을 완료 처리하지 않는다.
+- [x] D19 [1PC] 입력 없는 준비 검사와 모의 환경의 정리/복귀 리허설을 완료한다. `Preparation.cs`에서 후보 hash·세션/desktop/창·watchdog/복귀·증거 공간을 입력 없이 검사한다. 준비 성공/변조 실패·첫 실패 정리·복원 실패 리허설을 검사했고 모의 결과의 실환경 승격을 거부했다(`artifacts/d17-d19-contracts.txt`, 25개). 실제 두 PC 제품 PASS로 세지 않는다.
+- [x] D20 [1PC] 다른 제품/시험에 사용할 예제와 독립 설치·제거·운영 문서를 완성한다. `CounterAdapter`·`scenarios/examples/counter.json`과 `docs/scenarios-12.md`·README에 소유자 등록/서명·독립 예제·어댑터/fixture·증거/중단/제거를 정리했다. 게시 CLI의 서명/예제/변조 거부 7개 검사와 포함 파일 manifest 검사가 통과했다.
 
 ### 2PC — 맨 마지막 공동 캠페인
 
@@ -37,7 +37,7 @@
 - [ ] D22 [2PC] 제품 없이 Server↔Client 화면·입력·명령·중단·장애 복귀 E2E를 한 배치에서 검증한다.
 - [ ] D23 [2PC] 같은 배치에서 RemoteAssist의 두 PC 필수 V/F 시나리오를 고정된 회차별로 실행·수집·정리한다. 추가 GPU/VM/NAT/장시간 요구는 해당 환경이 확보된 별도 하위 회차로 판정한다.
 
-작성일: 2026-10-18. 현재 단계: D01~D11 구현과 로컬·모의 검증 완료다. 실제 시험 머신의 배치·입력·복귀는 뒤의 D21~D23 E2E에서 검증한다. [운영 문서](../desktop-test-driver/README-10.md)와 [검증 증거](../desktop-test-driver/docs/verification-11.md)를 참조한다.
+작성일: 2026-10-18. 현재 단계: D01~D20 구현과 로컬·모의 검증 완료다. 도구는 0.2.0/프로토콜 v2이며 실제 시험 머신의 배치·입력·복귀는 뒤의 D21~D23 E2E에서 검증한다. [운영 문서](../desktop-test-driver/README-10.md)와 [검증 증거](../desktop-test-driver/docs/verification-11.md)를 참조한다.
 
 사용자 요청에 따라 기존 E2E는 종료한 상태를 유지한다. 이전 회차의 서비스·설치·시험 작업 제거와 정상 화면 복귀는 기존 기록이다. 이번 구현에서는 제품 실행·실제 화면 입력·원격 PC 배치를 하지 않았다. 독립 도구의 D 태스크는 위 목록에서, RemoteAssist 연동의 H 태스크는 통합 구현계획에서 각각 추적하며 H/V/F를 완료로 승격하지 않는다.
 

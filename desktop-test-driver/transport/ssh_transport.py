@@ -200,7 +200,7 @@ class Adapter:
         package = Path(payload["packagePath"]).resolve(strict=True)
         manifest_path = package / "package-manifest.json"
         manifest = decode(manifest_path.read_text(encoding="utf-8-sig"))
-        if manifest["version"] != "0.1.0" or manifest["protocolVersion"] != 1 or not 1 <= len(manifest["files"]) <= 256:
+        if manifest["version"] != "0.2.0" or manifest["protocolVersion"] != 2 or not 1 <= len(manifest["files"]) <= 256:
             raise ValueError("Package version")
         files, size = [], 0
         for file in manifest["files"]:

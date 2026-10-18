@@ -1,9 +1,33 @@
-# D01~D11 구현과 로컬 검증 증거
+# D01~D20 구현과 로컬 검증 증거
 
 - [x] 독립 솔루션과 win-x64 패키지를 빌드하고 파일별 hash를 대조한다.
 - [x] C# 계약·고장 주입 검사 18개 묶음을 통과한다.
 - [x] loopback SSH/SFTP 검사 11개를 통과한다.
 - [x] 게시된 Server로 inventory CLI 검증을 통과한다.
+- [x] D12~D20의 권한·시나리오·어댑터·fixture·준비/수용 판정과 독립 예제를 검증한다.
+
+## D12~D20 현재 검사
+
+시스템 명령과 검증 summary에서 확인한 종료 시각은 **2026-10-18 22:20:46 KST**다. `verify.ps1`에서 독립 Release 빌드 경고/오류 0개, Client/Broker/Watchdog/Server/MarkerWindow 게시, C# 계약·고장 주입 25개, loopback SSH/SFTP 11개, 게시 CLI 서명·예제·변조 거부 7개, inventory 검사와 V/F 계획 드리프트 검사가 통과했다. CI는 생성·변경·실행·진단하지 않았다.
+
+증거는 `artifacts/verify-1d6fc989bc704153bbfba4d9b2da83e3/`의 build/contracts/ssh/scenario-cli/plans/cli.txt와 summary.json이다. 시험 패키지는 `artifacts/package-23a82dbc2fb247199e601a1cb0222daa/`, 0.2.0/프로토콜 v2, 파일 86개다. 각 파일의 크기/hash를 manifest와 대조했다. 문서의 이 결과 기록은 시험 뒤 추가했으며 시험 바이너리는 아래 hash로 식별한다.
+
+- Server/Core.dll: `10cd9253be728bbd8946e3c3ae717ebe0e11836bca771394580eead89b8e4bf5`다.
+- Server/RemoteAssist.Adapter.dll: `1a20df29d41a4450281c7f68ae7d528338cbc5a32bd21dda01e71d2f43ccc199`다.
+
+| 범위 | 검사한 결함과 한계 |
+|---|---|
+| D12 | 소유자 P-256 서명·미등록/변조/위임 범위·시나리오 hash와 비밀 본문 없는 감사, 감사 용량 실패 시 입력 차단/긴급 정리, 보존 만료 뒤 복구 ledger 보존을 검사했다. 실제 시험 머신 키 등록은 미실행이다. |
+| D13/D14 | 모의 창·노드·실제 로컬 pipe·독립 가짜 프로세스 고장, 첫 실패 종료, source/후보/회차 결합과 잘못된 판정·NaN·미정리 PASS 거부를 검사했다. 새 프로세스 main module 조회 경합에는 최대 500ms의 신원 확인 상한을 추가했다. |
+| D15 | 현재 제품 소스의 실제 UI ID/문구를 대조하고 모의 UI/CDP로 승인/거절/닫기/만료·요청/창 교체·권한 상한·문자/마우스 이벤트·letterbox·탭 이동 뒤 release를 검사했다. 실제 Tray/Chrome을 열거나 클릭하지 않았다. |
+| D16 | 독립 InputTarget의 신원/freshness/event/OS held 상태·문자 hash, 영상 카운터/FPS/표식·파일 hash/경로 탈출·채팅 일치 횟수와 회차별 색 표식을 검사했다. 실제 디코더/GDI/SendInput·제품 파일 전송은 미실행이다. |
+| D17 | fixture 5종의 정상·최초 실패·복원 실패·실환경 복귀 증거 부재를 모의 검증했다. 실제 설치/서비스/UAC/SAS/잠금/TURN/NAT/rollback/2시간 부하는 미실행이다. 장비별 실제 backend는 해당 환경의 D21~D23 준비가 필요하다. |
+| D18/D19 | V41/F12 총 53항목과 공통 계획 12개를 대조하고 bundle 변조·후보 변경·단일 PC/모의의 수용 승격을 거부했다. 입력 없는 준비·정리/복귀 리허설은 모의 계약 검증이며 실제 ReadyForRealExecution을 선언하지 않았다. |
+| D20 | 게시 파일만으로 owner-init→서명→독립 CounterAdapter 실행→bundle 재검증→서명 변조 거부를 검사했다. 시험용 개인키는 종료 때 삭제했다. 설치·제거 자체의 실PC 검증은 D21~D23이다. |
+
+실제 화면 점유·제품 실행·원격 머신 설치·관리자 프롬프트·잠금은 수행하지 않았다. H10 제품 Helper 조기 종료 원인과 H/V/F·R30의 실제 수용 게이트는 별도다. 공통 회차 성공만으로 V/F의 모든 하위 조건을 통과 처리하지 않는다. [운영 문서](scenarios-12.md)와 [D 상태 원본](../../docs_working/e2e-desktop-driver-plan.md)을 따른다.
+
+## D01~D11 초기 검사 기록
 
 검사 종료 시각은 시스템 시계 기준 2026-10-18 19:48:23 KST다. `verify.ps1`은 제품과 실제 데스크톱 입력을 실행하지 않았다. 이 문서는 실행 결과와 검증 한계를 기록하며 상세 D 상태는 [구현계획](../../docs_working/e2e-desktop-driver-plan.md)의 목록을 원본으로 삼는다.
 

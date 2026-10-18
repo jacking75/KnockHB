@@ -187,7 +187,7 @@ class TransportTests(unittest.TestCase):
         for project in ("Client", "Client.Broker", "Client.Watchdog"):
             directory = package / project; directory.mkdir(); path = directory / (project+".exe"); path.write_bytes(b"fake-executable-never-run")
             files.append({"path": f"{project}/{project}.exe", "sha256": adapter.digest(path), "size": path.stat().st_size})
-        (package / "package-manifest.json").write_text(json.dumps({"version":"0.1.0","protocolVersion":1,"files":files}),encoding="utf-8")
+        (package / "package-manifest.json").write_text(json.dumps({"version":"0.2.0","protocolVersion":2,"files":files}),encoding="utf-8")
         config = root / "config.json"; config.write_text(json.dumps({"runId":"run-1","machineId":"vm","role":"host"}),encoding="utf-8")
         return package, config
 
@@ -296,7 +296,7 @@ class TransportTests(unittest.TestCase):
         package = os.environ.get("DTD_TEST_PACKAGE")
         if not package: self.skipTest("set DTD_TEST_PACKAGE to verify a real local publish")
         root = Path(package); manifest = adapter.decode((root / "package-manifest.json").read_text(encoding="utf-8-sig"))
-        self.assertEqual(manifest["version"],"0.1.0")
+        self.assertEqual(manifest["version"],"0.2.0")
         for item in manifest["files"]:
             self.assertEqual(adapter.digest(root / adapter.relative(item["path"])),item["sha256"])
         self.assertTrue((root / "Client/Client.exe").is_file())

@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "runId": "replace-run-id",
   "machineId": "test-vm",
   "role": "observer",
@@ -14,5 +14,17 @@
   "recoveryEvidence": null,
   "allowInput": false,
   "windows": [],
-  "allowedKeys": []
+  "allowedKeys": [],
+  "observationFiles": [],
+  "delegation": {
+    "owner": "REPLACE_MACHINE\\owner",
+    "requester": "REPLACE_VERIFIED_REQUESTER",
+    "keyId": "lab-owner",
+    "scenarios": ["counter-sample"],
+    "actions": ["inspect", "heartbeat"],
+    "productPermissions": [],
+    "evidence": { "retainHours": 24, "maxBytes": 67108864, "images": false },
+    "signature": "",
+    "scenarioHashes": { "counter-sample": "REPLACE_WITH_PLAN_CHECK_SHA256" }
+  }
 }

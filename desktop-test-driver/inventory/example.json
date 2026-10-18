@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "machines": [{
     "id": "test-vm", "kind": "vm", "owner": "lab-owner", "os": "windows11", "gpu": "record-before-testing", "monitors": ["record-before-testing"],
     "roles": ["host", "viewer", "observer"], "consoleUser": "TESTVM\\lab",

@@ -1,0 +1,139 @@
+{
+  "id": "ra-f04",
+  "adapter": "remoteassist",
+  "purpose": "동의 거절·부분 승인·철회·PIN 제한·코드 재사용·지원자 교체·로컬 긴급 종료 | 권한별 실행 0/허용, 새 송신·입력 1초 내 차단, 대상자 통제 유지",
+  "coverage": [
+    "V01",
+    "V07",
+    "V10",
+    "V16",
+    "V17",
+    "V18",
+    "V24",
+    "F04"
+  ],
+  "preconditions": [
+    "two-pc",
+    "independent-consent-cases",
+    "D21 deployment and D22 recovery proof",
+    "candidate fixed; telemetry fresh",
+    "all per-condition fixtures reviewed separately; common round never accepts whole F"
+  ],
+  "evidence": [
+    "spec-f04-all-subconditions",
+    "matching-candidate-and-environment",
+    "independent-observation-and-cleanup"
+  ],
+  "stopCondition": "first failure or missing readiness ends round; no retry or edit",
+  "cleanup": "release browser keys; stop both nodes; verify owned cleanup and normal desktop; retain dirty reservations",
+  "reuse": "matching-candidate contracts and fixtures once; unexecuted subconditions remain NOT RUN",
+  "targetSeconds": 600,
+  "maximumSeconds": 900,
+  "screenSeconds": 300,
+  "recovery": "R1",
+  "steps": [
+    {
+      "id": "start",
+      "role": "host",
+      "action": "host-start",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "join",
+      "role": "viewer",
+      "action": "viewer-join",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "viewer"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "consent",
+      "role": "host",
+      "action": "consent",
+      "arguments": {
+        "monitor": "REPLACE_WITH_PREPARED_MONITOR",
+        "permissions": "screen",
+        "decision": "deny"
+      },
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "video",
+      "role": "viewer",
+      "action": "observe-video",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "decoded-delta",
+          "relation": "eq",
+          "expected": "0",
+          "source": "browser-decoder",
+          "role": "viewer"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "end",
+      "role": "host",
+      "action": "target-end",
+      "arguments": {},
+      "assertions": [
+        {
+          "fact": "action-receipt",
+          "relation": "eq",
+          "expected": "true",
+          "source": "driver-local",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "id": "audit",
+      "role": "host",
+      "action": "observe-audit",
+      "arguments": {
+        "kind": "3",
+        "result": "2"
+      },
+      "assertions": [
+        {
+          "fact": "audit-matches",
+          "relation": "ge",
+          "expected": "1",
+          "source": "product-audit",
+          "role": "host"
+        }
+      ],
+      "timeoutMilliseconds": 3000
+    }
+  ]
+}

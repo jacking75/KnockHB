@@ -15,6 +15,10 @@ try {
         $env:DTD_TEST_PACKAGE = $package
         & $python tests/test_ssh_transport.py | Tee-Object -FilePath (Join-Path $evidence 'ssh.txt')
         if ($LASTEXITCODE -ne 0) { throw 'SSH mock test failed' }
+        & $python tests/test_cli.py | Tee-Object -FilePath (Join-Path $evidence 'scenario-cli.txt')
+        if ($LASTEXITCODE -ne 0) { throw 'Scenario/signing CLI test failed' }
+        & $python adapters/remoteassist/generate_plans.py --check | Tee-Object -FilePath (Join-Path $evidence 'plans.txt')
+        if ($LASTEXITCODE -ne 0) { throw 'V/F plan drift' }
     } finally { $env:DTD_TEST_PACKAGE = $previousPackage }
     & (Join-Path $package 'Server/Server.exe') validate inventory/example.json | Tee-Object -FilePath (Join-Path $evidence 'cli.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Published CLI validation failed' }

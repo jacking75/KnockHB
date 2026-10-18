@@ -1,12 +1,12 @@
-# DesktopTestDriver 0.1.0
+# DesktopTestDriver 0.2.0
 
-- [x] D01~D11의 독립 도구 코드를 구현한다.
+- [x] D01~D20의 독립 도구·시나리오·어댑터를 구현한다.
 - [x] 제품과 실제 화면 입력을 사용하지 않는 로컬 계약·고장 주입·SSH/SFTP 모의 검사를 제공한다.
 - [x] D08의 SSH 배치·전송·제어를 loopback 모의 대상으로 검증한다.
 
 Windows 시험 전용 도구다. Server는 조작 PC, Client는 조작될 PC에 두고 Broker가 SSH 관리 경로와 일반 사용자 콘솔 사이를 연결한다. Watchdog은 Client와 별도 프로세스다. RemoteAssist의 솔루션·설정·IPC·바이너리에 의존하지 않는다. [계약과 위협 모델](docs/contracts-9.md), [구현·검증 증거](docs/verification-11.md), [전체 D 태스크](../docs_working/e2e-desktop-driver-plan.md) 순서로 읽는다.
 
-현재는 개발용 0.1.0이며 D01~D11 구현과 로컬·모의 검증을 완료했다. D12 이후의 후속 구현·모의 준비 검증을 마친 뒤, 실제 시험 머신의 설치·콘솔 기동·입력·복귀·제거를 D21~D23 E2E에서 검증한다. 실제 제품 시험이나 UAC·잠금·재부팅을 시작할 준비가 됐다는 의미가 아니다.
+현재는 개발용 0.2.0, 프로토콜 v2다. 필수 소유자 서명과 시나리오 hash가 추가되어 0.1.0/v1과 혼용하지 않는다. D01~D20은 구현과 로컬·모의 검증 범위다. 실제 시험 머신의 설치·콘솔 기동·입력·복귀·제거와 제품 수용은 D21~D23에서 검증한다. 실제 제품 시험이나 UAC·잠금·재부팅 준비 완료를 의미하지 않는다. [회차 위임·시나리오·어댑터 운영](docs/scenarios-12.md)에서 새 기능과 제품 없는 재사용 예제를 설명한다.
 
 ## 설치와 독립 빌드
 
@@ -44,6 +44,13 @@ Server는 JSON 결과를 표준 출력에, 비밀을 제외한 오류 코드만 
 Server.exe validate INVENTORY
 Server.exe reserve INVENTORY RESERVATIONS RUN ASSIGNMENTS CANDIDATE_HASH SETTINGS_HASH EXPIRY
 Server.exe ssh INVENTORY MACHINE ROLE RUN PYTHON_EXE SSH_ADAPTER OPERATION
+Server.exe owner-init NEW_PRIVATE_DIRECTORY KEY_ID
+Server.exe authorize UNSIGNED_CONFIG PRIVATE_KEY NEW_SIGNED_CONFIG
+Server.exe plan-check PLAN
+Server.exe catalog-check CATALOG
+Server.exe simulate COUNTER_PLAN SIGNED_CONFIG NEW_BUNDLE
+Server.exe bundle-check BUNDLE
+Server.exe purge-evidence STOPPED_RUN_STATE
 ```
 
 `ASSIGNMENTS`는 `[{"machineId":"lab-host","role":"host"}]` 형식이다. 예약은 머신 단위로 충돌을 막고 후보·설정 hash·기간·역할을 보존한다. 만료됐어도 정리 확인 없이 예약을 재사용하지 않는다. SDK의 `Reservations.Complete(machine,run,cleanupVerified)`는 전체 정리 결과가 확인된 뒤 호출한다.
@@ -54,7 +61,7 @@ SSH operation은 `install/status/send/stop/collect/remove`만 허용한다. 각 
 
 inspect 응답에는 관측 정보와 allowlist 창별 메타데이터 frame이 있다. 이 frame으로 정확한 창에 focus하고 snapshot을 얻는다. 입력은 그 frame ID와 같은 expectedWindow를 명시한다. 창 클라이언트 영역의 픽셀 좌표를 사용하며 음수 모니터 원점은 Client에서 더한다. 실제 대상 창의 관측 없이 좌표를 추정하지 않는다. snapshot은 창 영역의 PNG와 UIA 읽기 결과를 반환한다. 검은 화면·접근 불가·UIA timeout은 관측 실패다.
 
-`CommandEngine`·`IClientNode`·`Campaign`은 C# API다. Campaign은 여러 Client 실행, 단계별 barrier, 전체 단조 deadline과 최초 실패 시 모든 노드의 stop을 제공한다. API 사용자는 머신 예약과 위임을 먼저 확인하고, 정상 종료 때도 `await campaign.Stop()`의 모든 노드 정리 결과를 확인해야 한다. D14의 범용 시나리오 파서·판정 엔진과 D15 이후 제품 어댑터는 아직 제공하지 않는다. 입력 응답의 `executed:true`는 OS 주입 접수이고 `verified:false`다. 실제 시험 앱이 관측한 결과로 기능 PASS를 별도 판정한다.
+`CommandEngine`·`IClientNode`·`Campaign`·`ScenarioRunner`는 C# API다. Campaign은 여러 Client 실행, 단계별 barrier, 전체 단조 deadline과 최초 실패 시 모든 노드의 stop을 제공한다. API 사용자는 머신 예약과 위임을 먼저 확인하고, 정상 종료 때도 `await campaign.Stop()`의 모든 노드 정리 결과를 확인해야 한다. 범용 엔진은 명시 등록한 `IScenarioAdapter`만 호출한다. `RemoteAssist.Adapter.dll`은 제품 코드 참조 없이 실제 UI·CDP와 읽기 전용 관측을 연결한다. `simulate` CLI는 제품 없는 CounterAdapter만 등록한다. 입력 응답의 `executed:true`는 OS 주입 접수이고 `verified:false`다. 실제 시험 앱이 관측한 결과로 기능 PASS를 별도 판정한다.
 
 ## 중단·수집·제거
 

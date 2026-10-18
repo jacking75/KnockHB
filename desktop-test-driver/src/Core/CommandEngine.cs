@@ -13,19 +13,20 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
     private long heartbeatSequence;
     private readonly object heartbeatGate = new();
     private readonly Dictionary<string, (string Hash, Result Result)> heartbeats = [];
-    private static readonly HashSet<string> Names = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "release-all", "stop", "heartbeat"];
+    private static readonly HashSet<string> Names = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "release-all", "stop", "heartbeat", "seal-input", "resume-input", "read-artifact"];
     private static readonly HashSet<string> Inputs = ["move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text"];
 
     public async Task<Result> Execute(Command command)
     {
         var began = Stopwatch.GetTimestamp();
         try { Bind(command); }
-        catch (DriverException e) { return Answer(command, began, false, false, false, e.Code); }
+        catch (DriverException e) { TryAudit(command, "rejected", e.Code); return Answer(command, began, false, false, false, e.Code); }
         // Stop does not queue behind wait or a long sequence. Each input fragment checks the durable flag.
         if (command.Name == "stop")
         {
             store.Stop(Error.Stopped);
             var clean = input.Cleanup();
+            TryAudit(command, "stopped", clean ? Error.None : Error.CleanupIncomplete);
             return Answer(command, began, true, true, clean, clean ? Error.None : Error.CleanupIncomplete, new { stopped = true, clean });
         }
         if (command.Name == "heartbeat")
@@ -41,6 +42,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
                     if (command.Sequence <= heartbeatSequence || heartbeats.Count >= 4096) throw new DriverException(Error.SequenceRejected);
                     heartbeatSequence = command.Sequence;
                     store.Pulse("server-heartbeat");
+                    EvidenceVault.Audit(store, command, "heartbeat", Error.None);
                     var result = Answer(command, began, true, true, true, Error.None, new { alive = true });
                     heartbeats.Add(command.CommandId, (hash, result));
                     return result;
@@ -60,6 +62,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
             sequence = command.Sequence;
             accepted = true;
             CheckLive(command, allowStopped: command.Name == "release-all");
+            EvidenceVault.Audit(store, command, "accepted", Error.None);
             // Persist acceptance before executing. A restarted Client is never allowed to re-run this directory.
             store.Write("command-" + command.CommandId + ".json", new { hash, phase = "accepted", sequence });
             object? evidence = null;
@@ -72,17 +75,25 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
                     evidence = new { observation, frames = windowFrames }; verified = true; break;
                 case "snapshot": evidence = Snapshot(command, true); verified = true; break;
                 case "focus":
+                    if (!store.Config.AllowInput || File.Exists(store.PathFor("input-sealed.json"))) throw new DriverException(Error.DelegationMismatch);
                     Guard(command, requireForeground: false);
                     if (!desktop.Focus(command.ExpectedWindow!)) throw new DriverException(Error.ForegroundMismatch);
                     evidence = Snapshot(command, false); verified = true; break;
                 case "wait": evidence = await Wait(command); verified = true; break;
+                case "read-artifact": evidence = ReadArtifact(command); verified = true; break;
+                case "seal-input":
+                    if (!input.ReleaseAll()) throw new DriverException(Error.CleanupIncomplete);
+                    store.Write("input-sealed.json", new { scenario = command.Condition }); verified = true; break;
+                case "resume-input":
+                    if (command.Condition == null || !store.Config.Delegation!.Scenarios.Contains(command.Condition)) throw new DriverException(Error.DelegationMismatch);
+                    File.Delete(store.PathFor("input-sealed.json")); verified = true; break;
                 case "release-all":
                     verified = input.ReleaseAll(); evidence = new { released = verified };
                     if (!verified) throw new DriverException(Error.CleanupIncomplete);
                     break;
                 default:
                     if (!Inputs.Contains(command.Name)) throw new DriverException(Error.Unsupported);
-                    if (!store.Config.AllowInput) throw new DriverException(Error.DelegationMismatch);
+                    if (!store.Config.AllowInput || File.Exists(store.PathFor("input-sealed.json"))) throw new DriverException(Error.DelegationMismatch);
                     Guard(command);
                     ValidateInput(command);
                     executed = true;
@@ -96,6 +107,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
             var result = Answer(command, began, true, executed, verified, Error.None, evidence);
             results.Add(command.CommandId, (hash, result));
             store.Write("command-" + command.CommandId + ".json", new { hash, phase = "completed", result });
+            EvidenceVault.Audit(store, command, "completed", Error.None);
             return result;
         }
         catch (Exception e)
@@ -112,13 +124,36 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
                 var hash = Wire.Hash(Encoding.UTF8.GetBytes(Wire.Encode(command)));
                 results[command.CommandId] = (hash, result);
                 store.Write("command-" + command.CommandId + ".json", new { hash, phase = "failed", result });
+                TryAudit(command, "failed", code);
             }
             return result;
         }
         finally { gate.Release(); }
     }
+    private void TryAudit(Command command, string phase, Error code)
+    {
+        // Audit failure blocks normal acceptance, but cannot prevent emergency release/stop or hide its result.
+        try { EvidenceVault.Audit(store,command,phase,code); } catch (Exception e) when (e is not OutOfMemoryException) { }
+    }
     private static Result Answer(Command c, long start, bool accepted, bool executed, bool verified, Error error, object? evidence = null) =>
         new(c.CommandId, accepted, executed, verified, error, DateTimeOffset.UtcNow, Stopwatch.GetElapsedTime(start).TotalMilliseconds, evidence);
+    private object ReadArtifact(Command command)
+    {
+        _ = Inspect();
+        var scope = store.Config.ObservationFiles.SingleOrDefault(f => f.Id == command.Condition) ?? throw new DriverException(Error.DelegationMismatch);
+        for (FileSystemInfo? file = new FileInfo(scope.Path); file != null; file = file is FileInfo f ? f.Directory : ((DirectoryInfo)file).Parent)
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0) throw new DriverException(Error.DelegationMismatch);
+        using var stream = new FileStream(scope.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (stream.Length > scope.MaxBytes) throw new DriverException(Error.ObservationUnavailable);
+        if (scope.Kind == "file") return new { id = scope.Id, hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream)), size = stream.Length, source = "read-only-file-hash" };
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var content = reader.ReadToEnd();
+        if (Encoding.UTF8.GetByteCount(content) > scope.MaxBytes) throw new DriverException(Error.ObservationUnavailable);
+        var value = scope.Kind == "json" ? Wire.Decode<System.Text.Json.JsonElement>(content) :
+            System.Text.Json.JsonSerializer.SerializeToElement(content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => Wire.Decode<System.Text.Json.JsonElement>(line)), Wire.Json);
+        if (Encoding.UTF8.GetByteCount(Wire.Encode(value)) > Wire.MaxMessage / 2) throw new DriverException(Error.ObservationUnavailable);
+        return new { id = scope.Id, hash = Wire.Hash(Encoding.UTF8.GetBytes(content)), value, source = "read-only-artifact" };
+    }
     private void Bind(Command c)
     {
         var config = store.Config;
@@ -127,6 +162,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
             c.TargetSession != config.TargetSession || c.ExpectedDesktop != config.ExpectedDesktop) throw new DriverException(Error.DelegationMismatch);
         if (c.Deadline > config.ExpiresAt) throw new DriverException(Error.InvalidRequest);
         if (c.TimeoutMilliseconds is < 1 or > 5000) throw new DriverException(Error.InvalidRequest);
+        Authorization.Require(config, c.Name);
         // Emergency release/stop remains available even after lease expiry.
         if (c.Name is not ("stop" or "release-all") && c.Deadline <= DateTimeOffset.UtcNow) throw new DriverException(Error.Expired);
     }
@@ -137,6 +173,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
         if (c.Deadline <= DateTimeOffset.UtcNow || store.Config.ExpiresAt <= DateTimeOffset.UtcNow || Stopwatch.GetElapsedTime(started).TotalSeconds >= store.Config.MaxSeconds)
             throw new DriverException(Error.Expired);
         if (!watchdogAlive()) throw new DriverException(Error.WatchdogUnavailable);
+        EvidenceVault.Budget(store);
         if (desktop.PhysicalConflict) throw new DriverException(Error.UserInputConflict);
     }
     private Observation Inspect()
@@ -164,6 +201,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
             if (Directory.GetFiles(store.Root, "frame-*.png").Length >= 128) throw new DriverException(Error.Expired);
             path = store.PathFor("frame-" + id + ".png");
             hash = desktop.Capture(window, path);
+            EvidenceVault.Budget(store);
             CheckLive(c);
             controls = desktop.Controls(window);
         }

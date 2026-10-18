@@ -10,6 +10,12 @@
         "dependencies": {
           "Contracts": "[0.1.0, )"
         }
+      },
+      "remoteassist.adapter": {
+        "type": "Project",
+        "dependencies": {
+          "Core": "[0.1.0, )"
+        }
       }
     },
     "net10.0-windows10.0.19041/win-x64": {}
