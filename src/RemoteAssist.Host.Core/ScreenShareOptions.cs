@@ -4,6 +4,7 @@ namespace RemoteAssist.Host.Core;
 
 public sealed record ScreenShareOptions
 {
+    public const int ConsentDecisionSeconds = 120;
     public Uri SignalingUri { get; init; } = new("http://localhost:25001");
     public bool AllowLoopbackHttp { get; init; }
     public int MonitorIndex { get; init; }

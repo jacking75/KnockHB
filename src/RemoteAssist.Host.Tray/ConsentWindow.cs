@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using RemoteAssist.Host.Core;
 
 namespace RemoteAssist.Host.Tray;
 
@@ -8,7 +9,7 @@ internal sealed class ConsentWindow : Window
 {
     readonly CheckBox screen=new(){Content="화면 보기·모니터 배치 목록",Margin=new Thickness(0,8,0,0)};
     readonly CheckBox control=new(){Content="원격 제어",Margin=new Thickness(0,4,0,0),IsEnabled=false};
-    readonly DispatcherTimer expiry=new(){Interval=TimeSpan.FromSeconds(30)};
+    readonly DispatcherTimer expiry=new(){Interval=TimeSpan.FromSeconds(ScreenShareOptions.ConsentDecisionSeconds)};
     readonly CheckBox admin=new(){Content="관리자 요청 허용 — 실제 진입은 별도 승인",Margin=new Thickness(0,4,0,0),IsEnabled=false};
     readonly CheckBox chat=new(){Content="텍스트 채팅",Margin=new Thickness(0,4,0,0)};
     readonly CheckBox clipboard=new(){Content="텍스트 클립보드 읽기·쓰기 — 지원자가 요청할 때만",Margin=new Thickness(0,4,0,0)};
@@ -24,7 +25,7 @@ internal sealed class ConsentWindow : Window
         Title="원격 지원 권한 승인";Width=480;Height=510;ResizeMode=ResizeMode.NoResize;WindowStartupLocation=WindowStartupLocation.CenterOwner;Topmost=true;
         var panel=new StackPanel {Margin=new Thickness(24)};Content=panel;
         panel.Children.Add(new TextBlock {Text="접속 요청: "+supporter,FontSize=20,TextWrapping=TextWrapping.Wrap});
-        panel.Children.Add(new TextBlock {Text="위 이름은 지원자가 입력한 이름이다. 별도 연락으로 상대를 확인한다. 30초 동안 승인하지 않으면 거부한다. 제어 중에는 로컬 키보드·마우스의 동시 조작을 피하며 즉시 종료로 통제권을 회수한다.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,8)});
+        panel.Children.Add(new TextBlock {Text=$"위 이름은 지원자가 입력한 이름이다. 별도 연락으로 상대를 확인한다. {ScreenShareOptions.ConsentDecisionSeconds}초 동안 승인하지 않으면 거부한다. 제어 중에는 로컬 키보드·마우스의 동시 조작을 피하며 즉시 종료로 통제권을 회수한다.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,8)});
         panel.Children.Add(new TextBlock {Text="공유 대상: "+monitor,TextWrapping=TextWrapping.Wrap});
         System.Windows.Automation.AutomationProperties.SetAutomationId(screen,"ConsentScreen");panel.Children.Add(screen);
         System.Windows.Automation.AutomationProperties.SetAutomationId(control,"ConsentControl");panel.Children.Add(control);

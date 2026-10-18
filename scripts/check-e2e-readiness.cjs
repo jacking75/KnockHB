@@ -1,12 +1,12 @@
 'use strict';
 // File-only planning check. Never launches UI, services, UAC, input, or a network probe.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const requiredCases=['consent-view','input','file-chat-clipboard','turn-refresh','monitor-quality','diagnostic-runbook','admin-desktop','owner-fault-stop'];
+const requiredCases=['consent-view','input','local-stop'];
 const hash40=/^[a-f0-9]{40}$/,hash64=/^[a-f0-9]{64}$/;
 function validatePlan(p){
-  if(!p||p.version!==1||p.runtimeArmEnabled!==false)throw Error('Version 1 is a blocked preparation plan, not an enabled runtime controller');
+  if(!p||p.version!==2||p.runtimeArmEnabled!==false)throw Error('Only version 2 blocked preparation plans are accepted; legacy 1800-second plans are retired');
   for(const key of ['totalSeconds','executionSeconds','cleanupSeconds','recoveryReserveSeconds','reportSeconds','retryCount','inventoryMaxAgeSeconds','evidenceMaxAgeSeconds'])if(!Number.isSafeInteger(p[key])||p[key]<0)throw Error('Invalid integer budget: '+key);
-  if(p.totalSeconds!==1800||p.executionSeconds!==1320||p.cleanupSeconds!==300||p.recoveryReserveSeconds!==120||p.reportSeconds!==60||p.retryCount!==0||p.executionSeconds+p.cleanupSeconds+p.recoveryReserveSeconds+p.reportSeconds!==p.totalSeconds)throw Error('The entire campaign must fit 22+5+2+1 minutes with no retries');
+  if(p.totalSeconds!==900||p.targetSeconds!==600||p.executionSeconds!==300||p.cleanupSeconds!==240||p.recoveryReserveSeconds!==300||p.reportSeconds!==60||p.retryCount!==0||p.executionSeconds+p.cleanupSeconds+p.recoveryReserveSeconds+p.reportSeconds!==p.totalSeconds)throw Error('The entire campaign must fit 300+240+300+60 seconds, target 600 seconds, with no retries');
   if(p.inventoryMaxAgeSeconds!==900||p.evidenceMaxAgeSeconds!==86400||!Array.isArray(p.cases)||p.cases.length!==requiredCases.length)throw Error('Inventory/evidence freshness or selected cases drift');
   let end=0;const evidenceIds=new Set();
   for(let i=0;i<p.cases.length;i++){
@@ -14,14 +14,14 @@ function validatePlan(p){
     if(!Array.isArray(c.validation)||!c.validation.length||!c.validation.every(x=>/^V\d{2}$/.test(x))||!Array.isArray(c.final)||!c.final.length||!c.final.every(x=>/^F\d{2}$/.test(x))||!Array.isArray(c.evidence)||!c.evidence.length)throw Error('Case acceptance mapping/evidence missing');
     for(const e of c.evidence){if(typeof e!=='string'||!e||evidenceIds.has(e))throw Error('Duplicate/missing observation ID');evidenceIds.add(e);}end=c.end;
   }
-  if(end!==p.executionSeconds||p.cases[3].start!==420||p.cases[3].end!==720)throw Error('Natural TURN refresh window or execution deadline drift');
+  if(end!==p.executionSeconds||p.cases[0].end!==120||p.cases[1].end!==240)throw Error('Selected LAN scope deadline drift');
   for(const key of ['requiredEvidence','cleanupOwners'])if(!Array.isArray(p[key])||!p[key].length||p[key].some(x=>typeof x!=='string'||!x)||new Set(p[key]).size!==p[key].length)throw Error('Evidence/cleanup requirements missing or duplicate');
   return p;
 }
 function assessReadiness(p,r,{now=Date.now(),verifyArtifact=()=>false}={}){
-  validatePlan(p);const missing=['R30-05 runtime controller/watchdog is not implemented or enabled in plan version 1'];
+  validatePlan(p);const missing=['R30-05 runtime controller/product cleanup integration and external return are not accepted; file checks cannot authorize Arm'];
   const check=(ok,label)=>{if(!ok)missing.push(label);};
-  check(r?.version===1,'readiness version');check(hash40.test(r?.candidateCommit||''),'candidate commit');check(hash40.test(r?.candidateTree||''),'candidate tree');
+  check(r?.version===2,'readiness version');check(hash40.test(r?.candidateCommit||''),'candidate commit');check(hash40.test(r?.candidateTree||''),'candidate tree');
   check(typeof r?.environmentId==='string'&&r.environmentId.length>0,'environment ID');check(r?.humanReviewed===true,'actual operator review');
   check(r?.runtimeGuardImplemented===true&&r?.runtimeGuardRehearsed===true,'independent deadline/cleanup rehearsal');check(!!r?.operator&&!!r?.recoveryOperator,'operators');
   const recent=(s,max)=>{const at=Date.parse(s);return Number.isFinite(at)&&at<=now&&now-at<=max*1000;};

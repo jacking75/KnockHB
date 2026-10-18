@@ -1,7 +1,7 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([ValidateSet('Prepare','Arm','Finish','Abort','Collect')][string]$Action='Prepare',[string]$RunDir,[ValidateRange(30,300)][int]$Seconds=240,[string]$Observation,[string]$Readiness)
 $ErrorActionPreference='Stop'
-if($Action-eq'Arm'){throw '30분 전역 deadline/독립 watchdog/유한 정리의 구현·실증이 없어 Arm을 차단한다. 원격제어-구현계획.md R30-05~08을 먼저 완료한다.'}
+if($Action-eq'Arm'){throw '30분 전역 deadline/독립 watchdog/유한 정리의 구현·실증이 없어 Arm을 차단한다. docs_working/원격제어-구현계획.md R30-05~08을 먼저 완료한다.'}
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$artifactRoot=Join-Path $repo '.artifacts';$utf8=New-Object Text.UTF8Encoding($false)
 function Save($name,$value){[IO.File]::WriteAllText((Join-Path $RunDir $name),($value|ConvertTo-Json -Depth 10),$utf8)}
 if($Action-eq'Prepare'){

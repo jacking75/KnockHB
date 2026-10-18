@@ -1,26 +1,96 @@
 {
-  "version": 1,
-  "profile": "two-pc-selected-scope",
+  "version": 2,
+  "profile": "two-pc-lan-consent-input-stop",
   "runtimeArmEnabled": false,
-  "totalSeconds": 1800,
-  "executionSeconds": 1320,
-  "cleanupSeconds": 300,
-  "recoveryReserveSeconds": 120,
+  "totalSeconds": 900,
+  "executionSeconds": 300,
+  "cleanupSeconds": 240,
+  "recoveryReserveSeconds": 300,
   "reportSeconds": 60,
   "retryCount": 0,
   "inventoryMaxAgeSeconds": 900,
   "evidenceMaxAgeSeconds": 86400,
   "cases": [
-    {"id":"consent-view","start":0,"end":120,"validation":["V16","V19","V24"],"final":["F01","F04"],"evidence":["consent-before-after","host-viewer-identity","decoded-frames","session-tick"]},
-    {"id":"input","start":120,"end":300,"validation":["V21","V22","V23"],"final":["F03"],"evidence":["physical-snapshot","actual-target-events","reset-epoch-ack","all-injected-held-state"]},
-    {"id":"file-chat-clipboard","start":300,"end":420,"validation":["V30","V31","V32"],"final":["F06"],"evidence":["two-direction-sha256","reject-cancel-partial-zero","chat-clipboard-events"]},
-    {"id":"turn-refresh","start":420,"end":720,"validation":["V27","V28","V29"],"final":["F07"],"evidence":["actual-eight-minute-tick","selected-pair-both-peers","new-allocation-expiry","generation-old-transport-rejected","decoded-resumed"]},
-    {"id":"monitor-quality","start":720,"end":840,"validation":["V30","V35"],"final":["F02","F03","F11"],"evidence":["monitor-identity-geometry","idr-geometry-ack","new-epoch-target-events","actual-quality-samples"]},
-    {"id":"diagnostic-runbook","start":840,"end":1020,"validation":["V33","V34"],"final":["F08"],"evidence":["registered-source-hash-local-approval","bounded-result-audit","reject-cancel-worker-zero"]},
-    {"id":"admin-desktop","start":1020,"end":1200,"validation":["V25","V26"],"final":["F05"],"evidence":["unapproved-privileged-zero","local-admin-approval","selected-desktop-transition","physical-return-and-held-zero"]},
-    {"id":"owner-fault-stop","start":1200,"end":1320,"validation":["V22","V24","V40"],"final":["F04","F09"],"evidence":["owned-pid-image-start-time","recovery-up-os-state","stop-within-one-second","no-unconsented-resume"]}
+    {
+      "id": "consent-view",
+      "start": 0,
+      "end": 120,
+      "validation": [
+        "V16",
+        "V19",
+        "V24"
+      ],
+      "final": [
+        "F01",
+        "F04"
+      ],
+      "evidence": [
+        "consent-before-after",
+        "host-viewer-identity",
+        "decoded-frames",
+        "session-tick"
+      ]
+    },
+    {
+      "id": "input",
+      "start": 120,
+      "end": 240,
+      "validation": [
+        "V21",
+        "V22",
+        "V23"
+      ],
+      "final": [
+        "F03"
+      ],
+      "evidence": [
+        "physical-snapshot",
+        "actual-target-events",
+        "reset-epoch-ack",
+        "all-injected-held-state"
+      ]
+    },
+    {
+      "id": "local-stop",
+      "start": 240,
+      "end": 300,
+      "validation": [
+        "V24"
+      ],
+      "final": [
+        "F04"
+      ],
+      "evidence": [
+        "local-stop-tick",
+        "new-transmission-blocked",
+        "all-held-zero",
+        "no-unconsented-resume"
+      ]
+    }
   ],
-  "requiredEvidence": ["candidate-and-signed-package","native-media","prior-subcase-acceptance","viewer-observer","all-input-observer","turn-and-network","bounded-deadline-faults","owned-cleanup-and-external-return","long-load-and-100-repeats","installer-update-rollback","security-and-race"],
-  "cleanupOwners": ["input-and-permissions","service-and-jobs","recovery-up","viewer-and-target","signaling-and-turn","firewall-and-network","monitor-and-desktop","owned-stage-and-tasks"],
-  "scopeNote": "Only selected cases. Unexecuted F subcases require matching prior evidence; no automatic Gate B or full product PASS."
+  "requiredEvidence": [
+    "candidate-and-signed-package",
+    "native-media",
+    "prior-subcase-acceptance",
+    "viewer-observer",
+    "all-input-observer",
+    "turn-and-network",
+    "bounded-deadline-faults",
+    "owned-cleanup-and-external-return",
+    "long-load-and-100-repeats",
+    "installer-update-rollback",
+    "security-and-race"
+  ],
+  "cleanupOwners": [
+    "input-and-permissions",
+    "service-and-jobs",
+    "recovery-up",
+    "viewer-and-target",
+    "signaling-and-turn",
+    "firewall-and-network",
+    "monitor-and-desktop",
+    "owned-stage-and-tasks"
+  ],
+  "scopeNote": "Selected LAN subcases only. Full F acceptance requires separate evidence including long load, TURN and deployment. Runtime Arm remains disabled.",
+  "targetSeconds": 600
 }

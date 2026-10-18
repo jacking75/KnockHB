@@ -1,5 +1,11 @@
 # Windows 설치와 업데이트
 
+## 소유 테스트 PC의 서명 없는 기능 검증
+
+사용자가 명시적으로 허용한 개발 시험에는 `scripts/package-host-dev.ps1`로 서명 없는 자체 포함 후보를 별도로 만든다. 이 후보는 상용 updater의 서명 검사를 통과하는 release가 아니며 정식 설치/업데이트 수용으로 세지 않는다. 상용 서명 검사와 제품의 코드/PIN·대상자 동의·TLS·권한 경계는 변경하지 않는다. 준비 스크립트는 publish/manifest만 수행하며 서비스를 설치하거나 실행하지 않는다. 보호 설치·소유 정리·시간 제한의 준비 리뷰 후 별도 개발 설치 절차를 제공한다.
+
+현재 머신의 SDK10.0.301을 명시 선택한 개발 빌드는 해당 MSBuild를 직접 사용하고 candidate.json에 SDK와 소스 변경 상태를 기록한다. 저장소 global.json의 상용 후보 SDK10.0.400 고정값은 유지한다. 소스/설정/hash가 다른 후보의 결과를 상용 수용으로 승계하지 않는다.
+
 `scripts/package-host.ps1`는 로컬 배포 명령이다. CI를 만들거나 실행하지 않는다. PowerShell 7·.NET 10 SDK·검증된 FFmpeg DLL·실제 Authenticode 인증서/HTTPS timestamp·RSA 3072-bit 이상 PEM 개인 키를 준비한다. 개인 키를 저장소나 패키지에 넣지 않는다. 모든 버전의 Host는 자체 포함 publish이며 LGPL DLL은 별도 `ffmpeg/`에 둔다. Runbook 두 스크립트·라이선스 고지·설정·manifest도 동봉한다. 대응소스 bundle 준비가 실패하면 배포하지 않는다.
 
 패키징 예시는 `pwsh scripts/package-host.ps1 -Version 1.0.0.0 -Settings <검토한 host.settings.json> -CertificateThumbprint <제품 인증서> -TimestampUrl <HTTPS timestamp> -SigningKeyPem <보호된 개인 키> -SourceBundle <준비한 소스 ZIP> -SourceUrl https://<공개 소스 URL> -ManagedNotices <준비한 전체 고지 디렉터리> -Output <새 디렉터리>`다. 소스 archive는 `prepare-ffmpeg-sources.ps1`로 별도 준비·공개하며 바이너리 고지에 URL/hash를 동봉한다. 정식 인증서가 없으면 V36은 BLOCKED다. 개발 인증서를 제품 서명으로 표현하지 않는다. Windows 대상 머신의 TrustedPublisher에 검토한 제품 서명 인증서를 등록하며 installer는 AllSigned 정책으로 실행한다. 설치 후 인증서 추가를 자동 승인하지 않는다.

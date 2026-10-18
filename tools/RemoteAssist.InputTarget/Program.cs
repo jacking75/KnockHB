@@ -6,6 +6,9 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Linq;
 
 internal static class Program
 {
@@ -24,13 +27,25 @@ internal static class Program
         readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromMilliseconds(50)};
         int clicks,f12Down,f12Up,ctrlDown,ctrlUp,drag,wheel;
         DateTimeOffset? downUtc,upUtc;
+        readonly List<object> events=new();
+        readonly long startTick=Stopwatch.GetTimestamp();
+        bool observationOverflow;
+        void Record(string kind, int code, string action)
+        {
+            if(events.Count>=4096){observationOverflow=true;return;}
+            events.Add(new {tick=Stopwatch.GetTimestamp(),kind,code,action});
+        }
         public Target(string directory,int seconds)
         {
-            this.directory=directory;Title="RemoteAssist 격리 입력 시험";Width=600;Height=380;Left=3000;Top=450;Topmost=true;
+            this.directory=directory;Title="RemoteAssist 격리 입력 시험";Width=600;Height=380;WindowStartupLocation=WindowStartupLocation.CenterScreen;
             var panel=new StackPanel {Margin=new Thickness(24)};Content=panel;
             panel.Children.Add(new TextBlock {Text="원격 입력·키 복원 검증용 격리 창이다. 실제 앱·비밀번호를 조작하지 않는다.",TextWrapping=TextWrapping.Wrap});
             panel.Children.Add(button);panel.Children.Add(text);
             button.Click+=(_,_)=>clicks++;
+            PreviewKeyDown+=(_,e)=>Record("key",KeyInterop.VirtualKeyFromKey(e.Key==Key.System?e.SystemKey:e.Key),"down");
+            PreviewKeyUp+=(_,e)=>Record("key",KeyInterop.VirtualKeyFromKey(e.Key==Key.System?e.SystemKey:e.Key),"up");
+            PreviewMouseDown+=(_,e)=>Record("button",(int)e.ChangedButton,"down");
+            PreviewMouseUp+=(_,e)=>Record("button",(int)e.ChangedButton,"up");
             PreviewKeyDown+=(_,e)=>{if(e.Key==Key.F12){f12Down++;e.Handled=true;}if(e.Key==Key.LeftCtrl){ctrlDown++;downUtc=DateTimeOffset.UtcNow;}};
             PreviewKeyUp+=(_,e)=>{if(e.Key==Key.F12){f12Up++;e.Handled=true;}if(e.Key==Key.LeftCtrl){ctrlUp++;upUtc=DateTimeOffset.UtcNow;}};
             PreviewMouseMove+=(_,e)=>{if(e.LeftButton==MouseButtonState.Pressed)drag++;};PreviewMouseWheel+=(_,_)=>wheel++;
@@ -47,7 +62,14 @@ internal static class Program
         {
             var b=button.PointToScreen(new(button.ActualWidth/2,button.ActualHeight/2));var t=text.PointToScreen(new(text.ActualWidth/2,text.ActualHeight/2));
             var hwnd=new WindowInteropHelper(this).Handle;
-            var value=new {utc=DateTimeOffset.UtcNow,pid=Environment.ProcessId,window=hwnd.ToInt64(),foreground=Native.GetForegroundWindow()==hwnd,
+            var origin=PointToScreen(new(0,0));var corner=PointToScreen(new(ActualWidth,ActualHeight));
+            var held=Enumerable.Range(1,254).Where(vk=>(Native.GetAsyncKeyState(vk)&0x8000)!=0).ToArray();
+            using var process=Process.GetCurrentProcess();
+            var value=new {utc=DateTimeOffset.UtcNow,tick=Stopwatch.GetTimestamp(),startTick,tickFrequency=Stopwatch.Frequency,
+                pid=Environment.ProcessId,session=process.SessionId,image=Environment.ProcessPath,
+                window=hwnd.ToInt64(),foreground=Native.GetForegroundWindow()==hwnd,
+                bounds=new {left=origin.X,top=origin.Y,right=corner.X,bottom=corner.Y},
+                heldVirtualKeys=held,events,observationOverflow,observationValid=!observationOverflow,
                 clicks,f12Down,f12Up,ctrlDown,ctrlUp,ctrlHeld=(Native.GetAsyncKeyState(162)&0x8000)!=0,ctrlDownUtc=downUtc,ctrlUpUtc=upUtc,drag,wheel,
                 button=new {x=b.X,y=b.Y},textBox=new {x=t.X,y=t.Y},text=text.Text};
             var path=Path.Combine(directory,"input-target.json");

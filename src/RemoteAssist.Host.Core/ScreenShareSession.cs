@@ -232,7 +232,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         NotifyState("로컬 동의 대기");
         await _signaling!.SendAsync(new SignalMsg { Type = "consent-pending" }, _lifetime.Token);
         using var consentDeadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        consentDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+        consentDeadline.CancelAfter(TimeSpan.FromSeconds(ScreenShareOptions.ConsentDecisionSeconds));
         var capability = RequestLocalConsent is null ? Capability.None :
             await RequestLocalConsent(new SupporterIdentity(peer.ConnectionId, peer.DisplayName ?? "이름 미제공"), consentDeadline.Token).WaitAsync(consentDeadline.Token);
         consentDeadline.Token.ThrowIfCancellationRequested();

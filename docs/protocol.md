@@ -93,7 +93,7 @@ ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:
 {"v":1,"type":"consent","sessionId":"sid","generation":1,"permissions":["screen"],"permissionGeneration":1}
 ```
 
-joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 승인 callback을 실행한다. HostRun은 화면 보기만 승인하며 다른 기능은 거부한다. 이름은 자기 신고이며 신원 인증이 아니다. 대역 외 통화 등으로 확인한다. 동의와 협상 deadline은 각각 30초다.
+joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 승인 callback을 실행한다. HostRun은 화면 보기만 승인하며 다른 기능은 거부한다. 이름은 자기 신고이며 신원 인증이 아니다. 대역 외 통화 등으로 확인한다. 대상자가 권한 내용을 읽고 판단할 수 있도록 동의 deadline은 120초이며 Tray 안내/자동 거부와 Host의 권한 발급 제한에 같은 값을 적용한다. 만료·취소 뒤의 승인은 권한을 만들 수 없다. 승인 후 협상 deadline은 30초다.
 
 ## 서버 메시지 방향
 

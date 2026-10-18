@@ -1,6 +1,8 @@
 # 기술 사양
 
-[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 실행 완료는 [구현계획](../원격제어-구현계획.md)에서만 판정한다.
+개발 LAN 기능 검증용 시그널링 `RA_MODE=lan-test`는 사설 IP의 HTTPS/WSS만 허용한다. TLS 인증서/키, 정확히 일치하는 Viewer origin, node credential, 감사 저장소를 필수로 하며 코드/PIN·동의·권한 검사는 동일하다. TURN이 준비되지 않은 LAN 직접 연결 시험에서는 TURN 설정을 생략할 수 있지만 relay/NAT 수용으로 세지 않는다. production의 TURN 필수 조건과 development의 평문 loopback 제한은 유지한다. LAN TLS 신뢰는 시험용 인증서로 설정하고 해당 신뢰의 소유/제거를 기록한다. 코드서명과 TLS 신뢰는 별개다.
+
+[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 실행 완료는 [구현계획](../docs_working/원격제어-구현계획.md)에서만 판정한다.
 
 .NET SDK 10.0.400, Protocol net10.0, Windows 프로젝트 net10.0-windows10.0.19041.0이다. NuGet은 packages.lock.json과 locked restore, Go는 go.mod/go.sum으로 고정한다. SIPSorcery/SIPSorceryMedia.FFmpeg 10.0.16, Vortice 3.8.3, Microsoft.Extensions 10.0.11을 사용한다. Go 1.27/coder-websocket v1.8.15, Viewer는 정적 ES module이고 Node는 회귀용이다. 검증 runner는 Windows PowerShell5.1/PowerShell7을 지원하며 배포 패키징은 PowerShell7을 요구한다.
 

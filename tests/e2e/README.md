@@ -1,8 +1,10 @@
 # 제품 검증 하네스와 장애 묶음
 
-**현재 Arm과 invoke-product-local 직접 실행은 차단됐다.** 30분 재리뷰에서 전역 deadline/독립 watchdog·유한 SCM/정리·실제 복귀 증거가 부족함을 확인했다. PrepareOnly/Finish/Abort/Collect는 유지한다. [구현계획 R30](../../원격제어-구현계획.md)와 [보수적 리뷰](../../docs_working/e2e-30-minute-review-2026-10-08.md)의 R30-05~08이 끝나기 전에는 아래 과거 Arm 절차를 실행하지 않는다.
+**현재 Arm과 invoke-product-local 직접 실행은 차단됐다.** 30분 재리뷰에서 전역 deadline/독립 watchdog·유한 SCM/정리·실제 복귀 증거가 부족함을 확인했다. PrepareOnly/Finish/Abort/Collect는 유지한다. [구현계획 R30](../../docs_working/원격제어-구현계획.md)와 [보수적 리뷰](../../docs_working/e2e-30-minute-review-2026-10-08.md)의 R30-05~08이 끝나기 전에는 아래 과거 Arm 절차를 실행하지 않는다.
 
-최신 기준은 전체 목표600초·절대 상한900초다. campaign-plan.json version1의1800초 예산은 폐기된 검토 자료이며 현재 실행 계획이 아니다. 구현계획 R30-02/03에서 새 예산과 검사기를 재설계/검증한다. readiness.template.json의 빈 값/false는 미확인이다. `node scripts/check-e2e-readiness.cjs tests/e2e/campaign-plan.json tests/e2e/readiness.template.json .artifacts/readiness-review.json`은 종전 파일 모델만 검사하고 version1에서는 항상 BLOCKED_BEFORE_START/exit2다. 이 결과는900초 준비 완료 증거가 아니다. 준비 양식을 true로 채워 runtime guard 구현을 대신하지 못한다. 입력/서비스/네트워크를 실행하지 않으며 제품 PASS를 판정하지 않는다. `node --test tests/e2e/readiness.test.cjs`는 종전 모델의 거부 회귀다.
+최신 기준은 전체 목표600초·절대 상한900초다. campaign-plan.json version2는 LAN 동의/영상·입력·대상자 종료의 선택 범위다. 기능300초+정리/확인240초+예비300초+보고60초이며 정상 경로는 예비 없이600초다. version1의1800초 계획은 검사기가 거부한다. readiness.template.json의 빈 값/false는 미확인이다. `node scripts/check-e2e-readiness.cjs tests/e2e/campaign-plan.json tests/e2e/readiness.template.json .artifacts/readiness-review.json`은 파일만 검사하며 항상 BLOCKED_BEFORE_START/exit2다. 실제 guard/복귀 수용 전 Arm을 허용하지 않는다. 전체 F의 미선택 사례와 기존 증거는 별도로 연결한다.
+
+`node --test tests/e2e/readiness.test.cjs tests/e2e/deadline.test.cjs`는 입력 없는 준비 회귀다. `scripts/e2e-deadline.cjs`는 공유 단조 deadline과 직접 생성한 leaf 프로세스의 유한 호출/출력, 별도 guardian의 controller heartbeat 감시 기반이다. 제품 실행 경로에는 아직 연결하지 않았다. guardian 자체 강제 종료 시 Windows Job 정리, UAC/SCM 어댑터, PID 재사용/서비스 image/경로 소유 검증, 원자적 campaign/cleanup ledger와 실제 외부 복귀는 미완료다. 이 기반을 서비스/자식 생성 명령에 사용하거나 제품 runtime guard 완료로 세지 않는다.
 
 다음 설명은 기존 하네스의 계약/남은 보완 근거다. generic features 선택과180초 TURN 시나리오는 현행30분 계획의 실행 지시가 아니다. 현재 범위/증거/시간은 campaign-plan.json과 보수적 리뷰의 고정 case를 따른다.
 

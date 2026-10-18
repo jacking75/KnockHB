@@ -64,7 +64,7 @@ func run() int {
 	listenResult := make(chan error, 1)
 	go func() {
 		log.Info("시그널링 시작", "addr", config.addr, "mode", config.mode)
-		if config.mode == "production" {
+		if config.mode == "production" || config.mode == "lan-test" {
 			listenResult <- httpServer.ListenAndServeTLS(config.cert, config.key)
 		} else {
 			listenResult <- httpServer.ListenAndServe()
@@ -101,8 +101,8 @@ func loadSettings() (settings, error) {
 	if err != nil || port < 25001 || port > 25199 {
 		return out, errors.New("TCP listener는 25001~25199여야 한다")
 	}
-	if out.mode != "development" && out.mode != "production" {
-		return out, errors.New("RA_MODE는 development 또는 production이어야 한다")
+	if out.mode != "development" && out.mode != "production" && out.mode != "lan-test" {
+		return out, errors.New("RA_MODE는 development, lan-test 또는 production이어야 한다")
 	}
 	if out.mode == "development" {
 		ip := net.ParseIP(host)
@@ -116,6 +116,12 @@ func loadSettings() (settings, error) {
 	}
 	out.cfg.SessionTTL = ttl
 	out.cfg.OriginPatterns = envList("RA_ALLOWED_ORIGINS")
+	if out.mode == "lan-test" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsPrivate() || len(out.cfg.OriginPatterns) != 1 || out.cfg.OriginPatterns[0] != out.addr {
+			return out, errors.New("LAN 시험은 사설 IP와 정확히 일치하는 단일 Viewer origin이 필요하다")
+		}
+	}
 	for _, origin := range out.cfg.OriginPatterns {
 		if strings.Contains(origin, "*") {
 			return out, errors.New("Origin wildcard는 허용하지 않는다")
@@ -140,7 +146,7 @@ func loadSettings() (settings, error) {
 			return out, errors.New("TURN secret은 최소 32바이트여야 한다")
 		}
 	}
-	if out.mode == "production" {
+	if out.mode == "production" || out.mode == "lan-test" {
 		if out.cfg.OperatorSecretFile == "" || out.cfg.AuditDirectory == "" {
 			return out, errors.New("운영 node credential과 감사 디렉터리가 필요하다")
 		}
@@ -156,8 +162,11 @@ func loadSettings() (settings, error) {
 		if _, err := tls.LoadX509KeyPair(out.cert, out.key); err != nil {
 			return out, errors.New("운영 TLS 인증서/키 검사 실패")
 		}
-		if len(out.cfg.TURNURLs) == 0 || len(out.cfg.TURNSecret) < 32 {
+		if out.mode == "production" && (len(out.cfg.TURNURLs) == 0 || len(out.cfg.TURNSecret) < 32) {
 			return out, errors.New("운영 TURN URL과 보호된 secret이 필요하다")
+		}
+		if out.mode == "lan-test" && (len(out.cfg.TURNURLs) == 0) != (len(out.cfg.TURNSecret) == 0) {
+			return out, errors.New("LAN TURN 설정은 URL과 secret을 함께 지정해야 한다")
 		}
 		if out.viewer == "" {
 			return out, errors.New("운영 Viewer 디렉터리가 필요하다")
