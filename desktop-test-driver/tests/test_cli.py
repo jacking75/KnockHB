@@ -26,7 +26,14 @@ try:
     env["DTD_TRUST_STORE"] = str(work / "owners.json")
     plan = package / "scenarios/examples/counter.json"
     plan_info = call("plan-check", plan)
-    assert call("catalog-check", package / "adapters/remoteassist/acceptance.json")["cases"] == 53
+    manifest = json.loads((package / "package-manifest.json").read_text(encoding="utf-8-sig"))
+    if manifest["profile"] == "remoteassist":
+        assert call("catalog-check", package / "adapters/remoteassist/acceptance.json")["cases"] == 53
+    else:
+        assert manifest["profile"] == "core"
+        assert not any("remoteassist" in f["path"].lower() for f in manifest["files"])
+        deps = json.loads((package / "Server/Server.deps.json").read_text(encoding="utf-8"))
+        assert not any("RemoteAssist" in name for name in deps["libraries"])
     from datetime import datetime, timedelta, timezone
     config = json.loads((package / "inventory/run.template.json").read_text(encoding="utf-8"))
     config.update(runId="cli-smoke", machineId="mock-machine", role="observer",

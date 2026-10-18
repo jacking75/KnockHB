@@ -6,7 +6,7 @@
 
 Windows 시험 전용 도구다. Server는 조작 PC, Client는 조작될 PC에 두고 Broker가 SSH 관리 경로와 일반 사용자 콘솔 사이를 연결한다. Watchdog은 Client와 별도 프로세스다. RemoteAssist의 솔루션·설정·IPC·바이너리에 의존하지 않는다. [계약과 위협 모델](docs/contracts-9.md), [구현·검증 증거](docs/verification-11.md), [전체 D 태스크](../docs_working/e2e-desktop-driver-plan.md) 순서로 읽는다.
 
-현재는 개발용 0.2.0, 프로토콜 v2다. 필수 소유자 서명과 시나리오 hash가 추가되어 0.1.0/v1과 혼용하지 않는다. D01~D20은 구현과 로컬·모의 검증 범위다. 실제 시험 머신의 설치·콘솔 기동·입력·복귀·제거와 제품 수용은 D21~D23에서 검증한다. 실제 제품 시험이나 UAC·잠금·재부팅 준비 완료를 의미하지 않는다. [회차 위임·시나리오·어댑터 운영](docs/scenarios-12.md)에서 새 기능과 제품 없는 재사용 예제를 설명한다.
+현재는 개발용 0.2.0, 프로토콜 v2다. 필수 소유자 서명과 시나리오 hash가 추가되어 0.1.0/v1과 혼용하지 않는다. D01~D20은 구현과 로컬·모의 검증 범위다. D21은 SSH 설치, D22는 자체 fixture의 관측·입력·장애 검증, D23은 수집·제거·복귀와 독립 수용이다. **D21~D23은 RemoteAssist 없이 완료한다.** 제품 연동은 독립 수용 뒤 별도 H 단계다. [회차 위임·시나리오·어댑터 운영](docs/scenarios-12.md)에서 새 기능과 제품 없는 재사용 예제를 설명한다.
 
 ## 설치와 독립 빌드
 
@@ -23,6 +23,10 @@ python -m venv .venv
 `build.ps1 -Package`는 `artifacts/package-<고유ID>/`에 Client, Broker, Watchdog, Server와 SSH 전송부를 게시한다. 각 파일의 SHA-256·크기와 도구/프로토콜 버전을 `package-manifest.json`에 기록한다. 제품 빌드나 CI는 실행하지 않는다. 프레임워크 종속 패키지이므로 시험 PC에 Desktop Runtime이 먼저 있어야 한다. `verify.ps1`은 실제 데스크톱·서비스·제품을 조작하지 않으며, 실패한 검사에서 종료한다.
 
 ## inventory와 준비
+
+기본 `DesktopTestDriver.slnx`, `build.ps1 -Package`, `verify.ps1`은 RemoteAssist 어댑터·제품별 fixture/V/F 계획을 빌드하거나 참조하지 않는다. 패키지 manifest의 profile은 core다. `verify.ps1`은 어댑터와 제품 소스가 없는 임시 독립 복사본에서도 빌드·계약 검사를 실행한다. 자체 `MarkerWindow`의 FixtureClick/FixtureText·fixture-input.json으로 실제 입력 결과를 관측한다.
+
+독립 수용 이후 제품 연동을 준비할 때만 `build.ps1 -Package -RemoteAssist` 또는 `verify.ps1 -RemoteAssist`를 명시한다. 이 선택형 프로필은 별도 `DesktopTestDriver.RemoteAssist.slnx`와 모의 제품 어댑터 검사를 사용한다. 어댑터는 `adapters/remoteassist/`에 따로 게시하며 기본 Server에는 링크하지 않는다. 이 옵션도 실제 제품을 실행하지 않는다.
 
 `inventory/example.json`을 비공개 작업 디렉터리에 복사해 수정한다. 예시 주소·키·계정은 실제 대상이 아니다. 머신 ID, 소유자, OS/GPU/모니터, 가능한 역할, 실제 콘솔 계정, 허용 설치 루트와 고정 SSH 호스트 키를 기록한다. 호스트 키는 별도 신뢰 경로로 확인하고 `hostKeyType`과 Base64 공개키 원문을 함께 고정한다. 자동 수집한 새 키를 무조건 신뢰하지 않는다.
 

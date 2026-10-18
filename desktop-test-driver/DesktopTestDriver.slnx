@@ -5,7 +5,6 @@
   <Project Path="src/Client.Broker/Client.Broker.csproj" />
   <Project Path="src/Client.Watchdog/Client.Watchdog.csproj" />
   <Project Path="src/Server/Server.csproj" />
-  <Project Path="adapters/remoteassist/RemoteAssist.Adapter.csproj" />
   <Project Path="fixtures/MarkerWindow/MarkerWindow.csproj" />
   <Project Path="tests/Driver.Tests/Driver.Tests.csproj" />
 </Solution>

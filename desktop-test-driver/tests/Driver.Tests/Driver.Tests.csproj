@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/Core/Core.csproj" /></ItemGroup>
-  <ItemGroup><ProjectReference Include="../../adapters/remoteassist/RemoteAssist.Adapter.csproj" /></ItemGroup>
+  <PropertyGroup Condition="'$(IncludeRemoteAssist)' == 'true'">
+    <DefineConstants>$(DefineConstants);REMOTEASSIST_TESTS</DefineConstants>
+    <NuGetLockFilePath>packages.remoteassist.lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IncludeRemoteAssist)' == 'true'"><ProjectReference Include="../../adapters/remoteassist/RemoteAssist.Adapter.csproj" /></ItemGroup>
+  <ItemGroup Condition="'$(IncludeRemoteAssist)' != 'true'"><Compile Remove="AdapterFakes.cs" /></ItemGroup>
 </Project>

@@ -55,9 +55,11 @@ var cases = new (string Name, Func<Task> Run)[]
     ("external console process validates executable hash and terminates hung adapters", Tests.ExternalConsole),
     ("owner signature, scope denial, redacted audit and evidence retention are enforced", ExtensionTests.AuthorizationPolicy),
     ("scenario engine binds provenance, stops on first failure and refuses false PASS", ExtensionTests.Scenarios),
+#if REMOTEASSIST_TESTS
     ("Tray consent verifies identity, privileges, denial, close and actual UI selectors", ExtensionTests.Tray),
     ("Viewer uses browser input events with URL pinning, letterbox and release", ExtensionTests.Viewer),
     ("product observers reject stale, mixed, forged, unreleased and out-of-scope evidence", ExtensionTests.Observations),
+#endif
     ("fixture failure restores baseline and real environment gates reject mock proof", ExtensionTests.Fixtures),
     ("coverage, evidence bundle and preparation keep simulated work out of acceptance", ExtensionTests.AcceptanceAndPreparation),
 };

@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup><ProjectReference Include="../Core/Core.csproj" /></ItemGroup>
-  <ItemGroup><ProjectReference Include="../../adapters/remoteassist/RemoteAssist.Adapter.csproj" /></ItemGroup>
 </Project>

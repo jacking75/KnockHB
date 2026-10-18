@@ -1,5 +1,7 @@
 using DesktopTestDriver;
+#if REMOTEASSIST_TESTS
 using DesktopTestDriver.RemoteAssist;
+#endif
 
 internal static class ExtensionTests
 {
@@ -11,7 +13,11 @@ internal static class ExtensionTests
     }
     public static async Task Fixtures()
     {
-        foreach (var path in Directory.GetFiles(Path.Combine(Root(),"fixtures"),"*.json"))
+        var paths = new[] { Path.Combine(Root(),"fixtures","generic-desktop.json") };
+#if REMOTEASSIST_TESTS
+        paths = Directory.GetFiles(Path.Combine(Root(),"fixtures"),"*.json");
+#endif
+        foreach (var path in paths)
         {
             var fixture = Wire.Decode<FixtureDefinition>(File.ReadAllText(path)); fixture.Validate();
             var pass = await FixtureRunner.Run(fixture,"mock-run",new SimulatedFixtureBackend(),true,fixture.Environments,_ => Task.FromResult(false));
@@ -30,6 +36,7 @@ internal static class ExtensionTests
         var report = await new ScenarioRunner(registry).Run(plan,context);
         var output = Path.Combine(f.Parent,"bundle"); EvidenceBundle.Write(output,plan,report); EvidenceBundle.Verify(output);
         File.AppendAllText(Path.Combine(output,"report.json")," "); Tests.Reject(() => EvidenceBundle.Verify(output),Error.DelegationMismatch);
+#if REMOTEASSIST_TESTS
         var cases = Wire.Decode<AcceptanceCase[]>(File.ReadAllText(Path.Combine(Root(),"adapters","remoteassist","acceptance.json"))); AcceptanceGate.Validate(cases);
         foreach (var id in cases.SelectMany(c => c.PlanIds).Distinct())
         {
@@ -37,6 +44,7 @@ internal static class ExtensionTests
             Tests.Check(fixedPlan.Id == id && cases.Where(c => c.PlanIds.Contains(id)).All(c => fixedPlan.Coverage.Contains(c.Id)),"catalog plan coverage drift");
         }
         Tests.Reject(() => AcceptanceGate.Validate(cases[..^1]),Error.InvalidRequest);
+#endif
         var requirement = new AcceptanceCase("F01","two PC",[plan.Id],["two-pc"],["all-subconditions"]);
         Tests.Check(AcceptanceGate.Evaluate(requirement,[report],context.CandidateHash,["two-pc"],new Dictionary<string,bool>{{"all-subconditions",true}},2) == Verdict.NotRun,"mock report promoted");
         Tests.Check(AcceptanceGate.Evaluate(requirement,[report with { Simulated=false }],context.CandidateHash,["two-pc"],new Dictionary<string,bool>{{"all-subconditions",true}},1) == Verdict.Blocked,"single PC promoted");
@@ -48,6 +56,7 @@ internal static class ExtensionTests
         var fail = Preparation.Check(plan,context,[new(f.Store.PathFor("run.json"),new('f',64))],[observed],f.Store.Root);
         Tests.Check(!fail.ContractsReady,"changed candidate accepted");
     }
+#if REMOTEASSIST_TESTS
     public static async Task Tray()
     {
         using var f = new Fixture(); var surface = new ConsentSurface(f); var tray = new TrayUi(surface, f.Store.Config);
@@ -122,6 +131,7 @@ internal static class ExtensionTests
         Tests.Check(VisualMarker.Colors("run-a").SequenceEqual(VisualMarker.Colors("run-a")) && !VisualMarker.Colors("run-a").SequenceEqual(VisualMarker.Colors("run-b")), "marker not run-bound");
         return Task.CompletedTask;
     }
+#endif
     public static ScenarioPlan Plan(string adapter = "counter-example") => new("self-test", adapter, "제품 없는 시나리오 판정", ["D14"], ["모의 노드"], ["독립 관측"],
         "첫 실패 즉시 종료", "소유 입력·자원 해제와 복귀", "계약 검사 재사용", 10, 20, 0, RecoveryGrade.R0,
         [new("one", "host", "increment", [], [new("count", "eq", "1", "sample-observer", "host")]),

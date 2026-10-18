@@ -6,7 +6,17 @@
 - [x] 게시된 Server로 inventory CLI 검증을 통과한다.
 - [x] D12~D20의 권한·시나리오·어댑터·fixture·준비/수용 판정과 독립 예제를 검증한다.
 
-## D12~D20 현재 검사
+## 2026-10-19 독립성 교정 검사
+
+사용자 지시에 따라 D21~D23을 제품 없는 도구 자체 수용으로 수정했다. 기본 솔루션과 Server에서 RemoteAssist 어댑터 참조를 제거하고 제품별 시나리오/fixture·검사를 선택형 프로필로 격리했다. 자체 MarkerWindow에 클릭·drag·wheel·키/문자·OS held 상태의 `fixture-input.json` 관측을 추가했다. 실제 창/입력 실증은 수행하지 않았다.
+
+기본 `verify.ps1` 증거는 `artifacts/verify-cb5edda46df641dea38856f7fc4b104b/`다. 시스템 검증 summary의 종료 시각은 2026-10-19 00:26:29 KST다. 독립 빌드 경고/오류 0개, 기본 계약 검사 22개, loopback SSH/SFTP 11개와 게시 CLI 검사 7개가 통과했다. core 패키지는 파일 66개이며 RemoteAssist 관련 경로/어셈블리는 0개다. Server.deps.json에서도 제품 어댑터 참조가 없음을 검사했다.
+
+`test_independent.py`는 src·자체 fixture·기본 테스트만 임시 디렉터리에 복사한다. RemoteAssist 제품 소스·어댑터 디렉터리·제품 계획이 없는 상태에서 독립 빌드와 계약 검사 22개가 통과했다. 선택형 모의 어댑터 프로필의 회귀 검사는 `artifacts/verify-931078d7528a40e899e92ea360fc35df/`에 별도로 보관하며 실제 제품을 실행하지 않았다. 기본/선택 프로필은 테스트 NuGet lock 파일도 분리했다.
+
+이번 검증은 로컬 코드·모의 검사다. D21 SSH 실PC 배치, D22 실제 자체 fixture 입력/장애, D23 제거/복귀·독립 수용은 모두 미실행이다. RemoteAssist 제품의 준비나 결함을 이 태스크들의 선행 조건으로 삼지 않는다. 제품 연동 H/V/F는 독립 수용 뒤 별도 계획으로 남긴다.
+
+## D12~D20 최초 검사 기록
 
 시스템 명령과 검증 summary에서 확인한 종료 시각은 **2026-10-18 22:20:46 KST**다. `verify.ps1`에서 독립 Release 빌드 경고/오류 0개, Client/Broker/Watchdog/Server/MarkerWindow 게시, C# 계약·고장 주입 25개, loopback SSH/SFTP 11개, 게시 CLI 서명·예제·변조 거부 7개, inventory 검사와 V/F 계획 드리프트 검사가 통과했다. CI는 생성·변경·실행·진단하지 않았다.
 

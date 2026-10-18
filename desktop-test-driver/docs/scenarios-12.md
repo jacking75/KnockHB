@@ -5,7 +5,7 @@
 - [x] D19 모의 준비·실패·정리/복귀를 검증하고 실환경 승격을 차단한다.
 - [x] D20 게시된 독립 예제·설치/제거·운영 절차를 검증한다.
 
-이 문서는 0.2.0/v2 운영 기준이다. 설치는 [README](../README-10.md), 상세 권한 경계는 [계약](contracts-9.md), 실행 결과는 [검증 증거](verification-11.md)에서 확인한다. 실제 머신 시험은 [D21~D23](../../docs_working/e2e-desktop-driver-plan.md)에 남아 있다. 이 문서의 명령 중 `simulate`, `plan-check`, `catalog-check`는 제품이나 OS 입력을 실행하지 않는다.
+이 문서는 0.2.0/v2 운영 기준이다. 설치는 [README](../README-10.md), 상세 권한 경계는 [계약](contracts-9.md), 실행 결과는 [검증 증거](verification-11.md)에서 확인한다. 제품 없이 수행하는 실제 머신 시험은 [D21~D23](../../docs_working/e2e-desktop-driver-plan.md)에 남아 있다. 이 문서의 명령 중 `simulate`, `plan-check`, `catalog-check`는 제품이나 OS 입력을 실행하지 않는다.
 
 ## 소유자 등록과 회차 승인
 
@@ -62,7 +62,9 @@ EvidenceBundle.Write(newPrivateDirectory, plan, report);
 
 ## RemoteAssist 연결과 관측
 
-게시 패키지의 `Server/RemoteAssist.Adapter.dll`은 제품 소스/DTO/IPC에 참조하지 않는다. 준비된 두 `SshTransport`를 각각 `NodeUi`에 연결하고 host의 `TrayUi`, 전용 시험 브라우저의 `CdpViewer`, `ReadOnlyProductEvidence`, `TrayPairingSecrets`로 `RemoteAssistAdapter`를 구성해 등록한다. 실제 실행에는 PreparationReport를 반환하는 preparation callback도 필수다. `Preparation.Observe`는 해당 머신의 pinned SSH Broker에서 Client/Watchdog 생존을 확인하며 Server의 로컬 PID 표와 대조하지 않는다. 관측과 실행에는 같은 NodeUi 인스턴스를 사용해 명령 순번을 유지한다. 복귀 callback은 양쪽의 ledger·소유 자원·정상 desktop과 외부 복귀 receipt를 확인해야 한다. true를 고정 반환해 실제 준비를 통과시키지 않는다.
+이 절부터의 제품 전용 어댑터·V/F·네트워크/설치 fixture는 독립 도구 수용 이후의 선택형 확장이다. D21~D23은 이 기능을 사용하거나 제품 준비를 기다리지 않는다. 기본 core 빌드/패키지/검사는 해당 어댑터와 제품 계획 없이 동작한다. `-RemoteAssist`로 명시한 확장 패키지에서만 `adapters/remoteassist/RemoteAssist.Adapter.dll`과 제품 계획을 별도로 게시한다.
+
+선택형 확장 패키지의 `adapters/remoteassist/RemoteAssist.Adapter.dll`은 제품 소스/DTO/IPC에 참조하지 않는다. 준비된 두 `SshTransport`를 각각 `NodeUi`에 연결하고 host의 `TrayUi`, 전용 시험 브라우저의 `CdpViewer`, `ReadOnlyProductEvidence`, `TrayPairingSecrets`로 `RemoteAssistAdapter`를 구성해 등록한다. 실제 실행에는 PreparationReport를 반환하는 preparation callback도 필수다. `Preparation.Observe`는 해당 머신의 pinned SSH Broker에서 Client/Watchdog 생존을 확인하며 Server의 로컬 PID 표와 대조하지 않는다. 관측과 실행에는 같은 NodeUi 인스턴스를 사용해 명령 순번을 유지한다. 복귀 callback은 양쪽의 ledger·소유 자원·정상 desktop과 외부 복귀 receipt를 확인해야 한다. true를 고정 반환해 실제 준비를 통과시키지 않는다.
 
 CDP는 시험 전용 Chrome의 loopback TCP 25002 같은 허용 포트와 정확한 HTTPS Viewer URL만 연결한다. 자동으로 브라우저를 시작하거나 인증서 오류를 무시하지 않는다. 이미 준비한 전용 탭에서 `CdpConnection.Connect(endpoint, expectedUrl, token)`을 호출한다. 위치/크기/가림·URL을 읽어 확인한 뒤 브라우저의 실제 mouse/key/insertText 이벤트를 사용한다. 제품 함수 호출, DOM 값 직접 변경이나 권한 상태 주입은 하지 않는다. 소유 키/버튼은 실패·탭 이동 뒤에도 release한다. 브라우저 종료 등 CDP 자체가 사라지면 제품 reset/Host watchdog과 독립 복귀 증거가 필요하며 정리 실패로 남긴다.
 
@@ -98,7 +100,7 @@ Tray는 HostStart/HostStop/ConsentScreen/ConsentControl/ConsentAdmin/ConsentAppr
 
 ## 준비·증거·실패·제거
 
-`Preparation.Check`는 signed context, 고정 파일 hash, 관측된 Session/desktop/window, Client/Watchdog 신원, 복귀 receipt와 증거 디스크 공간을 읽기 전용으로 확인한다. 모의 검사는 ContractsReady만 반환하며 ReadyForRealExecution은 false다. 준비 성공·프로세스 기동을 기능 PASS로 세지 않는다. 제품 Helper 조기 종료 원인과 H10이 해결됐다는 주장은 하지 않으며 D23 전에 해당 제품 게이트도 따로 충족해야 한다.
+`Preparation.Check`는 signed context, 고정 파일 hash, 관측된 Session/desktop/window, Client/Watchdog 신원, 복귀 receipt와 증거 디스크 공간을 읽기 전용으로 확인한다. 모의 검사는 ContractsReady만 반환하며 ReadyForRealExecution은 false다. 준비 성공·프로세스 기동을 기능 PASS로 세지 않는다. 제품 Helper 조기 종료 원인과 H10이 해결됐다는 주장은 하지 않으며 향후 H12 제품 시험 전에 해당 제품 게이트도 따로 충족해야 한다.
 
 첫 실패·준비 누락·deadline에는 새 동작을 멈추고 브라우저 키/버튼 해제→양쪽 노드 stop→소유 자원 정리→정상 desktop/독립 복귀 확인→증거/결과 전달을 수행한다. feature 토큰이 취소돼도 정리에는 남은 전역 예산의 독립된 최대 5초를 쓴다. 정리 실패는 Fail이며 예약을 유지한다. 같은 회차 안의 수정·재빌드·재시도는 하지 않는다.
 
