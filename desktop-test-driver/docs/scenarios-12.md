@@ -5,7 +5,7 @@
 - [x] D19 모의 준비·실패·정리/복귀를 검증하고 실환경 승격을 차단한다.
 - [x] D20 게시된 독립 예제·설치/제거·운영 절차를 검증한다.
 
-이 문서는 0.2.0/v2 운영 기준이다. 설치는 [README](../README-10.md), 상세 권한 경계는 [계약](contracts-9.md), 실행 결과는 [검증 증거](verification-11.md)에서 확인한다. 제품 없이 수행하는 실제 머신 시험은 [D21~D23](../../docs_working/e2e-desktop-driver-plan.md)에 남아 있다. 이 문서의 명령 중 `simulate`, `plan-check`, `catalog-check`는 제품이나 OS 입력을 실행하지 않는다.
+이 문서는 0.2.0/v2 운영 기준이다. 설치는 [README](../README-10.md), 상세 권한 경계는 [계약](contracts-9.md), 실행 결과는 [검증 증거](verification-11.md)에서 확인한다. 제품 없이 수행하는 실제 머신 시험은 [D21~D23](../e2e-desktop-driver-plan.md)에 남아 있다. 이 문서의 명령 중 `simulate`, `plan-check`, `catalog-check`는 제품이나 OS 입력을 실행하지 않는다.
 
 ## 소유자 등록과 회차 승인
 

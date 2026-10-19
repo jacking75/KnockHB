@@ -37,6 +37,7 @@ try {
             }
         }
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README-10.md') -Destination $target
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'e2e-desktop-driver-plan.md') -Destination $target
         if ($RemoteAssist) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters/remoteassist/acceptance.json') -Destination (Join-Path $target 'adapters/remoteassist') }
         # Enumerate after copying scenarios/docs so every shipped file is covered by the manifest.
         $files = @(Get-ChildItem -LiteralPath $target -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/]__pycache__[\\/]' } | Sort-Object FullName | ForEach-Object {

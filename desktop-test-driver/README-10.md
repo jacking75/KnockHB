@@ -4,7 +4,7 @@
 - [x] 제품과 실제 화면 입력을 사용하지 않는 로컬 계약·고장 주입·SSH/SFTP 모의 검사를 제공한다.
 - [x] D08의 SSH 배치·전송·제어를 loopback 모의 대상으로 검증한다.
 
-Windows 시험 전용 도구다. Server는 조작 PC, Client는 조작될 PC에 두고 Broker가 SSH 관리 경로와 일반 사용자 콘솔 사이를 연결한다. Watchdog은 Client와 별도 프로세스다. RemoteAssist의 솔루션·설정·IPC·바이너리에 의존하지 않는다. [계약과 위협 모델](docs/contracts-9.md), [구현·검증 증거](docs/verification-11.md), [전체 D 태스크](../docs_working/e2e-desktop-driver-plan.md) 순서로 읽는다.
+Windows 시험 전용 도구다. Server는 조작 PC, Client는 조작될 PC에 두고 Broker가 SSH 관리 경로와 일반 사용자 콘솔 사이를 연결한다. Watchdog은 Client와 별도 프로세스다. RemoteAssist의 솔루션·설정·IPC·바이너리에 의존하지 않는다. [계약과 위협 모델](docs/contracts-9.md), [구현·검증 증거](docs/verification-11.md), [전체 D 태스크](e2e-desktop-driver-plan.md) 순서로 읽는다.
 
 현재는 개발용 0.2.0, 프로토콜 v2다. 필수 소유자 서명과 시나리오 hash가 추가되어 0.1.0/v1과 혼용하지 않는다. D01~D20은 구현과 로컬·모의 검증 범위다. D21은 SSH 설치, D22는 자체 fixture의 관측·입력·장애 검증, D23은 수집·제거·복귀와 독립 수용이다. **D21~D23은 RemoteAssist 없이 완료한다.** 제품 연동은 독립 수용 뒤 별도 H 단계다. [회차 위임·시나리오·어댑터 운영](docs/scenarios-12.md)에서 새 기능과 제품 없는 재사용 예제를 설명한다.
 
