@@ -1,5 +1,13 @@
 # DesktopTestDriver — 개발자용 다중 머신 데스크톱 시험 도구 구현 계획
 
+- [x] 리뷰 수정 1: 물리 입력은 항상 중단하고 서명된 control/시나리오의 봉인 구간만 외부 주입을 관측한다. 실환경용 판정 함수에 모의 Host 관측과 Server에 없는 PID를 제공하고 생성 시각/경로/hash 관측으로 검증하는 회귀 검사가 통과했다.
+- [x] 리뷰 수정 2: 감사·fixture 증거를 SSH 수집에 포함한다. loopback SSH 검사에서 audit.jsonl·marker.json·fixture-input.json·fixture.json과 개별 hash의 보존, secret 제외를 확인했다.
+- [x] 리뷰 수정 3: 서명된 자체 fixture 기동·소유 ledger·관측·입력 판정·중단을 Server/Client에 연결했다. 실제 비UI 자식 프로세스와 가짜 desktop/input을 사용한 전체 독립 시나리오 및 중복 기동 거부·정리 검사가 통과했다.
+- [x] 리뷰 수정 4: ExternalFixtureBackend의 고정 실행 파일/hash·정의 hash·회차·환경·복귀 등급·receipt/모의 구분·timeout 강제 종료를 구현·검사했다. 장시간 fixture는 최소 부하 시간 동안 유한 metrics 호출을 반복하고 최초 실패에서 복원한다. 장비별 승인 실행 파일/설정과 실환경 수용은 환경 준비 후 연결한다.
+- [x] 리뷰 수정 5: 실제 화면·2PC 없이 기본/선택 패키지를 빌드하고 C# 28/31개, SSH/SFTP 11개와 CLI 9개, 제품 없는 독립 복사본 28개 검사를 통과했다. 증거는 `artifacts/verify-49477c3dbb4144229cc9ea7aa08c7a34/`(기본)와 `artifacts/verify-143d461ccbeb4cbcba46089f7783f59f/`(선택)이며 운영·계약·검증 문서를 갱신했다.
+
+2PC 환경은 아직 구축 전이므로 D21~D23은 환경 준비 후 실행할 검증 대기로 유지한다. 위 수정 목록은 구현·로컬/모의 검사만 추적한다.
+
 **도구 이름: DesktopTestDriver.** RemoteAssist 제품과 별개로 만드는 개발자·CI 전용 시험 도구다. 일반 사용자에게 배포하거나 원격 지원 제품의 구성 요소로 제공하지 않는다.
 
 **Server는 원격으로 조작하는 PC**에서 실행해 시험을 지휘하고 결과를 수집한다. **Client는 원격으로 조작될 시험 PC**에서 실행해 화면 관측·입력·정리를 수행한다. 한 Server가 여러 Client를 제어한다. 이 Server/Client 명칭은 시험 도구의 역할이며 RemoteAssist 제품의 시그널링 서버·Host·Viewer와 다르다.

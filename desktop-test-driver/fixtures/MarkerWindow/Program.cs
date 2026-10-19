@@ -18,6 +18,14 @@ internal static class Program
         try
         {
             RunStore.CheckPrivate(Path.GetFullPath(root)); WindowsDesktop.EnableDpi();
+            var store = new RunStore(root);
+            using var process = Process.GetCurrentProcess();
+            var identity = Processes.Identify(process); var session = process.SessionId; var startedTick = Stopwatch.GetTimestamp();
+            var scope = store.Config.Fixture ?? throw new DriverException(Error.DelegationMismatch);
+            if (run != store.Config.RunId || seconds > scope.MaxSeconds || !scope.ImagePath.Equals(identity.ImagePath, StringComparison.OrdinalIgnoreCase) ||
+                scope.ImageHash != identity.ImageHash || !WindowsDesktop.ConsoleValid(store.Config.TargetSession)) return 1;
+            while (!File.Exists(store.PathFor("fixture.json")) && OwnedFixture.MayRun(store, identity, startedTick)) Thread.Sleep(10);
+            if (!File.Exists(store.PathFor("fixture.json")) || !OwnedFixture.MayRun(store, identity, startedTick)) return 1;
             var colors = VisualMarker.Colors(run);
             var band = new System.Windows.Controls.Primitives.UniformGrid { Columns = 16, Rows = 1, Height = 64 };
             foreach (var rgb in colors) band.Children.Add(new Border { Background = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb)) });
@@ -42,12 +50,11 @@ internal static class Program
             window.PreviewMouseUp += (_,e) => Record("button",(int)e.ChangedButton,"up");
             window.PreviewMouseMove += (_,e) => { if (e.LeftButton == MouseButtonState.Pressed) drag++; };
             window.PreviewMouseWheel += (_,_) => wheel++;
-            using var process = Process.GetCurrentProcess();
-            var identity = Processes.Identify(process); var session = process.SessionId; var startedTick = Stopwatch.GetTimestamp();
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) }; var clock = Stopwatch.StartNew();
             var receipt = Path.Combine(root, "marker.json");
             timer.Tick += (_, _) =>
             {
+                if (!OwnedFixture.MayRun(store, identity, startedTick) || clock.Elapsed.TotalSeconds >= seconds) { window.Close(); return; }
                 var origin = band.PointToScreen(new(0, 0)); var end = band.PointToScreen(new(band.ActualWidth, band.ActualHeight));
                 var json = Wire.Encode(new { runId = run, utc = DateTimeOffset.UtcNow, tick = Stopwatch.GetTimestamp(), identity, colors,
                     screenRegion = new DesktopTestDriver.Rect((int)origin.X, (int)origin.Y, (int)(end.X - origin.X), (int)(end.Y - origin.Y)) });
@@ -59,7 +66,6 @@ internal static class Program
                     clicks, drag, wheel, text = text.Text, events, observationValid = !overflow, observationOverflow = overflow,
                     heldVirtualKeys = Enumerable.Range(1,254).Where(vk => (GetAsyncKeyState(vk) & 0x8000) != 0).ToArray(), button = new { x = point.X, y = point.Y } });
                 File.WriteAllText(inputPath + ".tmp",input); File.Move(inputPath + ".tmp",inputPath,true);
-                if (clock.Elapsed.TotalSeconds >= seconds) window.Close();
             };
             window.Loaded += (_, _) => timer.Start(); window.Closed += (_, _) => timer.Stop();
             new Application().Run(window); return 0;

@@ -6,6 +6,20 @@
 - [x] 게시된 Server로 inventory CLI 검증을 통과한다.
 - [x] D12~D20의 권한·시나리오·어댑터·fixture·준비/수용 판정과 독립 예제를 검증한다.
 
+## 2026-10-19 리뷰 보완 검사
+
+최종 검증 summary는 기본 2026-10-19 09:53:18 KST, 선택형 09:53:51 KST다. 기본 `verify.ps1`은 `artifacts/verify-49477c3dbb4144229cc9ea7aa08c7a34/`, 선택형 `verify.ps1 -RemoteAssist`는 `artifacts/verify-143d461ccbeb4cbcba46089f7783f59f/`에 기록했다. 두 프로필 모두 독립 빌드/게시 경고·오류 0개, 기본 C# 28개·선택형 31개, loopback SSH/SFTP 11개와 게시 CLI 9개가 통과했다. 기본 프로필은 제품/어댑터가 없는 임시 복사본의 빌드와 28개 검사도 통과했다. 기록한 시각은 시스템 명령 및 summary의 실제 UTC를 KST로 변환했다.
+
+리뷰에서 확인한 입력 오인·원격 PID 로컬 조회·감사 수집 누락을 수정했다. 외부 주입은 서명된 control 권한과 허용 시나리오의 봉인 구간에서만 관측하고 물리 입력은 항상 중단한다. Server에 없는 모의 PID가 Host의 검증된 창 신원으로 처리되며 관측 부재·생성 시각 변경은 거부되는 것을 확인했다. SSH collect는 감사·표식·fixture 원본과 각 hash를 보존하고 secret은 제외한다. 원본을 bundle manifest에 포함하므로 수집 후 감사 변조도 bundle-check가 거부한다. 수집 실패는 FAIL과 미정리 예약으로 남긴다.
+
+`fixture-start`/`fixture-observe`, 서명된 FixtureScope, 소유 intent/프로세스 ledger와 child 자체 종료 감시, DesktopFixtureAdapter 및 `desktop-plan`/`desktop-run`을 연결했다. 실제 비UI 자식 프로세스와 가짜 desktop/input으로 전체 클릭·drag·wheel·키·Unicode 판정과 소유 프로세스 종료를 검사했다. 중복 기동·stale/교체/넘친 증거·up 누락·OS held 키·소유 heartbeat/stop 조건도 검사했다. CLI는 배치 직후 lease를 시작하며 재시작으로 초기 lease를 갱신하지 않는다. 창 표시·GDI·UIA·실제 SendInput은 이 검사에서 실행하지 않았다.
+
+환경별 실행 도구를 연결하는 ExternalFixtureBackend의 실행 파일/hash·정의 hash·회차·환경/복귀 범위·receipt 신원·모의 구분과 실제 별도 비UI 프로세스의 timeout 강제 종료를 검사했다. 장시간 fixture는 start-load 후 최소 기간을 단조 시간으로 관측하며 bounded metrics 호출의 첫 실패에서 복원한다. 이 최소 기간·최초 실패 검사는 가상 시계를 쓴 로컬 검사이며 실제 2시간 부하 PASS가 아니다. 장비별 승인 실행 파일/설정·baseline·복귀 실증은 아직 구축 전인 시험 환경의 준비 사항이다.
+
+추가 검사 중 heartbeat의 임시 파일 교체/프레임 제거와 증거 용량 조회 간 경합을 발견해 완료된 파일만 집계하고 이미 제거된 파일은 건너뛰도록 수정했다. 동시 파일 교체/제거와 실제 용량 초과 차단 회귀 검사를 추가했다. 기존 watchdog 고장 검사는 입력 해제 증거(최대 5초)와 자식 프로세스 종료(추가 최대 2초)를 나눠 관측한다. 위 최종 두 프로필 전체 실행에서 모두 통과했다.
+
+D21~D23은 사용자 설명대로 2PC 환경 구축 후 실행할 검증 대기로 유지했다. 실제 원격 배치·제품/fixture 창·물리 입력·UAC/잠금·장비 실행기는 실행하지 않았고 CI도 실행/변경하지 않았다. 제품 H/V/F 상태도 승격하지 않았다.
+
 ## 2026-10-19 독립성 교정 검사
 
 사용자 지시에 따라 D21~D23을 제품 없는 도구 자체 수용으로 수정했다. 기본 솔루션과 Server에서 RemoteAssist 어댑터 참조를 제거하고 제품별 시나리오/fixture·검사를 선택형 프로필로 격리했다. 자체 MarkerWindow에 클릭·drag·wheel·키/문자·OS held 상태의 `fixture-input.json` 관측을 추가했다. 실제 창/입력 실증은 수행하지 않았다.

@@ -7,7 +7,7 @@ namespace DesktopTestDriver;
 // Trust is provisioned by the owner outside the deployment. A key arriving in run.json is never trusted.
 public static class Authorization
 {
-    public static readonly string[] Actions = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "heartbeat", "seal-input", "resume-input", "read-artifact"];
+    public static readonly string[] Actions = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "heartbeat", "seal-input", "resume-input", "read-artifact", "fixture-start", "fixture-observe"];
     public static readonly string[] Permissions = ["screen", "control", "admin", "file", "chat", "clipboard", "diagnostics", "runbook"];
     public static byte[] Payload(RunConfig config) => Encoding.UTF8.GetBytes(Wire.Encode(config with
     { Delegation = config.Delegation! with { Signature = "" } }));
@@ -63,7 +63,16 @@ public static class EvidenceVault
     public static void Budget(RunStore store)
     {
         var policy = store.Config.Delegation!.Evidence;
-        if (Directory.EnumerateFiles(store.Root).Sum(p => new FileInfo(p).Length) >= policy.MaxBytes) throw new DriverException(Error.Expired);
+        long bytes = 0;
+        foreach (var path in Directory.EnumerateFiles(store.Root))
+        {
+            // Atomic heartbeat/ledger replacement uses short-lived .tmp files. A concurrent rename or
+            // wait frame removal is not lost observation and must not stop an otherwise healthy run.
+            if (Path.GetExtension(path) == ".tmp") continue;
+            try { bytes += new FileInfo(path).Length; }
+            catch (FileNotFoundException) { continue; }
+            if (bytes >= policy.MaxBytes) throw new DriverException(Error.Expired);
+        }
     }
     // Remove evidence only. Operational ownership, secrets and the recovery ledger remain until explicit deployment removal.
     public static int PurgeExpired(RunStore store, DateTimeOffset now)

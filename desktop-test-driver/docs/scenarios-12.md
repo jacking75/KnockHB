@@ -80,7 +80,7 @@ Tray는 HostStart/HostStop/ConsentScreen/ConsentControl/ConsentAdmin/ConsentAppr
 | viewer-chat | 실제 표시 문자열의 예상 fixture 일치 횟수와 hash다. 양방향/클립보드/loop는 각각 별도 회차 조건이다. |
 | product-audit | 실제 읽기 전용 감사 파일의 SessionId/ConnectionId와 Kind/Result다. 현재 제품 wire의 enum 숫자를 사용한다. |
 
-`MarkerWindow.exe RUN_ID PRIVATE_OUTPUT SECONDS`는 회차 hash로 만든 16칸 색 표식을 표시하고 실제 screenRegion과 프로세스 신원을 기록하는 fixture다. 최대 300초 뒤 닫힌다. D21/D22에서 소유 자원으로 준비한 뒤 사용한다. screenRegion을 준비된 제품 캡처 영역·실제 영상 크기로 환산해 `EvidenceBindings.MarkerRegion`을 확정하며 좌표를 추정하지 않는다. 압축 색 오차는 채널별 40까지 허용한다. 현재 D01~D20 검사에서는 이 창을 띄우지 않았다.
+`MarkerWindow.exe RUN_ID PRIVATE_OUTPUT SECONDS`는 회차 hash로 만든 16칸 색 표식을 표시하고 실제 screenRegion과 프로세스 신원을 기록하는 fixture다. `fixture-start`가 서명된 실행 파일 hash를 검사하고 소유 ledger에 등록한 뒤에만 UI가 열린다. 직접 실행·등록 누락·Client/watchdog 소실·lease 만료·stop은 종료하며 최대 300초다. `fixture-observe`는 해당 Client에서 실제 PID/생성 시각/경로/hash와 창·세션·freshness를 대조한다. Server는 원격 PID를 자신의 프로세스 표에서 조회하지 않는다. [README의 desktop-plan/desktop-run](../README-10.md#중단수집제거)이 제품 없는 기동·입력·관측·정리를 연결한다. 제품 영상 확장에서는 screenRegion을 준비된 제품 캡처 영역·실제 영상 크기로 환산해 `EvidenceBindings.MarkerRegion`을 확정하며 좌표를 추정하지 않는다. 압축 색 오차는 채널별 40까지 허용한다. 로컬·모의 검사에서는 이 창을 띄우지 않는다.
 
 ## 고정 회차·fixture·수용 기준
 
@@ -96,7 +96,15 @@ Tray는 HostStart/HostStop/ConsentScreen/ConsentControl/ConsentAdmin/ConsentAppr
 | tls-turn-nat | 격리 네트워크·신뢰 시험 TLS·coturn을 준비한다. 인증서/Origin 부정 경로, 실제 ICE pair 양끝, TURN allocation·만료·세대 갱신을 기록한다. 8분 lifecycle을 짧은 smoke로 대신하지 않는다. |
 | long-load | 별도 비점유 환경에서 최소 실제 7200초·100회와 합의한 부하 기준을 검증한다. 메모리/handle/GPU/queue·FPS·지연을 수집한다. 즉시 반환한 fixture receipt는 실제 장시간 PASS가 아니다. |
 
-`IFixtureBackend`는 준비한 VM/KVM/네트워크/제품 설치 실행기에 맞춰 연결하는 계약이다. 저장소의 SimulatedFixtureBackend는 실행 순서와 실패 복귀만 검사한다. 실제 장비용 vendor backend와 실증 자원이 없으면 실환경 fixture를 실행하지 않는다. fixture JSON은 임의 shell 명령이나 관리자 인증 비밀을 포함하지 않는다. 전체 deadline·독립 watchdog·외부 복귀는 실제 실행 전에 별도로 확인한다. 제품 회차는 목표 600초/절대 900초, 화면 기능 점유는 최대 300초다. 장시간 fixture는 별도 최대 7800초 비점유 캠페인이다.
+`IFixtureBackend`의 실제 프로세스 연결 구현은 `ExternalFixtureBackend`다. `FixtureBackendConfig`에 승인된 실행 파일의 절대 경로/실제 SHA-256, runId, fixture ID별 정의 JSON의 `Wire.Hash(UTF8(Wire.Encode(definition)))`, 환경, 복귀 등급, 모의 여부와 호출 상한(1~5000ms)을 고정한다. `new ExternalFixtureBackend(config)`를 `FixtureRunner.Run`에 넘긴다. 실행 파일에는 인자 없이 stdin JSON 한 줄만 전달한다.
+
+```json
+{"protocolVersion":2,"operation":"execute","runId":"approved-run","fixtureId":"service-failure","definitionHash":"64자리 실제 hash","stepId":"approved-step","fixtureOperation":"inject-service-failure","expected":"고정 계획의 판정 조건","simulated":false}
+```
+
+도구는 실행 전 파일/모든 조상 reparse·hash·정의·회차·환경·복귀 등급과 고정 step을 대조한다. 실행기는 자신이 소유한 장비/서비스/설치 자원만 다루고 `FixtureReceipt` JSON 한 줄(runId/fixtureId/stepId/verified/simulated/evidenceHash)을 반환한다. 실행기 오류·출처 불일치·모의 receipt 승격·timeout이면 실패하고 소유 실행기 프로세스 트리를 종료한다. feature 토큰이 취소돼도 restore-baseline은 독립된 최대 5초 예산으로 같은 backend를 호출한다. Windows 설치 명령·KVM/네트워크 vendor 경로·자격증명과 baseline은 시험 환경에서 승인·고정하는 설정이며 이 저장소가 특정 장비를 추정하거나 자동 설치하지 않는다. 자체 desktop fixture에는 이 외부 실행기가 필요하지 않다.
+
+SimulatedFixtureBackend는 실행 순서와 실패 복귀만 검사한다. 실증 자원·승인 실행 파일/설정이 없으면 실환경 fixture를 실행하지 않는다. fixture JSON은 임의 shell 명령이나 관리자 인증 비밀을 포함하지 않는다. 전체 deadline·독립 watchdog·외부 복귀는 실제 실행 전에 별도로 확인한다. 제품 회차는 목표 600초/절대 900초, 화면 기능 점유는 최대 300초다. 장시간 fixture는 별도 최대 7800초 비점유 캠페인이며 start-load 이후 실제 단조 시간으로 최소 7200초 동안 최대 1초 간격의 유한 collect-metrics를 관측한다. 최초 실패에서 즉시 복원하며 마지막 metrics receipt만 보고서에 보존하고 실행기는 상세 시계열을 별도 증거로 남긴다. 로컬 회귀 검사의 가상 시간은 실제 2시간 수용 증거가 아니다.
 
 ## 준비·증거·실패·제거
 

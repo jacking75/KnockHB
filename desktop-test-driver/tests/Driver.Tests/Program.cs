@@ -3,6 +3,15 @@ using System.IO.Pipes;
 using System.Text;
 using DesktopTestDriver;
 
+if (Environment.GetEnvironmentVariable("DTD_TEST_FIXTURE_MODE") is { } fixtureMode)
+{
+    if (fixtureMode == "hang") { await Task.Delay(30000); return 0; }
+    using var request = System.Text.Json.JsonDocument.Parse((await Lines.Read(Console.In, default))!);
+    var packet = request.RootElement;
+    Console.WriteLine(Wire.Encode(new FixtureReceipt(packet.GetProperty("runId").GetString()!, packet.GetProperty("fixtureId").GetString()!,
+        packet.GetProperty("stepId").GetString()!, true, fixtureMode != "real", new string('a', 64)))); return 0;
+}
+
 if (Environment.GetEnvironmentVariable("DTD_TEST_CONSOLE_MODE") is { } consoleMode)
 {
     if (consoleMode == "hang") { await Task.Delay(30000); return 0; }
@@ -54,6 +63,12 @@ var cases = new (string Name, Func<Task> Run)[]
     ("R2 adapter mocks cannot authorize real UAC, lock or reboot", Tests.Recovery),
     ("external console process validates executable hash and terminates hung adapters", Tests.ExternalConsole),
     ("owner signature, scope denial, redacted audit and evidence retention are enforced", ExtensionTests.AuthorizationPolicy),
+    ("physical input always stops while delegated sealed injections remain observable", ReviewTests.InputClassification),
+    ("concurrent heartbeat replacement and transient frames do not fail evidence accounting", ReviewTests.ConcurrentEvidence),
+    ("owned fixture lifecycle and independent scenario use no OS input in local tests", ReviewTests.DesktopLifecycle),
+    ("fixture observation rejects stale, replaced, incomplete and stuck-input evidence", ReviewTests.DesktopEvidence),
+    ("external fixture executable pin, receipt identity and timeout are enforced", ReviewTests.ExternalFixture),
+    ("long-load fixture samples through its minimum duration and stops on first failure", ReviewTests.LongLoad),
     ("scenario engine binds provenance, stops on first failure and refuses false PASS", ExtensionTests.Scenarios),
 #if REMOTEASSIST_TESTS
     ("Tray consent verifies identity, privileges, denial, close and actual UI selectors", ExtensionTests.Tray),
@@ -217,7 +232,8 @@ internal static class Tests
         var before = Stopwatch.GetTimestamp();
         var stop = await f.Engine.Execute(f.Command("stop"));
         Check(stop.Verified && Stopwatch.GetElapsedTime(before).TotalMilliseconds < 500, "stop queued behind wait");
-        Check((await waiting).ErrorCode == Error.Stopped, "wait not interrupted");
+        var interrupted = await waiting;
+        Check(interrupted.ErrorCode == Error.Stopped, "wait not interrupted: " + interrupted.ErrorCode);
         Check((await f.Engine.Execute(f.Command("release-all") with { Deadline = DateTimeOffset.UtcNow.AddMinutes(-1) })).Verified, "expired cleanup blocked");
     }
     public static async Task Envelopes()
@@ -319,7 +335,10 @@ internal static class Tests
             await Until(() => File.Exists(f.Store.PathFor("worker-ready.json")),3000);
             watchdog = f.Store.Read<ProcessIdentity>("worker-ready.json");
             Check(Processes.KillOwned(watchdog), "fake watchdog kill failed");
-            await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            // Observe release directly; process teardown and file flushing are separate from key recovery.
+            // Keep both waits bounded instead of assuming all three finish within one 3s scheduling window.
+            await Until(() => File.Exists(f.Store.PathFor("worker-cleanup.json")) && f.Store.Read<InputLedger>("ledger.json").Held.Length == 0,5000);
+            await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2));
             Check(client.ExitCode == 0 && f.Store.Read<InputLedger>("ledger.json").Held.Length == 0 &&
                 File.ReadAllText(f.Store.PathFor("recovery.txt")).Contains("up:key:65"), "client recovery failed");
         }

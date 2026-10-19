@@ -12,13 +12,15 @@ public interface IUiSurface
 public sealed class NodeUi(IClientNode node, RunConfig config, string manifestHash) : IUiSurface
 {
     private long sequence;
+    public Task<bool> Stop(CancellationToken cancellation) => node.Stop(cancellation);
     public NodeLease BeginLease() => new(this, Math.Max(50, config.HeartbeatMilliseconds / 3));
-    public async Task<Result> Send(string name, CancellationToken cancellation, Frame? frame = null, int x = 0, int y = 0, int[]? keys = null, string? condition = null)
+    public async Task<Result> Send(string name, CancellationToken cancellation, Frame? frame = null, int x = 0, int y = 0, int[]? keys = null, string? condition = null,
+        int endX = 0, int endY = 0, int delta = 0, string? text = null)
     {
         var result = await node.Execute(new Command { RunId = config.RunId, MachineId = config.MachineId, Role = config.Role, CommandId = Guid.NewGuid().ToString("N"),
             Sequence = Interlocked.Increment(ref sequence), TargetSession = config.TargetSession, ExpectedDesktop = config.ExpectedDesktop, ManifestHash = manifestHash,
             Deadline = new[] { config.ExpiresAt, DateTimeOffset.UtcNow.AddSeconds(5) }.Min(), Name = name, ExpectedWindow = frame?.Window, FrameId = frame?.Id,
-            X = x, Y = y, Keys = keys ?? [], Condition = condition }, cancellation).WaitAsync(cancellation);
+            X = x, Y = y, Keys = keys ?? [], Condition = condition, EndX = endX, EndY = endY, Delta = delta, Text = text }, cancellation).WaitAsync(cancellation);
         if (result.ErrorCode != Error.None || !result.Accepted || !result.Executed) throw new DriverException(result.ErrorCode == Error.None ? Error.ObservationUnavailable : result.ErrorCode);
         return result;
     }

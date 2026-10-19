@@ -3,7 +3,7 @@ using System.Text;
 
 namespace DesktopTestDriver;
 
-public sealed class CommandEngine(RunStore store, IDesktop desktop, InputController input, Func<bool> watchdogAlive)
+public sealed class CommandEngine(RunStore store, IDesktop desktop, InputController input, Func<bool> watchdogAlive, IFixtureLauncher? fixtureLauncher = null)
 {
     private readonly SemaphoreSlim gate = new(1);
     private readonly Dictionary<string, (string Hash, Result Result)> results = [];
@@ -13,7 +13,7 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
     private long heartbeatSequence;
     private readonly object heartbeatGate = new();
     private readonly Dictionary<string, (string Hash, Result Result)> heartbeats = [];
-    private static readonly HashSet<string> Names = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "release-all", "stop", "heartbeat", "seal-input", "resume-input", "read-artifact"];
+    private static readonly HashSet<string> Names = ["inspect", "snapshot", "focus", "move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text", "wait", "release-all", "stop", "heartbeat", "seal-input", "resume-input", "read-artifact", "fixture-start", "fixture-observe"];
     private static readonly HashSet<string> Inputs = ["move", "click", "wheel", "drag", "key-down", "key-up", "chord", "text"];
 
     public async Task<Result> Execute(Command command)
@@ -81,7 +81,11 @@ public sealed class CommandEngine(RunStore store, IDesktop desktop, InputControl
                     evidence = Snapshot(command, false); verified = true; break;
                 case "wait": evidence = await Wait(command); verified = true; break;
                 case "read-artifact": evidence = ReadArtifact(command); verified = true; break;
+                case "fixture-start":
+                    evidence = await OwnedFixture.Start(store, desktop, fixtureLauncher ?? new FixtureLauncher(), () => CheckLive(command)); verified = true; break;
+                case "fixture-observe": evidence = OwnedFixture.Observe(store, Inspect()); verified = true; break;
                 case "seal-input":
+                    if (command.Condition == null || !store.Config.Delegation!.Scenarios.Contains(command.Condition)) throw new DriverException(Error.DelegationMismatch);
                     if (!input.ReleaseAll()) throw new DriverException(Error.CleanupIncomplete);
                     store.Write("input-sealed.json", new { scenario = command.Condition }); verified = true; break;
                 case "resume-input":

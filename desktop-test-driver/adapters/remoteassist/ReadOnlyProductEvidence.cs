@@ -48,7 +48,8 @@ public sealed class ReadOnlyProductEvidence(NodeUi host, NodeUi viewerNode, IVie
             case "observe-input": case "observe-permissions":
                 if (bindings.InputId == null || inputBefore == null || inputWindow == null) throw new DriverException(Error.ObservationUnavailable);
                 var artifact = await Artifact(host, bindings.InputId, cancellation);
-                facts = ProductObservations.InputTarget(artifact.GetProperty("value"), new(inputWindow, context.Machine("host").TargetSession, inputBefore, bindings.TextHash, hostInputSealed, true), context.Simulation);
+                var hostInspection = Wire.Decode<InspectResult>(Wire.Encode((await host.Send("inspect", cancellation)).Evidence));
+                facts = ProductObservations.InputTarget(artifact.GetProperty("value"), new(inputWindow, context.Machine("host").TargetSession, inputBefore, bindings.TextHash, hostInputSealed, true), context.Simulation, hostInspection.Observation);
                 hash = artifact.GetProperty("hash").GetString()!; role = "host"; source = "host-input-target"; break;
             case "observe-file":
                 if (bindings.SourceFileId == null || bindings.DestinationFileId == null || bindings.FileHash == null) throw new DriverException(Error.ObservationUnavailable);

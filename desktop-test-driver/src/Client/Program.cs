@@ -27,18 +27,20 @@ internal static class Program
     private static async Task<int> Run(string path)
     {
         var store = new RunStore(path);
-        if (!WindowsDesktop.ConsoleValid(store.Config.TargetSession) || store.Stopped || File.Exists(store.PathFor("status.json")) ||
+        if (!WindowsDesktop.ConsoleValid(store.Config.TargetSession) || store.Stopped || File.Exists(store.PathFor("client.json")) || File.Exists(store.PathFor("status.json")) ||
             Directory.GetFiles(store.Root, "command-*.json").Length != 0) throw new DriverException(Error.SessionChanged);
         if (store.Config.ExpiresAt <= DateTimeOffset.UtcNow) throw new DriverException(Error.Expired);
         using var once = new FileStream(store.PathFor("client.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var identity = Processes.Identify(Process.GetCurrentProcess());
         store.Write("client.json", identity);
         store.Pulse("client-heartbeat");
+        // A single initial startup grace covers task scheduling, never a restart/reconnect or a new run deadline.
+        store.Pulse("server-heartbeat");
         var watchdogExecutable = Path.Combine(AppContext.BaseDirectory, "..", "Client.Watchdog", "Client.Watchdog.exe");
         using var watchdog = Processes.Start(Path.GetFullPath(watchdogExecutable), "--run", store.Root);
         var watchdogIdentity = Processes.Identify(watchdog);
         var desktop = new WindowsDesktop(store.Config, Environment.ProcessPath!);
-        using var monitor = store.Config.AllowInput ? desktop.MonitorInput() : null;
+        using var monitor = store.Config.AllowInput ? desktop.MonitorInput(() => InputConflictPolicy.ExternalInputAllowed(store)) : null;
         var input = new InputController(store, new WindowsInput());
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; store.Stop(Error.Stopped); };

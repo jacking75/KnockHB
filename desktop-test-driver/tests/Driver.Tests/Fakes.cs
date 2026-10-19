@@ -29,7 +29,8 @@ internal sealed class FakeDesktop(WindowIdentity window) : IDesktop
     public string Pixel = "fixture-pixels";
     public Observation Inspect() => Observation;
     public string Capture(WindowIdentity target, string destination) { File.WriteAllText(destination, Pixel); return Wire.FileHash(destination); }
-    public UiNode[] Controls(WindowIdentity target) => [new("fixture", "button", "Button", window.Bounds, true, null)];
+    public UiNode[] Controls(WindowIdentity target) => [new("fixture", "button", "Button", target.Bounds, true, null),
+        new("click", "FixtureClick", "Button", target.Bounds, true, null), new("text", "FixtureText", "Edit", target.Bounds, true, null)];
     public bool Focus(WindowIdentity target) { Observation = Observation with { Foreground = target.Hwnd }; return true; }
 }
 internal sealed class Fixture : IDisposable
@@ -45,19 +46,23 @@ internal sealed class Fixture : IDisposable
     private long sequence;
     private readonly string? oldTrust = Environment.GetEnvironmentVariable("DTD_TRUST_STORE");
     private readonly System.Security.Cryptography.ECDsa signer = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
-    public Fixture(int frameAge = 1500, int heartbeat = 1000)
+    public Fixture(int frameAge = 1500, int heartbeat = 1000, bool ownedFixture = false)
     {
         Directory.CreateDirectory(Parent);
         var trust = Path.Combine(Parent, "trust"); RunStore.CreatePrivateDirectory(trust);
         var owner = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
         File.WriteAllText(Path.Combine(trust, "owners.json"), Wire.Encode(new[] { new OwnerKey(owner, "test-owner", Convert.ToBase64String(signer.ExportSubjectPublicKeyInfo())) }));
         Environment.SetEnvironmentVariable("DTD_TRUST_STORE", Path.Combine(trust, "owners.json"));
-        var config = new RunConfig { RunId = "run-" + Guid.NewGuid().ToString("N"), MachineId = "test", Role = "host", TargetSession = 1,
-            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), MaxSeconds = 60, HeartbeatMilliseconds = heartbeat, MaxHoldMilliseconds = 1500,
+        var runId = "run-" + Guid.NewGuid().ToString("N");
+        if (ownedFixture) Window = Window with { ImageHash = Wire.FileHash(Environment.ProcessPath!), Title = "DesktopTestDriver marker " + runId };
+        var plan = ownedFixture ? DesktopFixturePlan.Create("host") : ExtensionTests.Plan();
+        var config = new RunConfig { RunId = runId, MachineId = "test", Role = "host", TargetSession = 1,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), MaxSeconds = ownedFixture ? 300 : 60, HeartbeatMilliseconds = heartbeat, MaxHoldMilliseconds = 1500,
             FrameMaxAgeMilliseconds = frameAge, AllowInput = true, Recovery = RecoveryGrade.R1, RecoveryEvidence = "mock-only-never-deploy",
             Windows = [new(Window.ImagePath, Window.ImageHash, Window.Title)], AllowedKeys = [16, 17, 65, 66],
-            Delegation = new(owner, "fixture-requester", "test-owner", ["self-test"], Authorization.Actions, Authorization.Permissions, new(1, 67_108_864, true), "")
-                { ScenarioHashes = new() { ["self-test"] = ExtensionTests.Plan().Hash } } };
+            Fixture = ownedFixture ? new(Window.ImagePath, Window.ImageHash, 300) : null,
+            Delegation = new(owner, "fixture-requester", "test-owner", [plan.Id], Authorization.Actions, Authorization.Permissions, new(1, 67_108_864, true), "")
+                { ScenarioHashes = new() { [plan.Id] = plan.Hash } } };
         config = Authorization.Sign(config, signer);
         var source = Path.Combine(Parent, "source.json"); File.WriteAllText(source, Wire.Encode(config));
         Store = RunStore.Create(Path.Combine(Parent, "state"), source);

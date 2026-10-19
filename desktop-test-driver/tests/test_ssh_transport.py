@@ -266,14 +266,18 @@ class TransportTests(unittest.TestCase):
         state = self.lab.root / "C/Driver/run-1/state"; state.mkdir(parents=True)
         (state / "secret").write_text("never-export")
         (state / "status.json").write_text('{"ready":true}')
+        (state / "audit.jsonl").write_text('{"phase":"delegated"}\n')
+        for name in ("fixture.json", "fixture-input.json", "marker.json"):
+            (state / name).write_text('{}')
         (state / "unapproved.txt").write_text("never-export")
         output = Path(self.local.name) / "evidence"; output.mkdir()
         packet = self.lab.packet("collect",{"outputDirectory":str(output)})
         connection = self.lab.connect(packet)
         try:
             result = adapter.Adapter(packet,connection).run_operation()
-            self.assertEqual([Path(x["path"]).name for x in result["files"]],["status.json"])
-            self.assertEqual(result["files"][0]["sha256"],adapter.digest(output / "status.json"))
+            self.assertEqual({Path(x["path"]).name for x in result["files"]},{"status.json", "audit.jsonl", "fixture.json", "fixture-input.json", "marker.json"})
+            for item in result["files"]:
+                self.assertEqual(item["sha256"],adapter.digest(Path(item["path"])))
         finally: connection.close()
 
     def test_removal_checks_receipt_before_stop_and_preserves_neighbor(self):

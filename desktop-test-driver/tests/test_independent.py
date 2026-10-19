@@ -30,5 +30,5 @@ with tempfile.TemporaryDirectory(prefix="DTD-core-only-") as temporary:
     assert not any("RemoteAssist" in name for name in deps["libraries"])
     output = run([str(directory / "Driver.Tests.exe")]).decode("utf-8")
     summary = json.loads(output.strip().splitlines()[-1])
-    assert summary["passed"] == 22 and summary["failed"] == 0 and not summary["realDesktopInput"]
+    assert summary["passed"] == 28 and summary["failed"] == 0 and not summary["realDesktopInput"]
     print(json.dumps({"coreOnlyBuild": True, "passed": summary["passed"], "optionalAdapterPresent": False, "productPresent": False, "realDesktopInput": False}))

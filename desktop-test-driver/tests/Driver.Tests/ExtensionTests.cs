@@ -79,7 +79,7 @@ internal static class ExtensionTests
         await tray.Decide(request with { Decision = "expire" }, Log, default); Tests.Check(surface.Clicks == clicks, "timeout performed input");
         await tray.End(default); Tests.Check(surface.Last == "HostStop", "end selector mismatch");
         using var seal = new Fixture(); var frame = await seal.Snapshot();
-        Tests.Check((await seal.Engine.Execute(seal.Command("seal-input"))).Verified, "seal failed");
+        Tests.Check((await seal.Engine.Execute(seal.Command("seal-input") with { Condition = "self-test" })).Verified, "seal failed");
         Tests.Check((await seal.Engine.Execute(seal.Command("click") with { FrameId = frame.Id })).ErrorCode == Error.DelegationMismatch && seal.Backend.Events.Count == 0, "sealed host injected input");
     }
     public static async Task Viewer()
@@ -106,9 +106,9 @@ internal static class ExtensionTests
     {
         using var f = new Fixture();
         var tick = System.Diagnostics.Stopwatch.GetTimestamp();
-        System.Text.Json.JsonElement Sample(bool held = false, bool valid = true) => Wire.Decode<System.Text.Json.JsonElement>(Wire.Encode(new
+        System.Text.Json.JsonElement Sample(bool held = false, bool valid = true, int? remotePid = null) => Wire.Decode<System.Text.Json.JsonElement>(Wire.Encode(new
         {
-            pid = f.Window.Pid, session = 1, window = f.Window.Hwnd, image = f.Window.ImagePath, startTick = tick, utc = DateTimeOffset.UtcNow,
+            pid = remotePid ?? f.Window.Pid, session = 1, window = f.Window.Hwnd, image = f.Window.ImagePath, startTick = tick, utc = DateTimeOffset.UtcNow,
             foreground = true, observationValid = valid, observationOverflow = !valid, events = new[] { new { tick = tick + 1, kind = "key", code = 65, action = "down" }, new { tick = tick + 2, kind = "key", code = 65, action = "up" } },
             clicks = 1, drag = 2, wheel = 1, heldVirtualKeys = held ? new[] { 65 } : Array.Empty<int>(), text = "한글 입력"
         }));
@@ -119,6 +119,12 @@ internal static class ExtensionTests
         Tests.Reject(() => ProductObservations.InputTarget(Sample(), expected with { HostInputSealed = false }, true), Error.ObservationUnavailable);
         Tests.Reject(() => ProductObservations.InputTarget(Sample(valid:false), expected, true), Error.ObservationUnavailable);
         Tests.Reject(() => ProductObservations.InputTarget(Sample(), expected with { Window = f.Window with { Pid = 10 } }, true), Error.ObservationUnavailable);
+        var remoteWindow = f.Window with { Pid = int.MaxValue - 1 };
+        var remoteExpected = expected with { Window = remoteWindow };
+        var remoteObservation = f.Desktop.Observation with { Windows = [remoteWindow] };
+        Tests.Check(ProductObservations.InputTarget(Sample(remotePid: remoteWindow.Pid), remoteExpected, false, remoteObservation)["keys-released"] == "true", "remote PID queried against Server process table");
+        Tests.Reject(() => ProductObservations.InputTarget(Sample(remotePid: remoteWindow.Pid), remoteExpected, false), Error.ObservationUnavailable);
+        Tests.Reject(() => ProductObservations.InputTarget(Sample(remotePid: remoteWindow.Pid), remoteExpected, false, remoteObservation with { Windows = [remoteWindow with { CreatedAt = DateTimeOffset.MinValue }] }), Error.ObservationUnavailable);
         var before = Wire.Decode<System.Text.Json.JsonElement>("{\"decodedFrames\":10,\"droppedFrames\":0}");
         var after = Wire.Decode<System.Text.Json.JsonElement>("{\"decodedFrames\":30,\"droppedFrames\":1,\"videoWidth\":1920,\"videoHeight\":1080}");
         var video = ProductObservations.Video(before,after,2,true,1920,1080);

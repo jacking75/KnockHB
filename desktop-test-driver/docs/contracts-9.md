@@ -16,6 +16,12 @@ Client는 이미 로그인한 동일 계정의 실제 콘솔 세션에서 일반
 
 ## 명령과 결과
 
+리뷰 보완 계약: 물리 입력은 항상 회차를 중단한다. 다른 프로세스의 주입은 서명된 `control` 권한과 허용 시나리오의 `seal-input`이 모두 성립한 동안에만 관측하며 직접 Client 입력은 계속 금지한다. 봉인 밖 외부 주입은 충돌이다. 원격 프로세스 생존·생성 시각·경로·hash는 해당 Client의 inspect/fixture-observe에서 확인하며 Server의 로컬 PID 표를 사용하지 않는다.
+
+자체 fixture는 서명된 `fixture` 범위(ImagePath/ImageHash/MaxSeconds), 정확한 `DesktopTestDriver marker RUN_ID` 창 allowlist와 `fixture-start`/`fixture-observe` 명령으로만 실행한다. Client는 시작 전 소유 의도를 기록하고 기동 직후 PID·생성 시각·실행 파일 hash를 ledger에 등록한다. fixture 자체도 Client/watchdog의 중단·소실과 deadline에서 종료한다. 관측은 고정된 회차 폴더의 fixture-input.json만 읽고 실제 프로세스·창·세션·freshness와 대조한다. Server의 desktop-run은 준비된 서명 회차에서 이 경로로 클릭·drag·wheel·키·Unicode와 해제를 판정하며 첫 실패에서 전체를 중단한다. 명령/설정 확장이므로 기존 회차는 새 바이너리로 다시 서명한다.
+
+환경 fixture는 hash가 고정된 실행 파일에 프로토콜 v2 JSON만 전달한다. 설정에 고정한 fixture ID/정의 hash/회차/환경/복귀 등급 밖 동작은 거부한다. feature 호출과 restore-baseline은 별도 유한 호출이며, 모의 receipt를 실환경으로 승격하지 않는다. 실행 파일 선택은 장비별 설정이며 시나리오에서 임의 shell이나 인자를 받지 않는다. SSH collect는 audit.jsonl·marker.json·fixture-input.json·fixture.json도 보존한다.
+
 JSON Lines, UTF-8, 한 메시지 최대 1MiB다. 필수 필드는 protocolVersion/runId/machineId/role/commandId/sequence/targetSession/expectedDesktop/deadline/manifestHash다. 입력에는 expectedWindow와 frameId가 추가로 필요하다. 창 신원은 HWND/PID/프로세스 생성 UTC/이미지 경로/SHA-256/제목/사각형으로 묶는다. 프레임에는 콘솔 세션·desktop·foreground·모니터·DPI·생성 단조 시각이 연결된다. 좌표는 프레임의 창 클라이언트 영역 안 픽셀 좌표다. 모니터 음수 원점과 DPI는 별도로 보고한다.
 
 명령은 inspect/snapshot/focus/move/click/wheel/drag/key-down/key-up/chord/text/wait/release-all/stop과 heartbeat다. UIA는 읽기만 하며 별도 프로세스에 유한 timeout을 적용한다. Unicode 입력은 클립보드를 사용하지 않는다. wait는 window/foreground/frame-change 조건을 유한 deadline 안에서 관측한다. 명령 ID 재전송은 동일 요청 hash일 때 이전 결과만 반환한다. 내용 변경은 DuplicateMismatch, 순번 역행은 SequenceRejected다. heartbeat는 wait와 독립된 순번·멱등 캐시를 사용하며 재전송으로 lease를 연장하지 않는다. stop은 안전한 반복 정리를 허용한다. 실행 결과는 accepted/executed/verified를 분리하며 주입 성공만으로 애플리케이션 기능 PASS를 선언하지 않는다.

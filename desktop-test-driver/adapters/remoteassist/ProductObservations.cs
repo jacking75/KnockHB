@@ -17,14 +17,15 @@ public static class ProductObservations
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream, Encoding.UTF8); return Wire.Decode<JsonElement>(reader.ReadToEnd());
     }
-    public static Dictionary<string, string> InputTarget(JsonElement sample, InputExpectation expected, bool simulation)
+    public static Dictionary<string, string> InputTarget(JsonElement sample, InputExpectation expected, bool simulation, Observation? hostObservation = null)
     {
         if (sample.GetProperty("pid").GetInt32() != expected.Window.Pid || sample.GetProperty("session").GetInt32() != expected.Session ||
             sample.GetProperty("window").GetInt64() != expected.Window.Hwnd || !string.Equals(sample.GetProperty("image").GetString(), expected.Window.ImagePath, StringComparison.OrdinalIgnoreCase) ||
             sample.GetProperty("startTick").GetInt64() != expected.Baseline.StartTick || !sample.GetProperty("foreground").GetBoolean() ||
             !sample.GetProperty("observationValid").GetBoolean() || sample.GetProperty("observationOverflow").GetBoolean() ||
             DateTimeOffset.UtcNow - sample.GetProperty("utc").GetDateTimeOffset() > TimeSpan.FromSeconds(2) || sample.GetProperty("utc").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddSeconds(1) ||
-            !simulation && !Processes.Alive(new(expected.Window.Pid, expected.Window.CreatedAt, expected.Window.ImagePath, expected.Window.ImageHash)) ||
+            !simulation && (hostObservation == null || hostObservation.Session != expected.Session || hostObservation.Desktop != "Default" ||
+                hostObservation.Elevated || hostObservation.Foreground != expected.Window.Hwnd || !hostObservation.Windows.Contains(expected.Window)) ||
             expected.ExpectRemote && !expected.HostInputSealed) throw new DriverException(Error.ObservationUnavailable);
         var events = sample.GetProperty("events").EnumerateArray().ToArray();
         if (events.Length < expected.Baseline.Events) throw new DriverException(Error.ObservationUnavailable);

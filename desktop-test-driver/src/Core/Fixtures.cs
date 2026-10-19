@@ -28,24 +28,42 @@ public static class FixtureRunner
 {
     // D17 exercises this with mock backends. Real execution requires the equipment-specific backend and live recovery proof.
     public static async Task<FixtureReport> Run(FixtureDefinition fixture, string runId, IFixtureBackend backend, bool simulated,
-        string[] environments, Func<CancellationToken, Task<bool>> verifyRecovery, CancellationToken cancellation = default)
+        string[] environments, Func<CancellationToken, Task<bool>> verifyRecovery, CancellationToken cancellation = default, TimeProvider? timeProvider = null)
     {
         fixture.Validate();
         if (!Wire.Id(runId) || fixture.Environments.Except(environments).Any()) return new(Verdict.Blocked, simulated, false, []);
         using var preparation = CancellationTokenSource.CreateLinkedTokenSource(cancellation); preparation.CancelAfter(5000);
         if (!simulated && !await verifyRecovery(preparation.Token).WaitAsync(preparation.Token)) return new(Verdict.Blocked, false, false, []);
-        var receipts = new List<FixtureReceipt>(); var verdict = Verdict.Pass; var restored = true; var started = Stopwatch.GetTimestamp();
+        var clock = timeProvider ?? TimeProvider.System;
+        var receipts = new List<FixtureReceipt>(); var verdict = Verdict.Pass; var restored = true; var started = clock.GetTimestamp();
+        long? loadStarted = null;
         using var global = CancellationTokenSource.CreateLinkedTokenSource(cancellation); global.CancelAfter(TimeSpan.FromSeconds(fixture.MaximumSeconds - 5));
         async Task<bool> Invoke(FixtureStep step, CancellationToken parent)
         {
             using var bound = CancellationTokenSource.CreateLinkedTokenSource(parent); bound.CancelAfter(step.TimeoutMilliseconds);
-            var r = await backend.Execute(fixture,step,runId,bound.Token).WaitAsync(bound.Token); receipts.Add(r);
+            var r = await backend.Execute(fixture,step,runId,bound.Token).WaitAsync(bound.Token);
+            if (receipts.Count > 0 && receipts[^1].StepId == step.Id) receipts[^1] = r; else receipts.Add(r);
             return r.RunId == runId && r.FixtureId == fixture.Id && r.StepId == step.Id && r.Simulated == simulated && r.Verified && RunConfig.IsHash(r.EvidenceHash);
         }
         try
         {
-            foreach (var step in fixture.Steps) if (!await Invoke(step,global.Token)) { verdict = Verdict.Fail; break; }
-            if (!simulated && Stopwatch.GetElapsedTime(started).TotalSeconds < fixture.MinimumSeconds) verdict = Verdict.Fail;
+            foreach (var step in fixture.Steps)
+            {
+                // Keep each equipment call bounded while measuring the full load interval monotonically.
+                // A quick start-load/metrics receipt must never stand in for a two-hour observation.
+                if (!simulated && loadStarted is { } loadTick && step.Operation == "collect-metrics")
+                {
+                    while (clock.GetElapsedTime(loadTick).TotalSeconds < fixture.MinimumSeconds)
+                    {
+                        if (!await Invoke(step, global.Token)) throw new DriverException(Error.ObservationUnavailable);
+                        var remaining = fixture.MinimumSeconds - clock.GetElapsedTime(loadTick).TotalSeconds;
+                        if (remaining > 0) await Task.Delay(TimeSpan.FromSeconds(Math.Min(1, remaining)), clock, global.Token);
+                    }
+                }
+                if (!await Invoke(step,global.Token)) { verdict = Verdict.Fail; break; }
+                if (step.Operation == "start-load") loadStarted = clock.GetTimestamp();
+            }
+            if (!simulated && clock.GetElapsedTime(loadStarted ?? started).TotalSeconds < fixture.MinimumSeconds) verdict = Verdict.Fail;
         }
         catch { verdict = Verdict.Fail; }
         finally

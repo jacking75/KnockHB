@@ -21,7 +21,7 @@ public sealed class WindowsDesktop(RunConfig config, string clientExecutable) : 
 {
     private PhysicalInputMonitor? monitor;
     public bool PhysicalConflict => monitor?.Conflict == true;
-    public IDisposable MonitorInput() => monitor = new PhysicalInputMonitor();
+    public IDisposable MonitorInput(Func<bool>? allowExternalInjection = null) => monitor = new PhysicalInputMonitor(allowExternalInjection);
     public static void EnableDpi() => Native.SetProcessDpiAwarenessContext(new IntPtr(-4));
     public static string DesktopName()
     {
@@ -175,7 +175,7 @@ public sealed class WindowsDesktop(RunConfig config, string clientExecutable) : 
 
 public sealed class WindowsInput : IInputBackend
 {
-    internal static readonly UIntPtr Marker = new(0x44544431);
+    internal static readonly UIntPtr Marker = InputConflictPolicy.DriverMarker;
     public bool IsDown(string kind, int code) => (Native.GetAsyncKeyState(kind == "button" ? code switch { 1 => 1, 2 => 2, 3 => 4, _ => throw new DriverException(Error.InvalidRequest) } : code) & 0x8000) != 0;
     public void Down(string kind, int code) => Send(kind, code, false);
     public void Up(string kind, int code) => Send(kind, code, true);
@@ -205,16 +205,28 @@ public sealed class WindowsInput : IInputBackend
     }
 }
 
+public static class InputConflictPolicy
+{
+    public static readonly UIntPtr DriverMarker = new(0x44544431);
+    public static bool IsConflict(bool injected, UIntPtr marker, bool delegatedExternalInput) =>
+        !injected || marker != DriverMarker && !delegatedExternalInput;
+    public static bool ExternalInputAllowed(RunStore store) =>
+        !store.Stopped && store.Config.Delegation!.ProductPermissions.Contains("control") &&
+        File.Exists(store.PathFor("input-sealed.json"));
+}
+
 public sealed class PhysicalInputMonitor : IDisposable
 {
+    private readonly Func<bool> allowExternalInjection;
     private readonly Thread thread;
     private readonly ManualResetEventSlim ready = new();
     private uint threadId;
     private volatile bool conflict;
     private bool installed;
     public bool Conflict => conflict;
-    public PhysicalInputMonitor()
+    public PhysicalInputMonitor(Func<bool>? allowExternalInjection = null)
     {
+        this.allowExternalInjection = allowExternalInjection ?? (() => false);
         thread = new Thread(Pump) { IsBackground = true, Name = "DesktopTestDriver input guard" };
         thread.Start();
         if (!ready.Wait(2000) || !installed) throw new DriverException(Error.ObservationUnavailable);
@@ -224,12 +236,20 @@ public sealed class PhysicalInputMonitor : IDisposable
         threadId = Native.GetCurrentThreadId();
         Native.HookCallback keyCallback = (code, message, data) =>
         {
-            if (code >= 0 && Marshal.PtrToStructure<Native.KeyHook>(data).Extra != WindowsInput.Marker) conflict = true;
+            if (code >= 0)
+            {
+                var value = Marshal.PtrToStructure<Native.KeyHook>(data);
+                if (InputConflictPolicy.IsConflict((value.Flags & 0x10) != 0, value.Extra, Delegated())) conflict = true;
+            }
             return Native.CallNextHookEx(IntPtr.Zero, code, message, data);
         };
         Native.HookCallback mouseCallback = (code, message, data) =>
         {
-            if (code >= 0 && Marshal.PtrToStructure<Native.MouseHook>(data).Extra != WindowsInput.Marker) conflict = true;
+            if (code >= 0)
+            {
+                var value = Marshal.PtrToStructure<Native.MouseHook>(data);
+                if (InputConflictPolicy.IsConflict((value.Flags & 1) != 0, value.Extra, Delegated())) conflict = true;
+            }
             return Native.CallNextHookEx(IntPtr.Zero, code, message, data);
         };
         var key = Native.SetWindowsHookEx(13, keyCallback, IntPtr.Zero, 0);
@@ -239,6 +259,7 @@ public sealed class PhysicalInputMonitor : IDisposable
         try { if (installed) while (Native.GetMessage(out var message, IntPtr.Zero, 0, 0) > 0) { Native.TranslateMessage(ref message); Native.DispatchMessage(ref message); } }
         finally { if (key != IntPtr.Zero) Native.UnhookWindowsHookEx(key); if (mouse != IntPtr.Zero) Native.UnhookWindowsHookEx(mouse); GC.KeepAlive(keyCallback); GC.KeepAlive(mouseCallback); }
     }
+    private bool Delegated() { try { return allowExternalInjection(); } catch { return false; } }
     public void Dispose() { Native.PostThreadMessage(threadId, 0x12, UIntPtr.Zero, IntPtr.Zero); thread.Join(1000); ready.Dispose(); }
 }
 

@@ -272,7 +272,7 @@ class Adapter:
         collected = []
         with self.connection.sftp() as sftp:
             for name in sftp.listdir(self.state):
-                if name == "secret" or not re.fullmatch(r"(?:frame-[a-f0-9]{32}\.png|(?:status|cleanup|client-cleanup|run|ledger|stop)\.json|command-[A-Za-z0-9_-]{1,80}\.json)", name): continue
+                if name == "secret" or not re.fullmatch(r"(?:audit\.jsonl|frame-[a-f0-9]{32}\.png|(?:status|cleanup|client-cleanup|run|ledger|stop|marker|fixture-input|fixture)\.json|command-[A-Za-z0-9_-]{1,80}\.json)", name): continue
                 self.connection.remaining()
                 remote = self.state + "/" + name
                 import stat

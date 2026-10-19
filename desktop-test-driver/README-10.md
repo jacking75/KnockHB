@@ -55,6 +55,8 @@ Server.exe catalog-check CATALOG
 Server.exe simulate COUNTER_PLAN SIGNED_CONFIG NEW_BUNDLE
 Server.exe bundle-check BUNDLE
 Server.exe purge-evidence STOPPED_RUN_STATE
+Server.exe desktop-plan ROLE NEW_PLAN_FILE
+Server.exe desktop-run INVENTORY MACHINE ROLE SIGNED_CONFIG PYTHON_EXE SSH_ADAPTER PACKAGE RESERVATIONS NEW_BUNDLE
 ```
 
 `ASSIGNMENTS`는 `[{"machineId":"lab-host","role":"host"}]` 형식이다. 예약은 머신 단위로 충돌을 막고 후보·설정 hash·기간·역할을 보존한다. 만료됐어도 정리 확인 없이 예약을 재사용하지 않는다. SDK의 `Reservations.Complete(machine,run,cleanupVerified)`는 전체 정리 결과가 확인된 뒤 호출한다.
@@ -68,6 +70,12 @@ inspect 응답에는 관측 정보와 allowlist 창별 메타데이터 frame이 
 `CommandEngine`·`IClientNode`·`Campaign`·`ScenarioRunner`는 C# API다. Campaign은 여러 Client 실행, 단계별 barrier, 전체 단조 deadline과 최초 실패 시 모든 노드의 stop을 제공한다. API 사용자는 머신 예약과 위임을 먼저 확인하고, 정상 종료 때도 `await campaign.Stop()`의 모든 노드 정리 결과를 확인해야 한다. 범용 엔진은 명시 등록한 `IScenarioAdapter`만 호출한다. `RemoteAssist.Adapter.dll`은 제품 코드 참조 없이 실제 UI·CDP와 읽기 전용 관측을 연결한다. `simulate` CLI는 제품 없는 CounterAdapter만 등록한다. 입력 응답의 `executed:true`는 OS 주입 접수이고 `verified:false`다. 실제 시험 앱이 관측한 결과로 기능 PASS를 별도 판정한다.
 
 ## 중단·수집·제거
+
+독립 fixture 실행은 `desktop-plan`으로 실제 역할의 고정 계획/hash를 먼저 만든 뒤 위임에 `desktop-fixture`와 해당 hash를 서명한다. `fixture`에는 **설치될 머신**의 `InstallRoot/RUN_ID/package/MarkerWindow/MarkerWindow.exe` 절대 경로, 패키지 manifest의 해당 파일 SHA-256, `maxSeconds:300`을 넣는다. windows에는 같은 경로/hash와 정확한 `DesktopTestDriver marker RUN_ID` 제목을 넣는다. R1·allowInput:true·AllowedKeys의 16·images:true와 fixture-start/fixture-observe/inspect/snapshot/focus/click/drag/wheel/text/chord/heartbeat를 승인한다. MaxSeconds는 120 이상이며 설정 확장으로 기존 회차는 다시 서명한다.
+
+`desktop-run`은 inventory의 머신/역할·소유자·회차별 R1 RecoveryReceipt 파일/hash를 검사하고 예약한 뒤 지정 패키지를 **한 번만 SSH 배치하고 즉시 lease를 시작한다**. 별도 설치 CLI 뒤 사람이 3초 lease 안에 다음 명령을 입력할 필요가 없다. 실제 콘솔 관측·watchdog을 확인한 다음 고정 fixture를 기동한다. 관측된 UIA 좌표로 클릭·drag·wheel·Shift와 Unicode를 수행하며 fixture의 실제 이벤트·텍스트·OS held 상태로 판정한다. 첫 실패에서 stop하고 프로세스 신원으로 소유 fixture만 정리한다. 회차 실행은 최대 120초이고 수집/정리 시간을 같은 상한에 남긴다. 빌드/게시/SSH 설치는 fixture 시험 동작 전에 완료하며 실제 실행에는 별도 사전 준비·화면 점유 고지가 필요하다.
+
+결과 bundle의 client-evidence에 감사와 fixture 원본을 수집한다. `desktop-run`은 재사용 가능한 배치 파일/예약 작업까지 제거하는 명령이 아니므로 최종 `ssh remove`는 아래 receipt 절차로 별도 수행한다. 수집 또는 정리 실패 시 예약을 유지한다. 이 CLI의 구현·모의 검사는 실제 두 PC의 D21~D23 수용을 뜻하지 않는다.
 
 `stop`은 새 입력을 먼저 차단한다. SSH가 끊겨도 콘솔 Watchdog이 단조 deadline·Server lease·Client heartbeat·키 hold 상한에 따라 소유 입력을 해제한다. Watchdog이 죽으면 Client도 입력을 차단하고 해제한다. Client/Broker/Watchdog이 모두 죽거나 OS가 멈춘 경우에는 R2 외부 콘솔 복귀가 필요하다. 시험 Client에 직접 물리 입력이 들어오면 경합으로 중단하므로 전용 시험 머신에서만 사용한다.
 

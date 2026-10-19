@@ -26,6 +26,11 @@ try:
     env["DTD_TRUST_STORE"] = str(work / "owners.json")
     plan = package / "scenarios/examples/counter.json"
     plan_info = call("plan-check", plan)
+    desktop_plan = work / "desktop-plan.json"
+    desktop_info = call("desktop-plan", "observer", desktop_plan)
+    assert desktop_info["id"] == "desktop-fixture" and call("plan-check", desktop_plan)["planHash"] == desktop_info["planHash"]
+    assert json.loads(desktop_plan.read_text(encoding="utf-8"))["adapter"] == "desktop-fixture"
+    call("desktop-plan", "observer", desktop_plan, ok=False)
     manifest = json.loads((package / "package-manifest.json").read_text(encoding="utf-8-sig"))
     if manifest["profile"] == "remoteassist":
         assert call("catalog-check", package / "adapters/remoteassist/acceptance.json")["cases"] == 53
@@ -53,7 +58,7 @@ try:
     signed.write_text(json.dumps(config), encoding="utf-8")
     call("simulate", plan, signed, work / "must-not-exist", ok=False)
     assert not (work / "must-not-exist").exists()
-    print(json.dumps({"passed": 7, "simulation": True, "realDesktopInput": False, "remoteDeployment": False}))
+    print(json.dumps({"passed": 9, "simulation": True, "realDesktopInput": False, "remoteDeployment": False}))
 finally:
     key = work / "owner-private.pem"
     if key.exists():

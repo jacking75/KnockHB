@@ -78,6 +78,7 @@ public sealed record Delegation(string Owner, string Requester, string KeyId, st
 }
 public sealed record OwnerKey(string Owner, string KeyId, string PublicKey);
 public sealed record ArtifactScope(string Id, string Path, int MaxBytes, string Kind);
+public sealed record FixtureScope(string ImagePath, string ImageHash, int MaxSeconds = 300);
 public sealed record RunConfig
 {
     public int ProtocolVersion { get; init; } = Wire.Version;
@@ -98,6 +99,7 @@ public sealed record RunConfig
     public int[] AllowedKeys { get; init; } = [];
     public Delegation? Delegation { get; init; }
     public ArtifactScope[] ObservationFiles { get; init; } = [];
+    public FixtureScope? Fixture { get; init; }
     public void Validate()
     {
         if (ProtocolVersion != Wire.Version || !Enum.IsDefined(Recovery) || !Wire.Id(RunId) || !Wire.Id(MachineId) || !Wire.Id(Role) || TargetSession <= 0 || ExpectedDesktop != "Default" ||
@@ -108,6 +110,9 @@ public sealed record RunConfig
             throw new DriverException(Error.RecoveryRequired);
         if (Windows.Any(w => !Path.IsPathFullyQualified(w.ImagePath) || !IsHash(w.ImageHash) || w.Title.Length is < 1 or > 512))
             throw new DriverException(Error.InvalidRequest);
+        if (Fixture is { } fixture && (!Path.IsPathFullyQualified(fixture.ImagePath) || !IsHash(fixture.ImageHash) || fixture.MaxSeconds is < 10 or > 300 ||
+            !Windows.Any(w => w.ImagePath.Equals(fixture.ImagePath, StringComparison.OrdinalIgnoreCase) && w.ImageHash == fixture.ImageHash && w.Title == "DesktopTestDriver marker " + RunId)))
+            throw new DriverException(Error.DelegationMismatch);
         if (ObservationFiles.Length > 16 || ObservationFiles.Select(f => f.Id).Distinct().Count() != ObservationFiles.Length ||
             ObservationFiles.Any(f => !Wire.Id(f.Id) || !Path.IsPathFullyQualified(f.Path) || f.Path.StartsWith("\\\\", StringComparison.Ordinal) ||
                 f.MaxBytes < 1 || f.MaxBytes > (f.Kind == "file" ? 67_108_864 : 524288) || f.Kind is not ("json" or "ndjson" or "file")))
