@@ -1,6 +1,8 @@
 # 제품 검증 하네스와 장애 묶음
 
-**현재 Arm과 invoke-product-local 직접 실행은 차단됐다.** 30분 재리뷰에서 전역 deadline/독립 watchdog·유한 SCM/정리·실제 복귀 증거가 부족함을 확인했다. PrepareOnly/Finish/Abort/Collect는 유지한다. [구현계획 R30](../../docs_working/원격제어-구현계획.md)와 [보수적 리뷰](../../docs_working/e2e-30-minute-review-2026-10-08.md)의 R30-05~08이 끝나기 전에는 아래 과거 Arm 절차를 실행하지 않는다.
+이 문서는 검증 하네스의 명령·증거 계약을 설명한다. 후보 배포/manifest·회차별 고정 명령·실패 정리·로컬 차단 관측이 실제 준비되지 않으면 실행하지 않는다. 아래 Arm/20초 Tray/PoC/단일 기능 명령은 과거 계약 설명이며 현재 실행 지시가 아니다. 파일 계획 검사기의 항상 BLOCKED 동작은 유지한다.
+
+**과거 Arm과 invoke-product-local 직접 실행은 차단됐다.** 전역 deadline/독립 watchdog·유한 SCM/정리·실제 복귀 증거가 부족한 경로를 직접 실행하지 않는다. PrepareOnly/Finish/Abort/Collect는 유지한다. 회차에 맞는 실행·중단·복귀 준비가 검증되기 전에는 아래 과거 Arm 절차를 실행하지 않는다.
 
 최신 기준은 전체 목표600초·절대 상한900초다. campaign-plan.json version2는 LAN 동의/영상·입력·대상자 종료의 선택 범위다. 기능300초+정리/확인240초+예비300초+보고60초이며 정상 경로는 예비 없이600초다. version1의1800초 계획은 검사기가 거부한다. readiness.template.json의 빈 값/false는 미확인이다. `node scripts/check-e2e-readiness.cjs tests/e2e/campaign-plan.json tests/e2e/readiness.template.json .artifacts/readiness-review.json`은 파일만 검사하며 항상 BLOCKED_BEFORE_START/exit2다. 실제 guard/복귀 수용 전 Arm을 허용하지 않는다. 전체 F의 미선택 사례와 기존 증거는 별도로 연결한다.
 

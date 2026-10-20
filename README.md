@@ -4,6 +4,8 @@
 
 처음 보는 개발자는 [개발자 문서 안내](docs/README.md)부터 읽는다.
 
+`docs_working/`은 개발 중 사용하는 임시 계획·조사·리뷰·작업 기록을 보관하는 디렉터리다.
+
 | 문서 | 내용 |
 |---|---|
 | [아키텍처](docs/architecture.md) | 현재 실행 구조, 프로젝트 의존성, 목표 권한 경계 |
@@ -12,5 +14,3 @@
 | [기능별 워크플로우](docs/workflows.md) | 현재 기능과 예정 기능의 Mermaid 흐름도 |
 | [실행·검증 가이드](docs/development-guide.md) | 로컬 PoC 실행, 두 머신 검증, 문제 해결 |
 | [프로토콜](docs/protocol.md) | 와이어 포맷의 단일 기준 |
-| [통합 구현계획](docs_working/원격제어-구현계획.md) | E01~E41 구현·F01~F12 최종 E2E, 기존 T 대응·과거 기록 |
-| [리뷰·태스크 리스크](docs_working/code-review-task-risks-2026-10-07.md) | 발견된 결함, 수정 방법, 회귀 검증 |
