@@ -1,34 +1,37 @@
 const fs=require('node:fs'),path=require('node:path');
 const {chromium}=require('../.artifacts/browser/node_modules/playwright-core');
 const run=path.resolve(process.argv[2]);
-const until=performance.now()+450000;
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const save=(name,value)=>fs.writeFileSync(path.join(run,name),JSON.stringify(value,null,2));
-async function wait(fn,ms,label){const end=Math.min(until,performance.now()+ms);while(performance.now()<end){if(await fn())return;await sleep(100)}throw new Error(label+' timeout')}
+const save=(n,v)=>fs.writeFileSync(path.join(run,n),JSON.stringify(v,null,2));
+const events=[];let previous='';let joined=false;let browser;
+const start=performance.now();
 (async()=>{
- let browser;
  try{
-  browser=await chromium.launch({executablePath:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
-  const context=await browser.newContext({viewport:{width:1280,height:900}});
+  browser=await chromium.launch({executablePath:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:false,args:['--force-renderer-accessibility','--window-size=1280,900','--window-position=100,100']});
+  const context=await browser.newContext({viewport:{width:1240,height:760}});
   const page=await context.newPage();
+  page.on('pageerror',e=>events.push({ms:performance.now()-start,kind:'pageerror',error:e.message}));
+  page.on('websocket',ws=>{
+   ws.on('framereceived',({payload})=>{try{const m=JSON.parse(payload);events.push({ms:performance.now()-start,kind:'received',type:m.type,code:m.code??null});}catch{}});
+   ws.on('framesent',({payload})=>{try{const m=JSON.parse(payload);events.push({ms:performance.now()-start,kind:'sent',type:m.type});}catch{}});
+  });
   await page.goto('https://192.168.0.61:25001/',{waitUntil:'domcontentloaded',timeout:15000});
-  save('viewer-ready.json',{ready:true});
-  await wait(()=>fs.existsSync(path.join(run,'pairing.json')),150000,'pairing');
-  const pairing=JSON.parse(fs.readFileSync(path.join(run,'pairing.json'),'utf8').replace(/^\uFEFF/,''));
-  await page.locator('#name').fill('LAN E2E tester');
-  await page.locator('#code').fill(pairing.code);await page.locator('#pin').fill(pairing.pin);
-  await page.locator('#join-form button').click();
-  const before=await page.locator('#screen').evaluate(v=>({frames:v.getVideoPlaybackQuality().totalVideoFrames,width:v.videoWidth,height:v.videoHeight}));
-  if(before.frames!==0)throw new Error('Frames received before consent observation');
-  save('consent-requested.json',{beforeConsent:before});
-  await wait(async()=>await page.locator('#screen').evaluate(v=>v.videoWidth>0&&v.getVideoPlaybackQuality().totalVideoFrames>=3),135000,'human consent and video');
-  const first=await page.locator('#screen').evaluate(v=>({frames:v.getVideoPlaybackQuality().totalVideoFrames,width:v.videoWidth,height:v.videoHeight}));
-  await wait(async()=>await page.locator('#screen').evaluate(v=>v.getVideoPlaybackQuality().totalVideoFrames)>first.frames,10000,'video frame progression');
-  if(!await page.locator('#remote-text').isDisabled())throw new Error('Screen-only session unexpectedly permits text input');
-  await page.screenshot({path:path.join(run,'viewer.png')});
-  save('video-ready.json',{first,screenOnly:true,status:await page.locator('#session-status').textContent()});
-  await wait(()=>page.locator('#join').isVisible(),60000,'target local stop');
-  save('viewer-result.json',{state:'PASS',scope:'screen-only consent, decoded frames, disabled input, target stop'});
- }catch(error){save('viewer-result.json',{state:'FAIL',error:error.message});process.exitCode=1}
- finally{if(browser)await browser.close()}
+  save('viewer-ready.json',{ready:true,mode:'DesktopTestDriver GUI; Playwright observation only'});
+  let firstFrames=null;
+  while(performance.now()-start<300000&&!fs.existsSync(path.join(run,'finish.json'))){
+   if(events.length>4096)throw Error('Observation event limit');
+   const s=await page.evaluate(()=>{const v=document.querySelector('#screen');return {joinVisible:!document.querySelector('#join').hidden,status:document.querySelector('#status').textContent,statusError:document.querySelector('#status').classList.contains('error'),sessionStatus:document.querySelector('#session-status').textContent,stats:document.querySelector('#stats').textContent,frames:v.getVideoPlaybackQuality().totalVideoFrames,width:v.videoWidth,height:v.videoHeight,textDisabled:document.querySelector('#remote-text').disabled};});
+   s.elapsedMs=performance.now()-start;save('viewer-observation.json',s);
+   const state=JSON.stringify({...s,elapsedMs:0,frames:s.frames?1:0});
+   if(state!==previous){events.push({ms:s.elapsedMs,kind:'ui',...s});previous=state;save('viewer-events.json',events);}
+   if(!s.joinVisible)joined=true;
+   if(s.frames>=3&&s.width>0&&s.height>0){
+    if(firstFrames===null)firstFrames=s.frames;
+    else if(s.frames>firstFrames)save('video-ready.json',s);
+   }
+   if(joined&&s.joinVisible){save('viewer-ended.json',s);break;}
+   if(s.statusError){save('viewer-join-error.json',s);break;}
+   await new Promise(r=>setTimeout(r,250));
+  }
+ }catch(e){save('viewer-error.json',{error:e.message});process.exitCode=1;}
+ finally{save('viewer-events.json',events);if(browser)await Promise.race([browser.close(),new Promise(resolve=>setTimeout(resolve,2000))]);save('viewer-closed.json',{closed:true});}
 })();

@@ -167,7 +167,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { _log.LogError("세션 상태 전이 실패: {Kind}",ex.GetType().Name); EndSession("협상 또는 상태 처리 실패", true); }
+        catch (Exception ex) { LocalDiagnostic.Failure("session-transition",ex); _log.LogError("세션 상태 전이 실패: {Kind}",ex.GetType().Name); EndSession("협상 또는 상태 처리 실패", true); }
     }
     private void Enqueue(Func<Task> action)
     {
@@ -191,7 +191,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { _log.LogWarning("시그널링 수신 실패: {Kind}",ex.GetType().Name); EndSession("시그널링 수신 실패", true); }
+        catch (Exception ex) { LocalDiagnostic.Failure("signaling-receive",ex); _log.LogWarning("시그널링 수신 실패: {Kind}",ex.GetType().Name); EndSession("시그널링 수신 실패", true); }
     }
     private async Task HandleMessageAsync(SignalMsg msg)
     {
@@ -423,7 +423,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         ReadOnlyMemory<byte> lastFrame=default;
         try
         {
-            capture = WgcScreenCapture.IsSupported() ? (IScreenCapture)new WgcScreenCapture(_monitor) : new DxgiScreenCapture(_monitor);
+            capture = ScreenCaptureFactory.Create(_monitor);
             _monitor = capture.Monitor;
             using var encoder = new FFmpegH264Encoder(_options.PreferredEncoder, _loggerFactory?.CreateLogger<FFmpegH264Encoder>()){MaximumLevel=Volatile.Read(ref _h264)?.Level??throw new InvalidDataException("영상 협상 계약 누락이다.")};
             var quality=_quality!.Current;
@@ -441,7 +441,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
                 {
                     if(AdminFrame!=null||!Monitors.Enumerate().Contains(requested.Target))throw new InvalidOperationException("전환 모니터 상태가 달라졌다.");
                     capture?.Dispose();capture=null;ClearCopiedFrame(ref lastFrame);
-                    capture=WgcScreenCapture.IsSupported()?new WgcScreenCapture(requested.Target):new DxgiScreenCapture(requested.Target);
+                    capture=ScreenCaptureFactory.Create(requested.Target);
                     _monitor=capture.Monitor;Interlocked.Increment(ref _topologyGeneration);
                     var grant=_permissions.Current!;_inputData?.RebindMonitor(_monitor,TopologyGeneration,CreateInputBackend!(grant));
                     width=height=0;changing=requested;_keyframes.Request();Interlocked.Exchange(ref _formatPaused,0);
@@ -512,7 +512,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             }
             if (!_lifetime.IsCancellationRequested) EndSession("권한 유효기간 종료", false);
         }
-        catch (Exception ex) { _log.LogError("미디어 파이프라인 실패: {Kind}",ex.GetType().Name); EndSession("미디어 파이프라인 실패", true); }
+        catch (Exception ex) { LocalDiagnostic.Failure("media-pipeline",ex); _log.LogError("미디어 파이프라인 실패: {Kind}",ex.GetType().Name); EndSession("미디어 파이프라인 실패", true); }
         finally{capture?.Dispose();ClearCopiedFrame(ref lastFrame);}
     }
     void PauseForFormatChange()

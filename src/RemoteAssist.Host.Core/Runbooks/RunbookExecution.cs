@@ -12,13 +12,16 @@ public static class RunbookExecution
     {
         var book=RunbookCatalog.Demand(config.Request);using var identity=WindowsIdentity.GetCurrent();
         if(Process.GetCurrentProcess().SessionId!=config.WindowsSessionId||config.ExpiresAt<=DateTimeOffset.UtcNow||config.ExpiresAt>DateTimeOffset.UtcNow.AddSeconds(21)||identity.IsSystem!=book.RequiresAdmin)throw new UnauthorizedAccessException("Runbook 실행 권한/기한 오류다.");
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(config.ExpiresAt-DateTimeOffset.UtcNow);
         var exe=ProtectedInstallation.ResolveExecutable("RemoteAssist.Host.RunbookWorker.exe");var script=Path.Combine(Path.GetDirectoryName(exe)!,"runbooks",book.BookId+".ps1");
-        if(new FileInfo(script).Attributes.HasFlag(FileAttributes.ReparsePoint)||RunbookCatalog.Hash(await File.ReadAllTextAsync(script,ct))!=book.Hash)throw new UnauthorizedAccessException("설치 Runbook이 승인 내용과 다르다.");
+        var info=new FileInfo(script);
+        if(info.Length>32768||info.Attributes.HasFlag(FileAttributes.ReparsePoint)||RunbookCatalog.Hash(await File.ReadAllTextAsync(script,deadline.Token))!=book.Hash)throw new UnauthorizedAccessException("설치 Runbook이 승인 내용과 다르다.");
         var engine=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","WindowsPowerShell","v1.0","powershell.exe");
         var start=new ProcessStartInfo(engine){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
         foreach(var arg in new[]{"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","RemoteSigned","-File",script,"-detail",config.Request.Args!["detail"]})start.ArgumentList.Add(arg);
+        deadline.Token.ThrowIfCancellationRequested();
+        if(config.ExpiresAt<=DateTimeOffset.UtcNow)throw new UnauthorizedAccessException("Runbook 실행 준비 중 승인이 만료됐다.");
         using var process=Process.Start(start)??throw new IOException("Runbook engine 시작 실패다.");
-        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(config.ExpiresAt-DateTimeOffset.UtcNow);
         int overflow=0;
         try
         {

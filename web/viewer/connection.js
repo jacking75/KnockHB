@@ -24,7 +24,14 @@ function parseEnvelope(text, maxBytes, typeField) {
   if (!message || message.v !== 1 || typeof message[typeField] !== 'string') throw Error('지원하지 않는 프로토콜이다.');
   return message;
 }
-export const parseSignal = text => parseEnvelope(text, 128 * 1024, 'type');
+export function parseSignal(text){
+  const message=parseEnvelope(text,128*1024,'type');
+  const fields=['v','type','sessionId','connectionId','generation','permissionGeneration','permissions','displayName','iceServers','room','role','pin','token','sdp','ice','peerPresent','code','reason'];
+  if(Object.keys(message).some(k=>!fields.includes(k)))throw Error('미등록 시그널링 필드다.');
+  if(message.ice!==undefined){const ice=message.ice;if(!ice||Object.keys(ice).some(k=>!['candidate','sdpMid','sdpMLineIndex'].includes(k))||typeof ice.candidate!=='string'||ice.candidate.length>8192||ice.sdpMid!=null&&(typeof ice.sdpMid!=='string'||ice.sdpMid.length>256)||ice.sdpMLineIndex!=null&&(!Number.isInteger(ice.sdpMLineIndex)||ice.sdpMLineIndex<0||ice.sdpMLineIndex>65535))throw Error('ICE 필드 오류다.');}
+  if(message.iceServers!==undefined)validateIceServers(message.iceServers);
+  return message;
+}
 export const parseData = text => parseEnvelope(text, 32 * 1024, 't');
 function validateIceServers(servers){
   if(!Array.isArray(servers)||servers.length>8)throw Error('ICE server 상한이다.');
@@ -43,7 +50,7 @@ export class ViewerConnection {
     createPeer = config => new RTCPeerConnection(config), isCurrent = () => true,
     onState = () => {}, onTrack = () => {}, onStats = () => {}, onEnd = () => {}, onData = () => {},
     setTimer = (callback, interval) => globalThis.setInterval(callback, interval),
-    clearTimer = timer => globalThis.clearInterval(timer), now = Date.now, forceRelay = false }) {
+    clearTimer = timer => globalThis.clearInterval(timer), now = () => performance.now(), forceRelay = false }) {
     this.base = base; this.code = code; this.pin = pin; this.displayName = displayName;
     this.createPeer = createPeer; this.isCurrent = isCurrent; this.onState = onState;
     this.onTrack = onTrack; this.onStats = onStats; this.onEnd = onEnd;
@@ -56,7 +63,7 @@ export class ViewerConnection {
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
     this.forceRelay = forceRelay; this.iceServers = [];
     this.messageChain = Promise.resolve(); this.timers = []; this.granted = false; this.queuedMessages = 0;
-    this.lastSeen = now(); this.startedAt = now(); this.remoteReady = false;
+    this.lastSeen = now(); this.startedAt = now(); this.prePeerDeadline = this.startedAt + 60000; this.consentPendingAt = null; this.remoteReady = false;
     this.ws = createSocket(base.replace(/^http/, 'ws') + '/ws');
     const socket = this.ws;
     socket.onopen = () => {
@@ -86,7 +93,7 @@ export class ViewerConnection {
     this.timers.push(setTimer(() => {
       if (!this.live()) return;
       if (now() - this.lastSeen >= 15000) this.end('시그널링 생존 확인 시간 초과다.', true);
-      else if (!this.pc && now() - this.startedAt >= 60000) this.end('참가 또는 동의 대기 시간 초과다.', true);
+      else if (!this.pc && now() >= this.prePeerDeadline) this.end('참가 또는 동의 대기 시간 초과다.', true);
       else if (socket.readyState === 1) this.send({ type: 'ping' });
     }, 5000));
     onState('대상 PC에 접속하는 중이다.');
@@ -101,7 +108,7 @@ export class ViewerConnection {
     if (message.generation !== undefined && message.generation !== this.generation && !(message.type==='offer'&&message.generation===this.generation+1)) throw Error('다른 협상 세대다.');
     switch (message.type) {
       case 'joined':
-        if (this.sessionId || !message.sessionId || !message.connectionId) throw Error('잘못된 ACK다.');
+        if (this.sessionId || !message.sessionId || !message.connectionId || message.role!==undefined&&message.role!=='viewer') throw Error('잘못된 ACK다.');
         this.sessionId = message.sessionId; this.connectionId = message.connectionId;
         if (message.iceServers !== undefined) {
           if (!Array.isArray(message.iceServers) || message.iceServers.length > 8) throw Error('ICE server 상한이다.');
@@ -111,11 +118,16 @@ export class ViewerConnection {
           this.iceServers = message.iceServers;
         }
         this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
-      case 'peer-joined': case 'consent-pending': this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
+      case 'peer-joined': this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
+      case 'consent-pending':
+        if (this.consentPendingAt === null && !this.granted) {
+          this.consentPendingAt = this.now(); this.prePeerDeadline = this.consentPendingAt + 125000;
+        }
+        this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
       case 'consent':
         if (!Array.isArray(message.permissions) || !Number.isSafeInteger(message.permissionGeneration) || message.permissionGeneration < 1) throw Error('잘못된 승인 통지다.');
         if(this.granted||(permissionMask(message.permissions)&~255)!==0)throw Error('중복 또는 미지원 승인 통지다.');
-        this.granted = true; this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
+        this.granted = true; this.prePeerDeadline = this.now() + 10000; this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
         this.onState('대상자가 승인한 기능을 연결하는 중이다.'); break;
       case 'consent-denied': this.end('대상자가 동의를 거절했다.'); break;
       case 'ice':
@@ -144,14 +156,17 @@ export class ViewerConnection {
     pc.ontrack = event => { if (this.live() && this.pc === pc) {if(!this.permissions.includes('screen'))this.end('승인하지 않은 화면 트랙이다.',true);else this.onTrack(event);} };
     pc.ondatachannel = event => { if (this.live() && this.pc === pc) this.acceptChannel(event.channel); else event.channel.close(); };
     pc.onicecandidate = event => {
-      if (this.live() && this.pc === pc && event.candidate)
-        this.send({ type: 'ice',generation:this.generation, room: this.code, ice: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate });
+      if (this.live() && this.pc === pc && event.candidate?.candidate)
+        this.send({ type: 'ice',generation:this.generation, room: this.code, ice: {
+          candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid ?? null,
+          sdpMLineIndex: event.candidate.sdpMLineIndex ?? null
+        } });
     };
     pc.onconnectionstatechange = () => {
       if (!this.live() || this.pc !== pc) return;
       if (pc.connectionState === 'connected') this.onState('대상자가 승인한 기능으로 연결됐다.');
       if(pc.connectionState==='closed')this.end('WebRTC 연결이 종료됐다.');
-      else if(['failed','disconnected'].includes(pc.connectionState)){this.pendingPointer=null;this.recovering=true;this.recoverAt=this.now();this.features.clear();this.files.clear();this.onData({t:'input-paused'});this.onState('연결 복구 중이다. 원격 입력을 중단한다.');}
+      else if(['failed','disconnected'].includes(pc.connectionState)){this.pendingPointer=null;this.recovering=true;this.recoverAt=this.now();this.features.clear();this.files.clear();this.runbooks.clear();this.onData({t:'input-paused'});this.onState('연결 복구 중이다. 원격 입력을 중단한다.');}
     };
     await pc.setRemoteDescription({ type: 'offer', sdp }); if (!this.live()) return;
     this.remoteReady = true;
@@ -176,9 +191,9 @@ export class ViewerConnection {
         for (const entry of report.values()) {
           if (entry.type === 'inbound-rtp' && entry.kind === 'video') {
             if (entry.frameWidth) line.push(`${entry.frameWidth}×${entry.frameHeight}`);
-            if (entry.framesPerSecond !== undefined) line.push(`표시 ${entry.framesPerSecond} fps`);
+            if (entry.framesPerSecond !== undefined) line.push(`디코딩 ${entry.framesPerSecond} fps`);
             const kbps=lastTime&&entry.timestamp>lastTime?Math.max(0,(entry.bytesReceived-lastBytes)*8/(entry.timestamp-lastTime)):null;
-            if(kbps!==null)line.push(`${kbps.toFixed(0)} kbps`);
+            if(kbps!==null)line.push(`수신 ${kbps.toFixed(0)} kbps`);
             lastBytes = entry.bytesReceived; lastTime = entry.timestamp;
             if(Number.isFinite(entry.packetsLost)&&Number.isFinite(entry.packetsReceived)&&Number.isFinite(entry.totalDecodeTime)&&Number.isFinite(entry.framesDecoded)){
               const lost=Math.max(0,entry.packetsLost-lastLost),packets=Math.max(0,entry.packetsReceived-lastPackets),frames=Math.max(0,entry.framesDecoded-lastDecoded),seconds=Math.max(0,entry.totalDecodeTime-lastDecodeTime);
@@ -195,7 +210,7 @@ export class ViewerConnection {
         }
         this.onStats(line.join(' · '));
         if(sample&&rtt!==null&&this.dataReady&&this.permissions.includes('screen')&&pc.connectionState==='connected'){sample.rttMs=Math.min(10000,rtt);sample.decodeMs=Math.min(10000,sample.decodeMs);this.controlCommand('quality-report',{sample},crypto.randomUUID().replaceAll('-',''));}
-      } catch { if (this.live()) this.onStats('통계 조회 실패다.'); }
+      } catch { if (this.live()&&this.pc===pc) this.onStats('통계 조회 실패다.'); }
       finally { busy = false; }
     }, 1000));
   }
@@ -205,7 +220,7 @@ export class ViewerConnection {
     this.channels.set(channel.label, channel);
     channel.onclose = () => { if (this.live()&&this.channels.get(channel.label)===channel&&!this.recovering) this.end('기능 채널이 종료됐다.', true); };
     channel.onerror = () => { if (this.live()&&this.channels.get(channel.label)===channel&&!this.recovering) this.end('기능 채널 전송 실패다.', true); };
-    channel.onopen=()=>{if(this.live())this.onData({t:'feature-ready'});};
+    channel.onopen=()=>{if(this.live()&&this.channels.get(channel.label)===channel)this.onData({t:'feature-ready'});};
     if(channel.label==='runbook'){
       let chain=Promise.resolve(),queued=0;
       channel.onmessage=event=>{if(!this.live()||this.channels.get('runbook')!==channel)return;if(++queued>8){this.end('Runbook 수신 큐 상한이다.',true);return;}chain=chain.then(()=>this.live()&&this.channels.get('runbook')===channel&&this.runbooks.receive(parseData(event.data))).catch(()=>{if(this.channels.get('runbook')===channel)this.end('Runbook 채널 계약 오류다.',true);}).finally(()=>queued--);};return;
@@ -217,7 +232,7 @@ export class ViewerConnection {
     if(['chat','telemetry'].includes(channel.label)) {
       let chain=Promise.resolve(),queued=0;
       channel.onmessage=event=>{
-        if(!this.live())return;
+        if(!this.live()||this.channels.get(channel.label)!==channel)return;
         if(++queued>64){this.end('보조 채널 수신 큐 상한이다.',true);return;}
         let message;try{message=parseData(event.data);}catch{this.end('보조 채널 JSON 오류다.',true);return;}
         chain=chain.then(()=>this.live()&&this.channels.get(channel.label)===channel&&this.features.receive(channel.label,message)).catch(()=>{if(this.live()&&this.channels.get(channel.label)===channel)this.end('보조 채널 계약 오류다.',true);}).finally(()=>queued--);
@@ -225,7 +240,7 @@ export class ViewerConnection {
       return;
     }
     if (channel.label !== 'control') {
-      channel.onmessage = () => this.end('입력 채널에서 예상하지 않은 응답이다.', true);
+      channel.onmessage = () => {if(this.live()&&this.channels.get(channel.label)===channel)this.end('입력 채널에서 예상하지 않은 응답이다.', true);};
       return;
     }
     channel.onmessage = event => {

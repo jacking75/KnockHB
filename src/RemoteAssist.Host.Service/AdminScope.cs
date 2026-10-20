@@ -48,8 +48,10 @@ internal sealed class AdminScope:IDisposable
     public Task<int> Input(AdminInputBatch batch,CancellationToken ct)
     {lock(gate){if(disposed||peer is null||!ready.Task.IsCompletedSuccessfully)throw new UnauthorizedAccessException("관리자 입력 준비가 없다.");return inputs.Request(peer,batch,ct);}}
     public void Lease(){lock(gate){if(disposed||peer is null)throw new IOException("관리자 lease 경로 상실이다.");peer.Post("admin-lease");}}
+    public void Fence()=>Volatile.Read(ref child)?.Dispose();
     public void Dispose()
     {
+        Fence(); // Kill an active producer before waiting for startup/resource locks.
         lock(gate)
         {
             if(disposed)return;disposed=true;child?.Dispose();server?.Dispose();mapping?.Dispose();ready.TrySetCanceled();

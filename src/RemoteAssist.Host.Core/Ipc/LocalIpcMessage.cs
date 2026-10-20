@@ -19,7 +19,7 @@ public sealed class LocalIpcMessage
     {
         using var doc=ProtocolJson.Parse(bytes,MaxBytes);
         var msg=JsonSerializer.Deserialize<LocalIpcMessage>(bytes.Span)??throw new InvalidDataException("빈 IPC다.");
-        if(!Types.Contains(msg.Type)&&msg.Type is not ("media-lease" or "update-status" or "runbook-config" or "runbook-result" or "runbook-cancel" or "monitor-request" or "monitor-response" or "file-select" or "file-send" or "file-cancel" or "file-state" or "file-audit" or "file-audit-ack")||msg.Sequence<1||msg.Id is null||msg.Id.Length>64||msg.Nonce is not null&&(msg.Type!="hello"||msg.Nonce.Length!=64||!msg.Nonce.All(Uri.IsHexDigit)))throw new InvalidDataException("IPC envelope 오류다.");
+        if(!Types.Contains(msg.Type)&&msg.Type is not ("media-lease" or "update-status" or "runbook-config" or "runbook-result" or "runbook-cancel" or "runbook-dismiss" or "runbook-dismissed" or "monitor-request" or "monitor-response" or "file-select" or "file-send" or "file-cancel" or "file-state" or "file-audit" or "file-audit-ack")||msg.Sequence<1||msg.Id is null||msg.Id.Length>64||msg.Nonce is not null&&(msg.Type!="hello"||msg.Nonce.Length!=64||!msg.Nonce.All(Uri.IsHexDigit)))throw new InvalidDataException("IPC envelope 오류다.");
         return msg;
     }
     // Deliberately a class: generated record ToString must never expose nonce/PIN/body.

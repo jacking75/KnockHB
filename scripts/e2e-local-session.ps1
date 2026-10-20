@@ -1,44 +1,153 @@
-param([Parameter(Mandatory=$true)][string]$RunDir)
+﻿[CmdletBinding()]
+param([Parameter(Mandatory=$true)][string]$RunDir,[Parameter(Mandatory=$true)][string]$ManifestSha256,[ValidateSet('Controller','Watchdog','Recovery')][string]$Role='Controller')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$manifestPath=Join-Path $RunDir 'campaign.json'
+if($ManifestSha256-notmatch'^[a-fA-F0-9]{64}$'-or(Get-FileHash -LiteralPath $manifestPath).Hash-ne$ManifestSha256){throw 'Frozen local campaign required'}
+$bootstrap=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
+$contract=@($bootstrap.tools|Where-Object {$_.path-eq'scripts/e2e-run-contract.ps1'})
+if($contract.Count-ne1-or(Get-FileHash -LiteralPath (Join-Path $repo $contract[0].path)).Hash-ne$contract[0].sha256){throw 'Frozen local contract changed'}
+. (Join-Path $repo $contract[0].path)
+$manifest=Read-E2eManifest $manifestPath $ManifestSha256
+Assert-E2eTools $manifest $repo
+if([IO.Path]::GetFullPath($manifest.localRun)-ne[IO.Path]::GetFullPath($RunDir)){throw 'Local owner mismatch'}
+foreach($file in $manifest.localFiles){$null=Assert-E2ePath $file.path;if((Get-FileHash -LiteralPath $file.path).Hash-ne$file.sha256){throw 'Local candidate/config changed'}}
+$authorization=Read-E2eJson (Join-Path $RunDir 'execution-authorization.json')
+if($authorization.id-ne$manifest.id-or$authorization.manifestSha256-ne$ManifestSha256-or$authorization.scope-ne$manifest.profile-or$authorization.requestedBy-ne'user-after-readiness-report'){throw 'Separate execution instruction required'}
 Add-Type -Path (Join-Path $PSScriptRoot 'e2e-native.cs')
-$deadline=[E2eOwnedCommand]::Deadline(600000)
-@{deadline=$deadline;tick=[E2eOwnedCommand]::Tick;frequency=[Diagnostics.Stopwatch]::Frequency;utc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content (Join-Path $RunDir 'local-start.json') -Encoding UTF8
-$cert=New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $repo '.artifacts/lan-tls-20261018/lan-test.cer'))
-$store=New-Object Security.Cryptography.X509Certificates.X509Store('Root','CurrentUser')
-$added=$false;$server=$null;$viewer=$null
-$clock=[Diagnostics.Stopwatch]::StartNew()
+$shell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+$utf8=New-Object Text.UTF8Encoding($false)
+$script:watcher=$null;$script:server=$null;$script:viewer=$null;$script:cleaning=$false
+function Save($Name,$Value,[switch]$New){
+ $path=Join-Path $RunDir $Name
+ if($New){Write-E2eNewJson $path $Value;return}
+ $temp=$path+'.'+$PID+'.tmp';[IO.File]::WriteAllText($temp,($Value|ConvertTo-Json -Depth 8),$utf8)
+ if(Test-Path $path){[IO.File]::Replace($temp,$path,[NullString]::Value)}else{[IO.File]::Move($temp,$path)}
+}
+function Read($Name){return Read-E2eJson (Join-Path $RunDir $Name)}
+function Beat {if($Role-eq'Controller'){Save 'local-heartbeat.json' @{id=$manifest.id;tick=[E2eOwnedCommand]::Tick}}}
+function Owned([string]$Exe,[string[]]$Arguments,[int]$Milliseconds){
+ $end=[Math]::Min($deadline,[E2eOwnedCommand]::Deadline($Milliseconds));if(!$script:cleaning){$end=[Math]::Min($end,$activeEnd)}
+ $command=[E2eOwnedCommand]::Start($Exe,$Arguments)
+ try{
+  while(!$command.HasExited){
+   if([E2eOwnedCommand]::Remaining($end)-eq0){throw 'Local owned operation timeout'}
+   if(!$script:cleaning-and$script:watcher-and$script:watcher.HasExited){throw 'Local watchdog lost'}
+   Beat;Start-Sleep -Milliseconds 50
+  }
+  if($command.Wait($end,1000)-ne0){throw 'Local owned operation failed'}
+ }finally{$command.Dispose()}
+}
+function Certificate([string]$Action){Owned $shell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'e2e-certificate.ps1'),'-Action',$Action,'-RunDir',$RunDir,'-CertificateSha256',$manifest.tls.sha256,'-StoreScope','CurrentUser') 45000}
+function ProcessIdentity($Command){$p=Get-Process -Id $Command.Pid;return @{pid=$p.Id;image=$p.Path;start=$p.StartTime.ToUniversalTime().Ticks;session=$p.SessionId}}
+function Cleanup {
+ $script:cleaning=$true
+ if($Role-ne'Recovery'){$deadline=[Math]::Min($deadline,($activeEnd+[Diagnostics.Stopwatch]::Frequency*240))}
+ if(!(Test-Path (Join-Path $RunDir 'local-cleaning.json'))){try{Save 'local-cleaning.json' @{deadline=$deadline;id=$manifest.id} -New}catch [IO.IOException]{}}
+ $lock=$null;$lockEnd=[Math]::Min($deadline,[E2eOwnedCommand]::Deadline(2000))
+ while(!$lock-and[E2eOwnedCommand]::Remaining($lockEnd)-gt0){try{$lock=New-Object IO.FileStream((Join-Path $RunDir 'local-cleanup.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}catch [IO.IOException]{Start-Sleep -Milliseconds 20}}
+ if(!$lock){throw 'Local cleanup ownership unavailable'}
+ try{
+  $cleanupName=if($Role-eq'Recovery'){'local-recovery-cleanup.json'}else{'local-cleanup.json'}
+  if(Test-Path (Join-Path $RunDir $cleanupName)){throw 'Cleanup already attempted; inspect evidence'}
+  $errors=New-Object 'Collections.Generic.List[string]'
+  if($script:viewer){$script:viewer.Dispose()};if($script:server){$script:server.Dispose()}
+  if(Test-Path (Join-Path $RunDir 'tls-owner.json')){
+   try{Certificate 'Remove';$trust=Read 'tls-owner.json';$status=Read 'tls-status.json';if($trust.added-and$status.present){throw 'Temporary trust remains'}}catch{$errors.Add('Local trust recovery required')}
+  }
+  $remaining=@()
+  if(Test-Path (Join-Path $RunDir 'local-owned.json')){
+   foreach($owner in (Read 'local-owned.json').processes){
+    $p=Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
+    if($p){
+     if($p.StartTime.ToUniversalTime().Ticks-ne$owner.start-or$p.Path-ne$owner.image){$errors.Add('Local PID identity changed');continue}
+     $wait=[Math]::Min($deadline,[E2eOwnedCommand]::Deadline(2000))
+     while(!$p.HasExited-and[E2eOwnedCommand]::Remaining($wait)-gt0){Start-Sleep -Milliseconds 20;$p.Refresh()}
+     if(!$p.HasExited){$remaining+=@($owner);$errors.Add('Owned local process remains')}
+    }
+   }
+  }
+  # This campaign exclusively owns 25001; any remaining listener blocks recovery acceptance.
+  $listenerCount=$null
+  try{
+   $inspection=Join-Path $RunDir ('local-resources-'+[guid]::NewGuid().ToString('N')+'.json')
+   Owned $shell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'e2e-resource-inspect.ps1'),'-Output',$inspection,'-Thumbprint',$manifest.tls.thumbprint) 10000
+   $listenerCount=(Read-E2eJson $inspection).productListenerCount
+   if($listenerCount-ne0){$errors.Add('Product listener remains')}
+  }catch{$errors.Add('Local resource observation failed')}
+  Save $cleanupName @{id=$manifest.id;state=$(if($errors.Count){'RECOVERY_REQUIRED'}else{'RESOURCES_ABSENT_RECOVERY_UNVERIFIED'});errors=@($errors);ownedProcesses=$remaining;listeners=$listenerCount;tick=[E2eOwnedCommand]::Tick;recoveryVerified=$false} -New
+ }finally{$lock.Dispose()}
+}
+if($Role-eq'Recovery'){
+ $start=Read 'local-start.json';$deadline=[long]$start.deadline-[Diagnostics.Stopwatch]::Frequency*60;$activeEnd=[long]$start.activeEnd
+ if($start.id-ne$manifest.id-or[E2eOwnedCommand]::Remaining($deadline)-lt70000){throw 'Local recovery identity/reserve missing'}
+ $p=Get-Process -Id $start.pid -ErrorAction SilentlyContinue
+ if($p){if($p.StartTime.ToUniversalTime().Ticks-ne$start.start-or$p.Path-ne$shell){throw 'Local controller ownership changed'};$p.Kill();$null=$p.WaitForExit(1000)}
+ Cleanup
+ exit 0
+}
+if($Role-eq'Watchdog'){
+ $start=Read 'local-start.json';$deadline=[long]$start.deadline;$activeEnd=[long]$start.activeEnd
+ if($start.id-ne$manifest.id){throw 'Local watchdog clock mismatch'}
+ Save 'local-watchdog.json' @{pid=$PID;start=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks;id=$manifest.id} -New
+ try{
+  while([E2eOwnedCommand]::Remaining($deadline)-gt0){
+   if(Test-Path (Join-Path $RunDir 'local-recovery-verified.json')){exit 0}
+   if(Test-Path (Join-Path $RunDir 'local-cleanup.json')){Start-Sleep -Milliseconds 100;continue}
+   $p=Get-Process -Id $start.pid -ErrorAction SilentlyContinue
+   $alive=$p-and$p.StartTime.ToUniversalTime().Ticks-eq$start.start-and$p.Path-eq$shell
+   $beat=Read 'local-heartbeat.json'
+   $phaseEnd=if(Test-Path (Join-Path $RunDir 'local-cleaning.json')){[long](Read 'local-cleaning.json').deadline}else{$activeEnd}
+   if(!$alive-or$beat.id-ne$manifest.id-or([E2eOwnedCommand]::Tick-$beat.tick)-gt[Diagnostics.Stopwatch]::Frequency*10-or[E2eOwnedCommand]::Tick-ge$phaseEnd){
+    if($alive){$p.Kill();$null=$p.WaitForExit(1000)}
+    Cleanup
+   }
+   Start-Sleep -Milliseconds 100
+  }
+ }catch{Save 'local-watchdog-error.json' @{error=$_.Exception.GetType().Name}}
+ finally{
+  if(!(Test-Path (Join-Path $RunDir 'local-cleanup.json'))){
+   $p=Get-Process -Id $start.pid -ErrorAction SilentlyContinue
+   if($p-and$p.StartTime.ToUniversalTime().Ticks-eq$start.start-and$p.Path-eq$shell){$p.Kill();$null=$p.WaitForExit(1000)}
+   try{Cleanup}catch{Save 'local-recovery-required.json' @{error=$_.Exception.GetType().Name}}
+  }
+  if(!(Test-Path (Join-Path $RunDir 'local-recovery-verified.json'))){Save 'local-recovery-required.json' @{error='Independent recovery confirmation required'}}
+ }
+ exit 0
+}
+# One immutable A origin, before trust/service/browser changes. No second terminal resets it.
+$tick=[E2eOwnedCommand]::Tick;$frequency=[Diagnostics.Stopwatch]::Frequency
+$deadline=$tick+$frequency*900;$activeEnd=$tick+$frequency*300
+Save 'local-start.json' @{id=$manifest.id;tick=$tick;frequency=$frequency;deadline=$deadline;activeEnd=$activeEnd;pid=$PID;start=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks;utc=[DateTime]::UtcNow.ToString('o')} -New
+Beat
 try{
- $store.Open('ReadWrite');$exists=[bool]@($store.Certificates|Where-Object {$_.Thumbprint-eq$cert.Thumbprint}).Count
- $leasePath=Join-Path $repo '.artifacts/tls-trust-preflight-owner.json'
- $lease=if(Test-Path $leasePath){Get-Content $leasePath -Raw -Encoding UTF8|ConvertFrom-Json}else{$null}
- $ownedTrust=$lease-and$lease.state-eq'READY'-and$lease.added-and$lease.thumb-eq$cert.Thumbprint
- if(!$exists){throw 'TLS trust must be prepared before the product campaign'}
- $added=[bool]$ownedTrust
- @{thumb=$cert.Thumbprint;added=$added}|ConvertTo-Json|Set-Content (Join-Path $RunDir 'local-trust-owner.json') -Encoding UTF8
- $store.Close()
+ $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -RunDir "'+$RunDir+'" -ManifestSha256 '+$ManifestSha256+' -Role Watchdog'
+ $script:watcher=Start-Process $shell -ArgumentList $arguments -WindowStyle Hidden -PassThru
+ $ready=[E2eOwnedCommand]::Deadline(5000)
+ while(!(Test-Path (Join-Path $RunDir 'local-watchdog.json'))){if($watcher.HasExited-or[E2eOwnedCommand]::Remaining($ready)-eq0){throw 'Independent local watchdog not ready'};Beat;Start-Sleep -Milliseconds 50}
+ Certificate 'Add'
  $secret=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($secret);$rng.Dispose()
- [IO.File]::WriteAllText((Join-Path $RunDir 'operator-secret'),([Convert]::ToBase64String($secret).Replace('+','-').Replace('/','_').TrimEnd('=')))
+ [IO.File]::WriteAllText((Join-Path $RunDir 'operator-secret'),[Convert]::ToBase64String($secret).Replace('+','-').Replace('/','_').TrimEnd('='))
  $env:RA_MODE='lan-test';$env:RA_LISTEN='192.168.0.61:25001';$env:RA_ALLOWED_ORIGINS='192.168.0.61:25001'
- $env:RA_TLS_CERT=Join-Path $repo '.artifacts/lan-tls-20261018/server-cert.pem';$env:RA_TLS_KEY=Join-Path $repo '.artifacts/lan-tls-20261018/server-key.pem'
- $env:RA_VIEWER_DIR=Join-Path $repo 'web/viewer';$env:RA_OPERATOR_SECRET_FILE=Join-Path $RunDir 'operator-secret';$env:RA_AUDIT_DIR=Join-Path $RunDir 'audit'
- $server=[E2eOwnedCommand]::Start((Join-Path $repo '.artifacts/signaling-dev.exe'),@())
- $ready=[E2eOwnedCommand]::Deadline(10000);$connected=$false
+ $env:RA_TLS_CERT=$manifest.local.tlsCert;$env:RA_TLS_KEY=$manifest.local.tlsKey;$env:RA_VIEWER_DIR=Join-Path $repo 'web/viewer'
+ $env:RA_OPERATOR_SECRET_FILE=Join-Path $RunDir 'operator-secret';$env:RA_AUDIT_DIR=Join-Path $RunDir 'audit'
+ $script:server=[E2eOwnedCommand]::Start($manifest.local.signaling,@())
+ Save 'local-owned.json' @{id=$manifest.id;processes=@((ProcessIdentity $server))}
+ $ready=[Math]::Min($activeEnd,[E2eOwnedCommand]::Deadline(10000));$connected=$false
  while([E2eOwnedCommand]::Remaining($ready)-gt0){
   if($server.HasExited){throw 'Signaling exited'}
-  try{$request=[Net.WebRequest]::Create('https://192.168.0.61:25001/healthz');$request.Timeout=1000;$response=$request.GetResponse();$response.Close();$connected=$true;break}catch{Start-Sleep -Milliseconds 100}
+  try{$request=[Net.WebRequest]::Create('https://192.168.0.61:25001/healthz');$request.Timeout=1000;$response=$request.GetResponse();$response.Close();$connected=$true;break}catch{Beat;Start-Sleep -Milliseconds 100}
  }
- if(!$connected){throw 'Trusted local HTTPS failed'}
+ if(!$connected){throw 'Trusted HTTPS health missing'}
  $node=(Get-Command node.exe).Source
- $viewer=[E2eOwnedCommand]::Start($node,@((Join-Path $PSScriptRoot 'e2e-viewer.cjs'),$RunDir))
- while([E2eOwnedCommand]::Remaining($deadline)-gt0-and!(Test-Path (Join-Path $RunDir 'finish.json'))){
+ $script:viewer=[E2eOwnedCommand]::Start($node,@((Join-Path $PSScriptRoot 'e2e-viewer.cjs'),$RunDir))
+ Save 'local-owned.json' @{id=$manifest.id;processes=@((ProcessIdentity $server),(ProcessIdentity $viewer))}
+ while([E2eOwnedCommand]::Remaining($activeEnd)-gt0-and!(Test-Path (Join-Path $RunDir 'finish.json'))){
+  if($watcher.HasExited){throw 'Local watchdog lost'}
   if($server.HasExited){throw 'Signaling exited'}
   if($viewer.HasExited){break}
-  Start-Sleep -Milliseconds 100
+  Beat;Start-Sleep -Milliseconds 100
  }
-}catch{@{error=$_.Exception.Message}|ConvertTo-Json|Set-Content (Join-Path $RunDir 'local-error.json') -Encoding UTF8}
-finally{
- if($viewer){$viewer.Dispose()};if($server){$server.Dispose()}
- if($added){$store.Open('ReadWrite');foreach($entry in @($store.Certificates|Where-Object {$_.Thumbprint-eq$cert.Thumbprint})){$store.Remove($entry)};$store.Close()}
- @{seconds=$clock.Elapsed.TotalSeconds;ownedJobsClosed=$true;temporaryTrustRemoved=$added}|ConvertTo-Json|Set-Content (Join-Path $RunDir 'local-cleanup.json') -Encoding UTF8
-}
+ if([E2eOwnedCommand]::Remaining($activeEnd)-eq0){throw 'Selected execution deadline'}
+}catch{Save 'local-error.json' @{error=$_.Exception.GetType().Name;line=$_.InvocationInfo.ScriptLineNumber}}
+finally{try{Cleanup}catch{Save 'local-recovery-required.json' @{error=$_.Exception.GetType().Name}}}

@@ -1,6 +1,5 @@
-$ErrorActionPreference='Stop'
-$owner=Get-Content (Join-Path $Staging 'product-owner.json') -Raw -Encoding UTF8|ConvertFrom-Json
-if($owner.root-ne(Join-Path $env:ProgramData ('RemoteAssist-E2E-Product-'+$owner.id))){throw 'Owner mismatch'}
+﻿$ErrorActionPreference='Stop'
+$owner=Get-E2eOwner
 $result=@{}
 foreach($name in @('service-status.ndjson','product-error.json','product-cleanup.json')){
  $path=Join-Path $owner.root $name

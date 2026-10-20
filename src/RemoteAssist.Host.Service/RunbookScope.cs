@@ -27,5 +27,6 @@ internal sealed class RunbookScope:IDisposable
         try{return await done.Task.WaitAsync(timeout.Token);}
         finally{Dispose();}
     }
-    public void Dispose(){lock(gate){if(disposed)return;disposed=true;child?.Dispose();}}
+    public void Fence()=>Volatile.Read(ref child)?.Dispose();
+    public void Dispose(){Fence();lock(gate){if(disposed)return;disposed=true;child?.Dispose();}}
 }

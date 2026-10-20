@@ -22,12 +22,15 @@ New-Item -ItemType Directory -Path $payload -Force|Out-Null
 try{
     # RID-specific restore needs its own lock files. Preserve the working tree locks.
     $source=Join-Path $dest 'build-source'
-    $sourceFiles=@(& git -C $repo ls-files -- src deploy/runbooks third_party/ffmpeg Directory.Build.props Directory.Build.targets Directory.Packages.props global.json NuGet.Config nuget.config)
+    # Include new source files in a dirty candidate; git ls-files alone omits untracked implementations.
+    $sourceFiles=@(& git -C $repo -c core.quotepath=false ls-files --cached --others --exclude-standard -- src deploy/runbooks third_party/ffmpeg Directory.Build.props Directory.Build.targets Directory.Packages.props global.json NuGet.Config nuget.config | Sort-Object -Unique)
     if($LASTEXITCODE-ne0-or!$sourceFiles.Count){throw 'Source inventory failed'}
     foreach($relative in $sourceFiles){
+        $sourcePath=[IO.Path]::GetFullPath((Join-Path $repo $relative))
+        if(!$sourcePath.StartsWith($repo+'\',[StringComparison]::OrdinalIgnoreCase)-or(Get-Item -LiteralPath $sourcePath -Force).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Source inventory path or reparse mismatch'}
         $target=Join-Path $source $relative
         New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force|Out-Null
-        Copy-Item -LiteralPath (Join-Path $repo $relative) -Destination $target
+        Copy-Item -LiteralPath $sourcePath -Destination $target
     }
     $sourceHashes=@($sourceFiles|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $source $_)).Hash}})
     foreach($name in @('Service','Tray','Helper','AdminHelper','Recovery','RunbookWorker')){

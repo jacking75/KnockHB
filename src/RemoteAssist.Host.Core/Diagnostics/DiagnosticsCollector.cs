@@ -69,7 +69,7 @@ public sealed class DiagnosticsCollector:IDiagnosticsProvider
         try
         {
             foreach(var service in all.OrderBy(s=>s.ServiceName,StringComparer.Ordinal))
-                if(result.Count<64&&Name(service.ServiceName))try{result.Add(new(service.ServiceName,service.Status.ToString()));}catch{}
+                if(result.Count<64&&Name(service.ServiceName))result.Add(new(service.ServiceName,service.Status.ToString()));
         }
         finally{foreach(var service in all)service.Dispose();}
         return result.ToArray();

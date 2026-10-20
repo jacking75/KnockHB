@@ -1,6 +1,7 @@
 import { ViewerConnection } from './connection.js';
 import { ViewerInput } from './input.js';
 import { validText } from './features.js';
+import { downloadHandle, maxDownloadBytes } from './files.js';
 
 const el = Object.fromEntries(['join', 'session', 'join-form', 'code', 'pin', 'name', 'status', 'screen', 'stats', 'hangup','remote-text','send-text','input-status','admin-request','admin-sas','admin-revoke','session-status','chat-panel','chat-history','chat-text','chat-send','clipboard-panel','clipboard-text','clipboard-send','clipboard-get','clipboard-copy','feature-status','diagnostics-panel','diagnostics-content','diagnostics-status']
   .map(id => [id, document.getElementById(id)]));
@@ -95,8 +96,8 @@ el['runbook-cancel'].addEventListener('click',()=>current?.runbooks.cancel());
 el['monitor-list'].addEventListener('click',()=>command('monitor-list'));
 el['monitor-select'].addEventListener('click',()=>{if(el['monitor-choice'].value)command('monitor-select',{monitorIdentity:el['monitor-choice'].value});});
 el['quality-mode'].addEventListener('change',()=>command('quality-mode',{mode:el['quality-mode'].value}));
-el['file-send'].addEventListener('click',()=>{const file=el['file-source'].files[0];if(file)current?.files.offer(file).catch(()=>current?.end('파일 전송 실패다.',true));});
-el['file-accept'].addEventListener('click',async()=>{const c=current,offer=c?.files.current;if(!offer)return;try{if(!globalThis.showSaveFilePicker){el['file-status'].textContent='이 브라우저는 파일 저장 API를 지원하지 않는다.';await c.files.cancel('io-error');return;}const handle=await showSaveFilePicker({suggestedName:offer.name});if(current===c&&c.files.current===offer)await c.files.accept(handle);}catch{if(current===c)await c.files.cancel('declined');}});
+el['file-send'].addEventListener('click',()=>{const c=current,file=el['file-source'].files[0];if(file&&c)c.files.offer(file).then(ok=>{if(!ok&&current===c)el['file-status'].textContent='파일 이름·256MiB 한도·전송 상태를 확인해야 한다.';}).catch(()=>{if(current===c)c.end('파일 전송 실패다.',true);});});
+el['file-accept'].addEventListener('click',async()=>{const c=current,offer=c?.files.current;if(!offer||offer.phase!=='offered')return;el['file-accept'].disabled=true;try{if(!globalThis.showSaveFilePicker&&offer.size>maxDownloadBytes){await c.files.cancel('too-large',offer);if(current===c)el['file-status'].textContent='이 브라우저의 다운로드 한도는 8MiB다.';return;}const handle=globalThis.showSaveFilePicker?await showSaveFilePicker({suggestedName:offer.name}):downloadHandle(offer.name,offer.size);if(current===c&&c.files.current===offer)await c.files.accept(handle);}catch{if(current===c)await c.files.cancel('declined',offer);}});
 el['file-reject'].addEventListener('click',()=>current?.files.cancel('declined'));
 el['file-cancel'].addEventListener('click',()=>current?.files.cancel());
 el['chat-send'].addEventListener('click',()=>{const text=el['chat-text'].value;if(current?.features.chat(text)){appendChat('나: '+text);el['chat-text'].value='';}});

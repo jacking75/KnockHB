@@ -22,12 +22,13 @@ public partial class MainWindow
     int connectionGeneration=1;
     LocalActionWindow? fileDialog;
     ActionConsentWindow? actionDialog;
+    string? pendingRunbookId;
     string? fileId;
     void InitializeRuntime()
     {
         SourceInitialized+=(_,_)=>icon=new NativeTrayIcon(this,StopLocal);
         StateChanged+=(_,_)=>{if(WindowState==WindowState.Minimized)Hide();};
-        Closing+=(_,_)=>{closed=true;TryPost("stop");EndLocal();icon?.Dispose();};
+        Closing+=(_,_)=>{closed=true;PostStop();EndLocal();icon?.Dispose();};
     }
     public void Attach(IpcPeerSession value){peer=value;StartButton.IsEnabled=true;Status.Text="지원 코드를 만들면 대상자의 승인 후 연결한다.";}
     public void Disconnected(string reason)
@@ -98,8 +99,13 @@ public partial class MainWindow
                 var bookRequest=message.Body?.Deserialize<RunbookMessage>()??throw new InvalidDataException("Runbook 요청 누락이다.");
                 var book=RunbookCatalog.Demand(bookRequest);
                 if((capabilities&64)==0||book.RequiresAdmin&&(capabilities&4)==0||bookRequest.SessionId!=currentSession||bookRequest.Generation!=connectionGeneration||bookRequest.PermissionGeneration!=1||bookRequest.Id!=message.Id||actionDialog!=null)throw new UnauthorizedAccessException("현재 Runbook 승인 요청이 아니다.");
-                var bookSession=currentSession;var bookDialog=new ActionConsentWindow(book.RequiresAdmin?"이번 관리자 Runbook 실행 승인":"이번 Runbook 실행 승인",$"{book.Title}\n버전 {book.BookVersion} · SHA256 {book.Hash}\n인자 detail={bookRequest.Args!["detail"]}\n{book.Impact}\n최대 20초 · 출력 제한 · 취소는 이미 수행한 변경을 복원하지 않는다.\n\n실제 실행 스크립트:\n{book.Source}"){Owner=this};actionDialog=bookDialog;
-                Dispatcher.BeginInvoke(new Action(()=>{if(actionDialog!=bookDialog||currentSession!=bookSession)return;Show();WindowState=WindowState.Normal;Activate();bookDialog.ShowDialog();if(actionDialog!=bookDialog||currentSession!=bookSession)return;actionDialog=null;TryPost("runbook-response",new {approved=bookDialog.Approved},bookRequest.Id);}));break;
+                var bookSession=currentSession;var bookDialog=new ActionConsentWindow(book.RequiresAdmin?"이번 관리자 Runbook 실행 승인":"이번 Runbook 실행 승인",$"{book.Title}\n버전 {book.BookVersion} · SHA256 {book.Hash}\n인자 detail={bookRequest.Args!["detail"]}\n{book.Impact}\n최대 20초 · 출력 제한 · 취소는 이미 수행한 변경을 복원하지 않는다.\n\n실제 실행 스크립트:\n{book.Source}"){Owner=this};actionDialog=bookDialog;pendingRunbookId=bookRequest.Id;
+                Dispatcher.BeginInvoke(new Action(()=>{if(actionDialog!=bookDialog||currentSession!=bookSession)return;Show();WindowState=WindowState.Normal;Activate();bookDialog.ShowDialog();if(actionDialog!=bookDialog||currentSession!=bookSession)return;actionDialog=null;pendingRunbookId=null;TryPost("runbook-response",new {approved=bookDialog.Approved},bookRequest.Id);}));break;
+            case "runbook-dismiss":
+                if(message.Body!=null||!Guid.TryParseExact(message.Id,"N",out _)||currentSession==null)throw new InvalidDataException("Runbook 창 닫기 바인딩 오류다.");
+                if(pendingRunbookId==message.Id){var closing=actionDialog;actionDialog=null;pendingRunbookId=null;closing?.Close();}
+                // The dialog may have closed just before cancellation. Its old response is ignored by the service.
+                TryPost("runbook-dismissed",id:message.Id);break;
             case "monitor-request":
                 var monitorRequest=message.Body??throw new InvalidDataException("모니터 요청 누락이다.");
                 if((capabilities&1)==0||currentSession!=monitorRequest.GetProperty("sessionId").GetString()||actionDialog!=null)throw new UnauthorizedAccessException("현재 모니터 요청이 아니다.");
@@ -164,13 +170,14 @@ public partial class MainWindow
     {if((capabilities&8)==0)return;fileId=Guid.NewGuid().ToString("N");FileCancel.IsEnabled=true;TryPost("file-send",id:fileId);}
     void FileCancelClicked(object sender,RoutedEventArgs e){if(fileId!=null)TryPost("file-cancel",id:fileId);}
     void StopClicked(object sender,RoutedEventArgs e)=>StopLocal();
-    void StopLocal(){TryPost("stop");EndLocal();Status.Text="종료 요청을 보냈다.";}
+    void PostStop(){var mark=LocalStopMark.Create();TryPost("stop",new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=mark.Frequency});}
+    void StopLocal(){PostStop();EndLocal();Status.Text="종료 요청을 보냈다.";}
     void EndLocal()
     {
         pendingId=null;currentSession=null;
         capabilities=0;ChatText.IsEnabled=ChatSend.IsEnabled=false;ChatText.Clear();ChatHistory.Clear();
         FileSend.IsEnabled=FileCancel.IsEnabled=false;fileId=null;var localFile=fileDialog;fileDialog=null;localFile?.Close();FileStatus.Text="파일 전송 대기";
-        var localAction=actionDialog;actionDialog=null;localAction?.Close();
+        var localAction=actionDialog;actionDialog=null;pendingRunbookId=null;localAction?.Close();
         adminPending=null;var adminDialog=adminConsent;adminConsent=null;adminDialog?.Close();
         var dialog=consent;consent=null;dialog?.Close();
         indicator?.Dispose();indicator=null;

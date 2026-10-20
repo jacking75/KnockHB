@@ -9,8 +9,20 @@ function Atomic($path,$value){AtomicText $path ($value|ConvertTo-Json -Depth 8)}
 function Native($name,$arguments){& $name @arguments | Out-Null;if($LASTEXITCODE -ne 0){throw ('Native command failed: '+$name)}}
 function Protect($path,$readUsers){$grants=@('*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F');if($readUsers){$grants+= '*S-1-5-32-545:(OI)(CI)RX'};Native "$env:SystemRoot\System32\icacls.exe" (@($path,'/inheritance:r','/grant:r')+$grants);Native "$env:SystemRoot\System32\icacls.exe" @($path,'/setowner','*S-1-5-32-544','/T')}
 function SafeTree($path){$full=[IO.Path]::GetFullPath($path);if(!(Test-Path -LiteralPath $full)){return};for($p=Get-Item -LiteralPath $full;$p;$p=$p.Parent){if($p.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse installation path'}};foreach($item in Get-ChildItem -LiteralPath $full -Recurse -Force){if($item.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse installation item'}}}
-function StopOwned(){if(Get-Service -Name $serviceName -ErrorAction SilentlyContinue){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(15))}}
-function SetImage($image){Native "$env:SystemRoot\System32\sc.exe" @('config',$serviceName,'binPath=',('"'+$image+'"'),'start=','auto')}
+function ServiceImage([string]$Path){
+    if(!$Path-or$Path.Length-lt3-or!$Path.StartsWith('"')-or!$Path.EndsWith('"')){throw 'Quoted owned service image required'}
+    $image=$Path.Substring(1,$Path.Length-2);$full=[IO.Path]::GetFullPath($image)
+    $prefix=[IO.Path]::GetFullPath((Join-Path $root 'versions'))+[IO.Path]::DirectorySeparatorChar
+    if($full-ne$image-or!$full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($full)-ne'RemoteAssist.Host.Service.exe'-or$full.Substring($prefix.Length).Split('\').Count-ne2){throw 'Service name belongs to another installation'}
+    return $full
+}
+function OwnedService(){
+    $owned=Get-CimInstance Win32_Service -Filter "Name='RemoteAssistHost'" -OperationTimeoutSec 5
+    if($owned){$null=ServiceImage $owned.PathName;SafeTree ([IO.Path]::GetDirectoryName((ServiceImage $owned.PathName)))}
+    return $owned
+}
+function StopOwned(){if(OwnedService){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(15))}}
+function SetImage($image){$image=ServiceImage ('"'+$image+'"');Native "$env:SystemRoot\System32\sc.exe" @('config',$serviceName,'binPath=',('"'+$image+'"'),'start=','auto')}
 function WaitReady($image){$clock=[Diagnostics.Stopwatch]::StartNew();while($clock.Elapsed.TotalSeconds-lt45){if(Test-Path -LiteralPath (Join-Path $state 'ready.json')){$ready=Get-Content -LiteralPath (Join-Path $state 'ready.json') -Encoding UTF8|ConvertFrom-Json;$process=Get-Process -Id $ready.Pid -ErrorAction SilentlyContinue;if($process-and$process.Path-eq$image-and$ready.Image-eq$image){return}};$service=Get-Service $serviceName;if($service.Status-eq'Stopped'){throw 'New service stopped before readiness'};Start-Sleep -Milliseconds 250};throw 'New service readiness timeout'}
 function Rollback($tx){StopOwned;if($tx.Previous){if(!$tx.Previous.StartsWith($root+'\versions\',[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe rollback image'};SetImage $tx.Previous;Remove-Item -LiteralPath (Join-Path $state 'ready.json') -Force -ErrorAction SilentlyContinue;Start-Service $serviceName;WaitReady $tx.Previous}elseif(Get-Service -Name $serviceName -ErrorAction SilentlyContinue){Native "$env:SystemRoot\System32\sc.exe" @('delete',$serviceName)};Atomic (Join-Path $root 'transaction.json') @{Status='rolled-back';Previous=$tx.Previous;Candidate=$tx.Candidate}}
 $admin=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent());if(!$admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator required'}
@@ -39,8 +51,8 @@ try{
     $candidate=Join-Path (Join-Path $root 'versions') $manifest.Version
     if(Test-Path -LiteralPath $candidate){foreach($f in $manifest.Files){$installed=Join-Path $candidate $f.Path;if(!(Test-Path -LiteralPath $installed)-or(Get-FileHash -LiteralPath $installed).Hash.ToLowerInvariant()-ne$f.Sha256){$candidate=Join-Path (Join-Path $root 'versions') ($manifest.Version+'-repair-'+[guid]::NewGuid().ToString('N'));break}}}
     if(!(Test-Path -LiteralPath $candidate)){New-Item -ItemType Directory -Path $candidate -Force|Out-Null;foreach($child in Get-ChildItem -LiteralPath $Package){Copy-Item -LiteralPath $child.FullName -Destination $candidate -Recurse};Protect $candidate $true}
-    $image=Join-Path $candidate 'RemoteAssist.Host.Service.exe';$existing=Get-CimInstance Win32_Service -Filter "Name='RemoteAssistHost'"; $previous=$null
-    if($existing){$previous=$existing.PathName.Trim('"');if(!$previous.StartsWith($root+'\versions\',[StringComparison]::OrdinalIgnoreCase)){throw 'Service name belongs to another installation'}}
+    $image=Join-Path $candidate 'RemoteAssist.Host.Service.exe';$existing=OwnedService; $previous=$null
+    if($existing){$previous=ServiceImage $existing.PathName}
     StopOwned
     foreach($file in @('RemoteAssist.Update.exe','install.ps1')){if(!(Test-Path -LiteralPath (Join-Path $root $file))){Copy-Item -LiteralPath (Join-Path $candidate $file) -Destination (Join-Path $root $file)}}
     if(!(Test-Path -LiteralPath (Join-Path $root 'trusted-public.pem'))){Copy-Item -LiteralPath (Join-Path $candidate 'trusted-public.pem') -Destination $root}

@@ -73,8 +73,14 @@ static class UpdateProgram
     {
         var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"icacls.exe")){UseShellExecute=false,CreateNoWindow=true};
         foreach(var a in new[]{path,"/inheritance:r","/grant:r","*S-1-5-18:(OI)(CI)F","*S-1-5-32-544:(OI)(CI)F"})start.ArgumentList.Add(a);
-        using var process=Process.Start(start)??throw new IOException("보호 ACL 설정 실패다.");process.WaitForExit();if(process.ExitCode!=0)throw new UnauthorizedAccessException("보호 ACL 설정 실패다.");
-        var owner=new ProcessStartInfo(start.FileName){UseShellExecute=false,CreateNoWindow=true};foreach(var arg in new[]{path,"/setowner","*S-1-5-32-544","/T"})owner.ArgumentList.Add(arg);using var owning=Process.Start(owner)??throw new IOException("보호 소유권 설정 실패다.");owning.WaitForExit();if(owning.ExitCode!=0)throw new UnauthorizedAccessException("보호 소유권 설정 실패다.");
+        RunAcl(start);
+        var owner=new ProcessStartInfo(start.FileName){UseShellExecute=false,CreateNoWindow=true};foreach(var arg in new[]{path,"/setowner","*S-1-5-32-544","/T"})owner.ArgumentList.Add(arg);RunAcl(owner);
+    }
+    static void RunAcl(ProcessStartInfo start)
+    {
+        using var process=Process.Start(start)??throw new IOException("보호 ACL 명령 시작 실패다.");
+        if(!process.WaitForExit(30000)){process.Kill(true);process.WaitForExit(2000);throw new TimeoutException("보호 ACL 명령의 30초 기한을 넘었다.");}
+        if(process.ExitCode!=0)throw new UnauthorizedAccessException("보호 ACL 명령 실패다.");
     }
     static async Task Download(HttpClient http,Uri url,string target,long limit,CancellationToken ct)
     {

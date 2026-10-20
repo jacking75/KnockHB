@@ -43,8 +43,7 @@ internal sealed class RunbookDataSession(RTCDataChannel channel,PermissionGate p
                 RunbookResult result;
                 try{result=await execute(request,operation!.Token).WaitAsync(TimeSpan.FromSeconds(55),ct);}
                 catch(OperationCanceledException)when(!ct.IsCancellationRequested){result=new("cancelled",null,"","작업을 중단했다.",RunbookCatalog.Definition(request.BookId!).Impact);}
-                Send(new(){T="runbook-result",Id=request.Id,Result=result});
-                lock(gate){current=null;operation?.Dispose();operation=null;}
+                lock(gate){Send(new(){T="runbook-result",Id=request.Id,Result=result});current=null;operation?.Dispose();operation=null;}
             }
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){}

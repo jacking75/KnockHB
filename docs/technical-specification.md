@@ -31,6 +31,8 @@ HostRun은 엄격 CLI와 실패 exit를 제공하고 콘솔 화면 승인만 허
 
 운영은 TLS/key/Viewer/TURN/node/audit를 시작 전에 검사한다. 개발 평문은 loopback만 허용한다. static allowlist에는 index/app/style/connection/input/geometry/features/files/sha256/runbooks/favicon만 있다. CSP/frame 차단/nosniff/referrer/HSTS를 적용한다. /healthz는 생존, /readyz는 시작 오류·키·감사 장애·종료 상태이며 실제 allocation PASS가 아니다. /metrics·/audit는 node bearer 인증이다.
 
+Host의 세션 발급 HTTP는 redirect를 따르지 않고 2xx만 수락한다. 발급 JSON에도 크기·중복/미등록 필드·필수 필드·난수 식별자 형식을 검사한다. Viewer의 기한/생존/파일 작업은 단조 시계로 계산하고 수신 RTP의 framesPerSecond를 디코딩 FPS로 표시한다. 실제 화면 표시 FPS로 이름을 바꾸지 않는다.
+
 발급은 IP당10회/분, limiter4096, 룸1000, 연결+upgrade예약2000이다. join10초, signaling heartbeat5초/read lease15초, 쓰기5초, peer 이탈3초, HTTP shutdown5초다. 시그널링128KiB/SDP96KiB/ICE8KiB/대기256, JSON depth32와 중복/미지 필드를 거부한다. metadata 감사 event4096bytes, spool4096, journal4MiB×4/7일이다.
 
 ## 미디어·데이터
@@ -38,6 +40,8 @@ HostRun은 엄격 CLI와 실패 exit를 제공하고 콘솔 화면 승인만 허
 Host UDP27002..27099, coturn TCP25002/25003, relay UDP27100..27199다. 브라우저 동적 소스 포트는 고정할 수 없다. 목적지 allowlist와 실제 TLS/방화벽 정책은 배포 자료를 따른다.
 
 모니터 handle/deviceName/geometry·frame generation·BGRA/stride/최대256MiB를 검사한다. WGC resize는 이전 프레임을 폐기하고 같은 RT device를 재사용한다. DXGI는 rotation/커서와 부분 COM 생성 정리를 처리한다. 바뀐 물리 descriptor는 새 동의·capture/scaler/encoder 재구성·IDR/ACK가 필요하다. 제거 시 종료한다.
+
+일반 desktop의 자동 캡처 선택은 WGC 미지원뿐 아니라 초기화 실패에도 같은 승인 모니터의 DXGI를 한 번 선택한다. 모니터 identity/handle/geometry가 달라졌거나 권한·동의가 상실된 경우에는 폴백하지 않는다. 실행 중 캡처 상실은 기존 포맷 재승인/종료 경계를 유지한다. 명시한 진단 backend는 조용히 바꾸지 않는다.
 
 FFmpeg8.1 ABI의 7개 shared DLL은 고정 archive/DLL SHA256 이후 명시 경로에서 로드한다. GPL/nonfree/libx264와 PATH fallback을 금지한다. 현재 공급본은 LGPLv3이며 source recipe/80개 dependency pin과 전체 소스/고지 준비 도구가 있다. 실제 대응 소스 공개·재빌드·배포 법적 검토는 V02/V36이다.
 
@@ -49,4 +53,8 @@ input/pointer/control/file/chat/telemetry/runbook은 reliable ordered다. move�
 
 파일은 최대256MiB/청크16KiB/credit16/buffer한도·한 건·건별 수락·NTFS handle/충돌·SHA256·30초 승인/10초 idle/10분 전체 기한이다. chat4096자, clipboard8192자/UTF8 16KiB와 hash/2초 요청이다. 진단 provider와 목록에는 bounded timeout/길이/오류가 있다. Runbook은 고정 두 작업·인자 enum·동시1/최근ID256·승인28초/worker20초/출력4096자/Job 제한이다.
 
+파일 저장 API가 없는 Viewer의 수신은 별도 수락 뒤 최대8MiB만 메모리에 보관하고 size/hash 검증 뒤 명시적 다운로드를 만든다. 취소·세대 교체 뒤 완료된 hash/파일 선택/쓰기 작업은 다른 전송에 적용하지 않는다. 서비스는 시작 감사가 기록된 미완료 전송을 세션 종료 시 stopped로 마감한다. 진단 서비스 목록의 상태 조회 실패는 빈 정상 목록으로 바꾸지 않는다.
+
 실제 media lease는 활성 후15초 첫 전송, 이후3초 정지로 helper Job을 종료한다. Viewer decodedFrames 정지는15초이며 monitor 승인/복구 중에는 감시를 중단한다. local stop은 이 타이머를 기다리지 않는다. managed 정리5초, 무응답 native는 서비스가 소유 프로세스로 격리한다. 설치/업데이트·운영·하네스의 상세는 deploy/와 tests/e2e 문서를 따른다.
+
+로컬 종료는 취소 callback이나 startup/resource lock을 기다리기 전에 현재 일반 Helper·관리자 Helper·Runbook Job부터 차단한다. 업데이트 ACL 명령은 각각30초, 실패 후 소유 명령 종료 대기는2초다. Runbook은 설치 스크립트 읽기에도 실행 기한/32KiB 상한을 적용하고 프로세스 생성 직전에 만료를 재검사한다. 설치/제거/rollback의 모든 서비스 정지는 따옴표로 감싼 `versions/<버전>/RemoteAssist.Host.Service.exe`의 소유 경로를 먼저 검사한다.

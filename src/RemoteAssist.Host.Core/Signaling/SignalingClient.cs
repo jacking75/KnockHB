@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -21,7 +20,6 @@ public sealed class SignalingClient : IAsyncDisposable
         // 서버(Go)는 camelCase로 내보낸다. SignalMsg는 [JsonPropertyName]으로 이름을
         // 못 박아 두었으므로 영향받지 않고, SessionCredentials 같은 단순 DTO만 이 정책을 탄다.
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
     };
 
     private readonly Uri _httpBase;
@@ -45,17 +43,12 @@ public sealed class SignalingClient : IAsyncDisposable
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));ct=deadline.Token;
-        using var http = new HttpClient();
+        using var http = new HttpClient(new HttpClientHandler {AllowAutoRedirect=false});
         using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(httpBase,"/session"));
         using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
         response.EnsureSuccessStatusCode();
         await response.Content.LoadIntoBufferAsync(SignalingFraming.MaxBytes,ct);
-        var credentials=await response.Content.ReadFromJsonAsync<SessionCredentials>(Json, ct)
-            ?? throw new InvalidOperationException("세션 발급 응답을 해석할 수 없습니다.");
-        if(credentials.Code.Length!=9||credentials.Code.Any(c=>c is <'0' or >'9')||credentials.Pin.Length!=4||credentials.Pin.Any(c=>c is <'0' or >'9')||
-           credentials.HostToken.Length!=32||credentials.SessionId.Length!=32||credentials.ExpiresIn is <30 or >1800)
-            throw new InvalidDataException("세션 발급 계약과 다른 응답이다.");
-        return credentials;
+        return SessionCredentials.Parse(await response.Content.ReadAsByteArrayAsync(ct));
     }
 
     /// <summary>WebSocket에 붙어 host 역할로 참가한다. 반대편이 이미 있으면 true.</summary>
@@ -161,13 +154,25 @@ public sealed class SignalingClient : IAsyncDisposable
 }
 
 /// <summary>POST /session 응답.</summary>
-public sealed record SessionCredentials
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public sealed class SessionCredentials
 {
-    public string SessionId { get; init; } = "";
-    public string Code { get; init; } = "";
-    public string Pin { get; init; } = "";
-    public string HostToken { get; init; } = "";
-    public int ExpiresIn { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("sessionId")] public string SessionId { get; init; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("code")] public string Code { get; init; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("pin")] public string Pin { get; init; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("hostToken")] public string HostToken { get; init; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("expiresIn")] public int ExpiresIn { get; init; }
+
+    public static SessionCredentials Parse(ReadOnlyMemory<byte> bytes)
+    {
+        using var document=ProtocolJson.ParseObject(bytes,SignalingFraming.MaxBytes);
+        var credentials=JsonSerializer.Deserialize<SessionCredentials>(bytes.Span)??throw new InvalidDataException("세션 발급 본문 누락이다.");
+        if(!Digits(credentials.Code,9)||!Digits(credentials.Pin,4)||!Id(credentials.HostToken)||!Id(credentials.SessionId)||credentials.ExpiresIn is <30 or >1800)
+            throw new InvalidDataException("세션 발급 계약과 다른 응답이다.");
+        return credentials;
+        static bool Digits(string? value,int length)=>value?.Length==length&&value.All(c=>c is >= '0' and <= '9');
+        static bool Id(string? value)=>value is {Length:32}&&value.All(c=>char.IsAsciiLetterOrDigit(c)||c is '-' or '_');
+    }
 
     /// <summary>대상자에게 읽어 주기 좋은 형태. 418207935 → 418-207-935</summary>
     public string DisplayCode =>

@@ -11,6 +11,10 @@ using SIPSorcery.Net;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("capture initialization fallback stays bound to the approved monitor and stops on authority loss",RemainingFeatureRegression.CaptureSelection),
+    ("service file audit closes unfinished transfers after helper termination and serializes durable start",RemainingFeatureRegression.FileAuditTermination),
+    ("Runbook cancellation cannot resume input until the matching dialog dismissal ACK",RemainingFeatureRegression.RunbookDismissal),
+    ("session credentials and nested ICE reject unknown, duplicate, missing and malformed fields",RemainingFeatureRegression.StrictCredentials),
     ("C#/Go/JS shared permission and channel fixtures",async()=>
     {
         using var fixtures=JsonDocument.Parse(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory,"features.json")));

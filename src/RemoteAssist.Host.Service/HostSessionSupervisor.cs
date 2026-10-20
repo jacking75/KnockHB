@@ -6,6 +6,7 @@ using RemoteAssist.Host.Core.Ipc;
 using RemoteAssist.Host.Core.Security;
 using RemoteAssist.Host.Core.Windows;
 using RemoteAssist.Host.Core.Input;
+using RemoteAssist.Host.Core.Files;
 using RemoteAssist.Protocol;
 using RemoteAssist.Host.Core.Runbooks;
 using RemoteAssist.Host.Core.Deployment;
@@ -56,7 +57,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             Report("tray-launched",childPid:ui.Pid);
             phase="tray-authentication";
             var channel=await LocalIpcEndpoint.AcceptAsync(server,ui,nonce,stoppingToken);
-            await using var uiPeer=new IpcPeerSession(channel,HandleTray,stoppingToken,_=>StopHelper("대상자가 즉시 종료했다."),reason=>StopHelper(reason));
+            await using var uiPeer=new IpcPeerSession(channel,HandleTray,stoppingToken,message=>StopHelper("대상자가 즉시 종료했다.",stopMark:LocalStopMark.Read(message)),reason=>StopHelper(reason));
             tray=uiPeer;uiPeer.Start();uiPeer.Post("state",new {status="지원 코드를 만들면 대상자의 승인 후 연결한다.",ended=true});
             phase="supervision";
             Report("tray-ready");
@@ -73,6 +74,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 if(current?.Recovery?.HasExited==true)StopHelper("입력 복원 감독이 종료됐다.",current);
                 if(current?.Admin?.HasExited==true||current?.AdminApproval is {} adminApproval&&!current.AdminAuthorization!.Allows(adminApproval.AdminGeneration))StopHelper("관리자 승인 또는 헬퍼가 종료됐다.",current);
                 if(current?.AdminAuthorization?.PendingExpired==true)StopHelper("관리자 승인 요청이 만료돼 지원 세션을 종료했다.",current);
+                if(current?.BookApproval.Expired==true)StopHelper("Runbook 승인 또는 창 닫기 확인이 만료돼 지원 세션을 종료했다.",current);
                 bool mediaExpired;lock(gate)mediaExpired=helper==current&&current?.MediaWatch==true&&(current.LastMediaFrame==0?Environment.TickCount64-current.MediaStarted>=15000:Environment.TickCount64-current.LastMediaFrame>=3000);
                 if(mediaExpired)StopHelper("실제 영상 송신이 정지해 헬퍼와 지원 세션을 종료했다.",current);
             }
@@ -140,15 +142,25 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 }
                 break;
             case "runbook-response":
-                HelperScope bookOwner;RunbookMessage bookRequest;bool bookApproved;
+                HelperScope bookOwner;RunbookMessage? bookRequest;bool bookApproved;
                 lock(gate)
                 {
-                    bookOwner=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");bookRequest=bookOwner.PendingBook??throw new UnauthorizedAccessException("Runbook 승인 요청이 없다.");
-                    if(bookRequest.Id!=message.Id||DateTimeOffset.UtcNow>bookOwner.BookExpiry)throw new UnauthorizedAccessException("Runbook 승인 만료 또는 다른 ID다.");
-                    bookApproved=message.Body?.GetProperty("approved").GetBoolean()==true;bookOwner.PendingBook=null;
+                    bookOwner=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");
+                    bookApproved=message.Body?.GetProperty("approved").GetBoolean()==true;
+                    bookRequest=bookOwner.BookApproval.Respond(message.Id,bookApproved);
+                    if(bookRequest==null)break; // Cancellation won; this local approval cannot start a worker.
                 }
                 if(bookApproved)_=ExecuteRunbook(bookOwner,bookRequest);
                 else CompleteRunbook(bookOwner,bookRequest,new("denied",null,"","대상자가 이번 작업을 거부했다.",RunbookCatalog.Demand(bookRequest).Impact));break;
+            case "runbook-dismissed":
+                HelperScope dismissedOwner;RunbookMessage dismissedRequest;
+                lock(gate)
+                {
+                    dismissedOwner=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");
+                    if(message.Body!=null)throw new UnauthorizedAccessException("Runbook 창 닫기 응답 본문을 허용하지 않는다.");
+                    dismissedRequest=dismissedOwner.BookApproval.Dismissed(message.Id);
+                }
+                CompleteRunbook(dismissedOwner,dismissedRequest,new("cancelled",null,"","요청을 취소하고 승인 창을 닫았다.",RunbookCatalog.Demand(dismissedRequest).Impact));break;
             case "monitor-response":
                 lock(gate){var owner=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");if(!owner.Capabilities.HasFlag(Capability.Screen)||!owner.MonitorPending.Remove(message.Id))break;owner.Peer!.Post("monitor-response",message.Body,message.Id);}break;
             case "file-send":case "file-cancel":case "file-response":
@@ -259,12 +271,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     tray?.Post("clipboard-request",clipboard,message.Id);break;
                 case "runbook-request":
                     var runbook=message.Body?.Deserialize<RunbookMessage>()??throw new InvalidDataException("Runbook 요청 누락이다.");var definition=RunbookCatalog.Demand(runbook);
-                    if(!scope.Capabilities.HasFlag(Capability.Runbook)||definition.RequiresAdmin&&!scope.Capabilities.HasFlag(Capability.Admin)||runbook.SessionId!=sessionBinding||runbook.PermissionGeneration!=1||runbook.Generation!=scope.ConnectionGeneration||runbook.Id!=message.Id||scope.PendingBook!=null||scope.BookCancel!=null||!scope.SeenBooks.Add(runbook.Id))throw new UnauthorizedAccessException("현재 등록 Runbook 승인이 아니다.");
+                    if(!scope.Capabilities.HasFlag(Capability.Runbook)||definition.RequiresAdmin&&!scope.Capabilities.HasFlag(Capability.Admin)||runbook.SessionId!=sessionBinding||runbook.PermissionGeneration!=1||runbook.Generation!=scope.ConnectionGeneration||runbook.Id!=message.Id||scope.BookApproval.IsBusy||scope.BookCancel!=null||!scope.SeenBooks.Add(runbook.Id))throw new UnauthorizedAccessException("현재 등록 Runbook 승인이 아니다.");
                     scope.BookHistory.Enqueue(runbook.Id);if(scope.BookHistory.Count>256)scope.SeenBooks.Remove(scope.BookHistory.Dequeue());
-                    scope.PendingBook=runbook;scope.BookExpiry=DateTimeOffset.UtcNow.AddSeconds(30);tray?.Post("runbook-request",runbook,message.Id);break;
+                    scope.BookApproval.Begin(runbook);tray?.Post("runbook-request",runbook,message.Id);break;
                 case "runbook-cancel":
-                    if(scope.PendingBook?.Id==message.Id){var cancelled=scope.PendingBook;scope.PendingBook=null;durable=()=>CompleteRunbook(scope,cancelled,new("cancelled",null,"","요청을 취소했다.",RunbookCatalog.Demand(cancelled).Impact));}
-                    if(scope.ExecutingBook?.Id==message.Id){scope.BookCancel?.Cancel();scope.BookWorker?.Dispose();}break;
+                    if(scope.BookApproval.Cancel(message.Id))tray!.Post("runbook-dismiss",id:message.Id);
+                    if(scope.ExecutingBook?.Id==message.Id){var cancelBook=scope.BookCancel;var cancelWorker=scope.BookWorker;durable=()=>{try{cancelBook?.Cancel();}catch(ObjectDisposedException){}cancelWorker?.Dispose();};}break;
                 case "monitor-request":
                     if(!scope.Capabilities.HasFlag(Capability.Screen)||scope.AdminApproval!=null||message.Body?.GetProperty("sessionId").GetString()!=sessionBinding||!scope.MonitorPending.Add(message.Id)||scope.MonitorPending.Count>1)throw new UnauthorizedAccessException("현재 모니터 승인 요청이 아니다.");
                     tray?.Post("monitor-request",message.Body,message.Id);break;
@@ -281,7 +293,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     var notice=message.Body?.Deserialize<FileAuditNotice>()??throw new InvalidDataException("파일 감사 누락이다.");notice.Validate();
                     if(!scope.Capabilities.HasFlag(Capability.File)||notice.SessionId!=sessionBinding||notice.PermissionGeneration!=1)throw new UnauthorizedAccessException("파일 감사 바인딩 오류다.");
                     var fileConnection=supporterBinding!;
-                    durable=()=>{audit!.Append(notice.Phase=="started"?AuditKind.FileStarted:AuditKind.FileFinished,notice.Outcome switch {"allowed"=>AuditResult.Allowed,"denied"=>AuditResult.Denied,"completed"=>AuditResult.Completed,"stopped"=>AuditResult.Stopped,_=>AuditResult.Failed},notice.SessionId,fileConnection,1,new(notice.Id,Direction:notice.Direction,Size:notice.Size));lock(gate)if(helper==scope)scope.Peer!.Post("file-audit-ack",id:message.Id);};break;
+                    durable=()=>{scope.FileAudits.Record(notice,n=>PersistFileAudit(n,fileConnection));lock(gate)if(helper==scope)scope.Peer!.Post("file-audit-ack",id:message.Id);};break;
                 case "admin-request":
                     if(scope.Monitor is null||scope.AdminAuthorization is null||message.Body!=null)throw new UnauthorizedAccessException("관리자 요청 승인 범위가 없다.");
                     scope.AdminAuthorization.Request(message.Id);
@@ -309,11 +321,13 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         {
             if(helper!=owner||owner.Token.IsCancellationRequested){worker.Dispose();return;}
             owner.Adopt(worker);cancel=CancellationTokenSource.CreateLinkedTokenSource(owner.Token);owner.BookCancel=cancel;owner.ExecutingBook=request;
+            if(owner.BookApproval.ExecutionCancelled(request.Id))cancel.Cancel();
             processGrant=book.RequiresAdmin?new(request.SessionId,supporterBinding!,1,owner.Capabilities,DateTimeOffset.UtcNow.AddSeconds(30)):null;
         }
         RunbookResult result;
         try
         {
+            cancel.Token.ThrowIfCancellationRequested();
             audit!.Append(AuditKind.RunbookStarted,AuditResult.Allowed,request.SessionId,supporterBinding??"",1,new(request.Id,book.BookId,book.Hash));
             result=await worker.Run(request,sessionId,userSid,processGrant,cancel.Token);
         }
@@ -327,22 +341,59 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         string connection;lock(gate){if(helper!=owner)return;connection=supporterBinding??"";}
         var book=RunbookCatalog.Demand(request);
         audit!.Append(AuditKind.RunbookFinished,result.State switch {"completed"=>AuditResult.Completed,"denied"=>AuditResult.Denied,"cancelled"=>AuditResult.Stopped,_=>AuditResult.Failed},request.SessionId,connection,1,new(request.Id,book.BookId,book.Hash));
-        lock(gate)if(helper==owner)owner.Peer!.Post("runbook-result",result,request.Id);
+        lock(gate)if(helper==owner){owner.BookApproval.CompleteExecution(request.Id);owner.Peer!.Post("runbook-result",result,request.Id);}
     }
-    void StopHelper(string reason,HelperScope? expected=null)
+    void PersistFileAudit(FileAuditNotice notice,string connection)=>audit!.Append(notice.Phase=="started"?AuditKind.FileStarted:AuditKind.FileFinished,
+        notice.Outcome switch {"allowed"=>AuditResult.Allowed,"denied"=>AuditResult.Denied,"completed"=>AuditResult.Completed,"stopped"=>AuditResult.Stopped,_=>AuditResult.Failed},
+        notice.SessionId,connection,notice.PermissionGeneration,new(notice.Id,Direction:notice.Direction,Size:notice.Size));
+    void StopHelper(string reason,HelperScope? expected=null,LocalStopMark? stopMark=null)
     {
+        var receivedTick=System.Diagnostics.Stopwatch.GetTimestamp();
         HelperScope? scope;
         string endedSession,endedConnection;
         FileStream? releaseLease;
         lock(gate){if(expected!=null&&helper!=expected)return;scope=helper;endedSession=sessionBinding??"";endedConnection=supporterBinding??"";helper=null;consentId=sessionBinding=supporterBinding=null;releaseLease=sessionLease;sessionLease=null;}
         if(scope is null){releaseLease?.Dispose();return;}
+        // Start the observer before cancellation callbacks; retain a kernel handle, never re-open a PID.
+        // Scope this measure to the selected screen-only case. Input/admin/worker recovery needs its own evidence.
+        SessionProcess.ExitProbe? exitProbe=null;bool completeInventory=false;string? probeFailure=null;
+        try
+        {
+            completeInventory=scope.Capabilities==Capability.Screen&&scope.StartupFinished.Task.IsCompletedSuccessfully&&scope.Admin is null&&scope.BookWorker is null;
+            exitProbe=scope.Child?.CaptureExitProbe();completeInventory&=exitProbe is not null;
+        }
+        catch(Exception ex){probeFailure=ex.GetType().Name;}
+        if(stopMark is not null||exitProbe is not null)
+        {
+            var probe=exitProbe;var inventory=completeInventory;
+            var sampling=Task.Run(()=>
+            {
+                using(probe)
+                {
+                    var requested=stopMark?.RequestedTick??receivedTick;
+                    var end=requested+System.Diagnostics.Stopwatch.Frequency;
+                    bool exited=false;string? failure=probeFailure;
+                    try{exited=probe?.WaitUntil(end)==true;}catch(Exception ex){failure=ex.GetType().Name;}
+                    var observed=System.Diagnostics.Stopwatch.GetTimestamp();
+                    Report("local-stop-observation",observation:new {requestId=stopMark?.RequestId,requestedTick=stopMark?.RequestedTick,receivedTick,observedTick=observed,
+                        frequency=System.Diagnostics.Stopwatch.Frequency,childPid=probe?.Pid,processExited=exited,completeInventory=inventory,
+                        scope="screen-only-producer-exit",result=stopMark is null||!inventory||failure is not null?"UNVERIFIED":exited&&observed<=end?"PASS":"FAIL",failure});
+                }
+            });
+            TrackStopTask(sampling);
+        }
         // Owned job termination bypasses a hung native call or a blocked consent/IPC actor.
         scope.Dispose();releaseLease?.Dispose();
         try{tray?.Post("state",new {status=reason,ended=true});}catch(InvalidOperationException){}
-        var auditId=Guid.NewGuid().ToString("N");var recording=Task.Run(()=>{Report("helper-stopped");if(scope.AdminApproval!=null)try{audit?.Append(AuditKind.AdminRevoked,AuditResult.Stopped,endedSession,endedConnection,1);}catch(Exception ex){Report("audit-admin-stop-error",ex);}try{audit?.Append(AuditKind.SessionEnded,AuditResult.Stopped,endedSession,endedConnection,0);}catch(Exception ex){Report("audit-stop-error",ex);}});
-        stopAudits.TryAdd(auditId,recording);_=recording.ContinueWith(completed=>{_=completed.Exception;stopAudits.TryRemove(auditId,out var removed);},CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        var recording=Task.Run(()=>{Report("helper-stopped");try{scope.FileAudits.End(n=>PersistFileAudit(n,endedConnection));}catch(Exception ex){Report("audit-file-stop-error",ex);}if(scope.AdminApproval!=null)try{audit?.Append(AuditKind.AdminRevoked,AuditResult.Stopped,endedSession,endedConnection,1);}catch(Exception ex){Report("audit-admin-stop-error",ex);}try{audit?.Append(AuditKind.SessionEnded,AuditResult.Stopped,endedSession,endedConnection,0);}catch(Exception ex){Report("audit-stop-error",ex);}});
+        TrackStopTask(recording);
     }
-    void Report(string kind,Exception? error=null,int? childPid=null)
+    void TrackStopTask(Task task)
+    {
+        var id=Guid.NewGuid().ToString("N");stopAudits.TryAdd(id,task);
+        _=task.ContinueWith(completed=>{_=completed.Exception;stopAudits.TryRemove(id,out _);},CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+    }
+    void Report(string kind,Exception? error=null,int? childPid=null,object? observation=null)
     {
         // Metadata only. Never serialize an exception message, IPC body, credentials or bootstrap.
         var path=Path.Combine(AppContext.BaseDirectory,"service-status.ndjson");
@@ -351,7 +402,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             lock(reportGate)
             {
                 if(File.Exists(path)&&new FileInfo(path).Length>4*1024*1024)throw new IOException("감독 기록 상한 초과");
-                File.AppendAllText(path,JsonSerializer.Serialize(new {utc=DateTimeOffset.UtcNow,kind,phase,sessionId,childPid,error=error?.GetType().Name,
+                File.AppendAllText(path,JsonSerializer.Serialize(new {utc=DateTimeOffset.UtcNow,monotonicTick=System.Diagnostics.Stopwatch.GetTimestamp(),kind,phase,sessionId,childPid,observation,error=error?.GetType().Name,
                     nativeError=(error as System.ComponentModel.Win32Exception)?.NativeErrorCode,stack=error?.StackTrace})+Environment.NewLine);
             }
         }
@@ -378,10 +429,10 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         public bool MediaWatch {get;set;}
         public long MediaStarted {get;set;}
         public long LastMediaFrame {get;set;}
-        public RunbookMessage? PendingBook {get;set;}
+        public RunbookApproval BookApproval {get;}=new();
+        public FileAuditLedger FileAudits {get;}=new();
         public Queue<string> BookHistory {get;}=new();
         public RunbookMessage? ExecutingBook {get;set;}
-        public DateTimeOffset BookExpiry {get;set;}
         public HashSet<string> SeenBooks {get;}=new();
         public CancellationTokenSource? BookCancel {get;set;}
         RunbookScope? bookWorker;
@@ -410,10 +461,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         {
             SessionProcess? ownedChild;NamedPipeServerStream? ownedServer;IpcPeerSession? ownedPeer;
             lock(ownership){if(disposed)return;disposed=true;ownedChild=child;ownedServer=server;ownedPeer=peer;}
+            // Cancellation callbacks can wait on native startup/worker locks. Fence producers first.
+            ownedChild?.Dispose();admin?.Fence();bookWorker?.Fence();
             try{lifetime.Cancel();}catch(AggregateException){}
             AdminAuthorization?.End();admin?.Dispose();
             bookWorker?.Dispose();
-            ownedChild?.Dispose();ownedServer?.Dispose();
+            ownedServer?.Dispose();
             recovery?.Dispose();
             _=CompleteCleanup(ownedPeer);
         }

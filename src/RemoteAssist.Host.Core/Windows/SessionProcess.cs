@@ -24,6 +24,31 @@ public sealed class SessionProcess : IDisposable
     {Pid=pid;SessionId=session;OwnerSid=sid;Role=role;this.process=process;this.job=job;}
     public bool HasExited {get{lock(processGate)return disposed||WaitForSingleObject(process,0)==0;}}
     public void Dispose(){lock(processGate){if(disposed)return;disposed=true;job.Dispose();process.Dispose();}}
+    // A retained handle observes this process object even if its PID is subsequently reused.
+    public ExitProbe CaptureExitProbe()
+    {
+        lock(processGate)
+        {
+            ObjectDisposedException.ThrowIf(disposed,this);
+            Check(DuplicateHandle(GetCurrentProcess(),process,GetCurrentProcess(),out var retained,0,false,2));
+            return new(Pid,Role,retained);
+        }
+    }
+    public sealed class ExitProbe:IDisposable
+    {
+        readonly KernelHandle retained;
+        public int Pid {get;}
+        public HostChildRole Role {get;}
+        internal ExitProbe(int pid,HostChildRole role,KernelHandle retained){Pid=pid;Role=role;this.retained=retained;}
+        public bool WaitUntil(long deadline)
+        {
+            var remaining=(int)Math.Clamp(Math.Ceiling((deadline-Stopwatch.GetTimestamp())*1000d/Stopwatch.Frequency),0,1000);
+            var result=WaitForSingleObject(retained,(uint)remaining);
+            if(result==uint.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
+            return result==0;
+        }
+        public void Dispose()=>retained.Dispose();
+    }
     public static uint ActiveConsoleSession=>WTSGetActiveConsoleSessionId();
     public static bool IsInteractiveConsole(uint session)
     {
@@ -101,6 +126,7 @@ public sealed class SessionProcess : IDisposable
         if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=0||!IsInteractiveConsole(session))throw new UnauthorizedAccessException("현재 활성 콘솔을 감독하는 Session 0 SYSTEM 서비스가 필요하다.");
     }
     static void Check(bool result){if(!result)throw new Win32Exception(Marshal.GetLastWin32Error());}
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool DuplicateHandle(nint sourceProcess,KernelHandle source,nint targetProcess,out KernelHandle target,uint access,bool inherit,uint options);
     static void Enable(string name,bool enabled=true)
     {
         Check(OpenProcessToken(GetCurrentProcess(),0x28,out var token));using(token)

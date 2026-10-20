@@ -49,6 +49,7 @@ public sealed record SignalMsg
 }
 
 /// <summary>ICE 후보. 브라우저 RTCIceCandidate의 필드명을 그대로 따른다.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record IceCandidate
 {
     [JsonPropertyName("candidate")] public string Candidate { get; init; } = "";
@@ -56,6 +57,7 @@ public sealed record IceCandidate
     [JsonPropertyName("sdpMLineIndex")] public int? SdpMLineIndex { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record IceServerInfo
 {
     [JsonPropertyName("urls")] public string[] Urls {get;init;}=[];

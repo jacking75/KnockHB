@@ -26,6 +26,22 @@ test('ICE preceding offer is retained and applied after SDP', async () => {
   f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
   assert.equal(f.peer.candidates.length, 1); assert.equal(f.socket.sent.at(-1).type, 'answer'); f.connection.end();
 });
+
+test('signaling rejects unknown fields and invalid nested ICE before dispatch',()=>{
+  for(const message of [{v:1,type:'pong',unknown:true},{v:1,type:'ice',ice:{candidate:'candidate:1',extra:true}},{v:1,type:'ice',ice:{candidate:'candidate:1',sdpMLineIndex:-1}},{v:1,type:'joined',iceServers:[{urls:['turn:host'],extra:true}]}])assert.throws(()=>parseSignal(JSON.stringify(message)));
+});
+
+test('browser ICE extensions never reach the strict signaling wire contract', async () => {
+  const f = fixture(); f.socket.message(consent); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
+  const candidate = { candidate: 'candidate:1 1 udp 1 192.0.2.1 27002 typ host', sdpMid: '0', sdpMLineIndex: 0,
+    usernameFragment: 'browser-extension', toJSON() { return { ...this, toJSON: undefined }; } };
+  f.peer.onicecandidate({ candidate });
+  assert.deepEqual(f.socket.sent.at(-1).ice, { candidate: candidate.candidate, sdpMid: '0', sdpMLineIndex: 0 });
+  const count = f.socket.sent.length;
+  f.peer.onicecandidate({ candidate: { candidate: '', sdpMid: '0', sdpMLineIndex: 0 } });
+  f.peer.onicecandidate({ candidate: null });
+  assert.equal(f.socket.sent.length, count); f.connection.end();
+});
 test('PIN failure survives socket close', async () => {
   const f = fixture(); f.socket.message({ type: 'error', code: 'bad-pin' }); f.socket.onclose();
   assert.deepEqual(f.end, [['PIN이 올바르지 않다.', true]]);
@@ -58,8 +74,49 @@ test('old stats promise cannot mutate UI after teardown', async () => {
   f.peer.getStats = () => new Promise(resolve => { release = resolve; }); const pending = f.timers.at(-1)();
   f.connection.end(); release(new Map()); await pending; assert.equal(updates, 0);
 });
+
+test('previous transport stats rejection cannot overwrite the new transport display',async()=>{
+  let reject,updates=0;const f=fixture({onStats:()=>updates++});
+  f.socket.message(consent);f.socket.message({type:'offer',sdp:'offer'});await f.connection.messageChain;
+  f.peer.getStats=()=>new Promise((_,fail)=>{reject=fail;});const pending=f.timers.at(-1)();
+  f.connection.clearTransport();reject(Error('old stats'));await pending;assert.equal(updates,0);f.connection.end();
+});
+
+test('stale input, chat and telemetry callbacks cannot terminate or update a replacement transport',()=>{
+  let observed=0;const f=fixture({onData:()=>observed++});f.connection.permissions=['screen','control','clipboard','diagnostics','chat'];
+  const channels=['input','chat','telemetry'].map(label=>({label,ordered:true,maxRetransmits:null,maxPacketLifeTime:null,readyState:'open',bufferedAmount:0,close(){}}));
+  for(const channel of channels)f.connection.acceptChannel(channel);
+  f.connection.clearTransport();observed=0;
+  for(const channel of channels){channel.onmessage({data:'malformed stale message'});channel.onopen();}
+  assert.equal(f.connection.closed,false);assert.equal(observed,0);f.connection.end();
+});
 test('heartbeat deadline closes blackholed signaling', () => {
   let now = 0; const f = fixture({ now: () => now }); now = 15000; f.timers[0](); assert.equal(f.connection.closed, true);
+});
+
+test('local consent survives 60 seconds but pending notices cannot renew its deadline', async () => {
+  let now = 0; const f = fixture({ now: () => now }); await f.connection.messageChain;
+  now = 59000; f.socket.message({ type: 'consent-pending' }); await f.connection.messageChain;
+  now = 120000; f.socket.message({ type: 'pong' }); f.timers[0]();
+  assert.equal(f.connection.closed, false);
+  f.socket.message({ type: 'consent-pending' }); await f.connection.messageChain;
+  now = 183999; f.socket.message({ type: 'pong' }); f.timers[0]();
+  assert.equal(f.connection.closed, false);
+  now = 184000; f.socket.message({ type: 'pong' }); f.timers[0]();
+  assert.equal(f.end[0][0], '참가 또는 동의 대기 시간 초과다.');
+});
+
+test('join stays bounded at 60 seconds and consent without offer stays bounded at 10 seconds', async () => {
+  let now = 0; const join = fixture({ now: () => now }); await join.connection.messageChain;
+  now = 60000; join.socket.message({ type: 'pong' }); join.timers[0]();
+  assert.equal(join.connection.closed, true);
+  now = 0; const f = fixture({ now: () => now });
+  f.socket.message({ type: 'consent-pending' }); await f.connection.messageChain;
+  now = 100000; f.socket.message(consent); await f.connection.messageChain;
+  now = 109999; f.socket.message({ type: 'pong' }); f.timers[0]();
+  assert.equal(f.connection.closed, false);
+  now = 110000; f.socket.message({ type: 'pong' }); f.timers[0]();
+  assert.equal(f.connection.closed, true);
 });
 test('both sides of selected pair determine relay path', async () => {
   let stats; const f = fixture({ onStats: text => { stats = text; } });

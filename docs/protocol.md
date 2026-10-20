@@ -38,6 +38,8 @@ runbook 권한에는 reliable ordered `runbook` 채널을 추가한다. Host의 
 
 `ping`/`pong`은 5초마다 교환하고 15초 무응답이면 종료한다. `consent`/`consent-pending`/`consent-denied`는 Host에서 Viewer로만 중계한다. `consent`에는 `permissions`, 증가하는 `permissionGeneration`을 넣는다. Viewer는 이를 통지로만 쓰고 Host의 실제 권한 객체는 로컬 승인으로만 변경한다. `offer`는 Host 전용, `answer`는 Viewer 전용이다. 잘못된 역할의 보안 명령은 종료한다. SDP 96KiB, ICE 문자열 8KiB, 후보 대기 256개가 상한이다. 시그널링 상실·peer-left는 기존 승인 폐기와 전체 세션 종료다.
 
+Viewer의 참가 대기는 접속 시도부터 60초다. 최초 `consent-pending` 수신 후에는 Host의 로컬 승인 제한 120초와 전달 여유 5초를 합한 125초를 별도로 적용한다. 중복 대기 통지·heartbeat는 이 기한을 연장하지 않는다. 승인 뒤 offer 생성/전달은 최대 10초, offer 수신 뒤 WebRTC 협상은 기존 30초 상한이다. 모든 단계에서 15초 heartbeat 상실과 명시적 종료는 즉시 우선한다.
+
 데이터 JSON 공통 필드는 `v`, `t`, `sessionId`, `generation`, `permissionGeneration`, `id`(요청 ID), `seq`(양의 단조 입력 순번)다. 기능 채널은 `input` reliable ordered(key/button/wheel/text/reset), `pointer` reliable ordered(move 최신 1건 합치기), `control` reliable ordered, `file` reliable ordered, `chat` reliable ordered, `telemetry` 및 `runbook` reliable ordered로 결정한다. 서로 다른 채널의 순서는 가정하지 않으며 button/wheel은 최종 좌표를 함께 보낸다. 모든 입력은 승인된 monitor identity와 `topologyGeneration`을 포함한다. 이전 순번/세대는 폐기한다.
 
 권한 이름 순서는 `screen,control,admin,file,clipboard,diagnostics,runbook,chat`이며 승인한 항목만 넣는다. 빈 승인·중복·미지 권한·control 없는 admin·screen 없는 control을 거부한다. control은 모든 승인 세션에 만들고, control 권한에 input/pointer, file에 file, chat 또는 clipboard에 chat, diagnostics에 telemetry, runbook에 runbook을 추가한다. data-ready의 모니터는 screen 승인 때만 포함한다. diagnostics만 승인한 경우 SDP에 video track을 넣거나 캡처·인코더를 만들지 않는다. 데이터 채널의 생존 확인은 승인한 기능 집합의 현재 generation을 검사한다.
@@ -80,7 +82,7 @@ v0.1 클라이언트는 v1에 참가할 수 없다. 과거 초안의 unreliable 
 
 ## 현재 구현 범위
 
-ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:` 접두사를 포함한다. SIPSorcery의 native candidate 값은 접두사를 포함하지 않을 수 있으므로 Host의 송신 adapter에서 정확히 한 번 붙인다. sdpMLineIndex는 0 이상의 미디어 순서다. empty/end-of-candidates는 실제 후보로 전달하지 않는다.
+ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:` 접두사를 포함한다. SIPSorcery의 native candidate 값은 접두사를 포함하지 않을 수 있으므로 Host의 송신 adapter에서 정확히 한 번 붙인다. sdpMLineIndex는 0 이상의 미디어 순서다. empty/end-of-candidates는 실제 후보로 전달하지 않는다. Viewer는 `candidate`/`sdpMid`/`sdpMLineIndex`만 명시적으로 복사한다. 브라우저 `toJSON()`의 `usernameFragment` 등 확장 필드는 전송하지 않는다. 서버의 미등록 필드 거부는 유지한다.
 
 시그널링 v1과 승인 후 control/input/pointer 및 승인된 file/chat/telemetry/runbook 채널을 구현했다. 클립보드는 chat 채널의 별도 권한 기능이다. 일반 제어의 input/pointer는 복원 감독이 준비돼야 광고한다. 지원 기능과 세션에서 승인된 기능을 구분하며 건별 로컬 승인이 필요한 요청은 별도 게이트를 거친다. 과거 Chrome의 data-ready→data-ping→data-pong 실증은 당시 후보의 기록이며 현재 전체 제품 수용을 대신하지 않는다. 기능별 진행 상태는 루트 구현계획에서만 관리한다.
 
@@ -128,6 +130,12 @@ control JSON은 UTF-8 32KiB 상한과 중복 필드 거부를 적용한다. `seq
 
 ## 로컬 IPC v1 (Windows Host 전용)
 
+대상자 Tray의 `stop`은 선택적인 진단 body `{requestId, requestedTick, frequency}`를 전달한다.
+requestId는 GUID N, requestedTick/frequency는 같은 PC의 `Stopwatch` 값이다. 서비스는 이를 승인·종료 권한 판단에 사용하지 않는다.
+누락·잘못된 계측값이어도 종료는 수행하며 해당 시간 판정만 미검증으로 기록한다. 계측값은 다른 PC의 UTC와 빼지 않는다.
+서비스는 종료 전에 보존한 실제 Helper 프로세스 handle의 signaled 상태를 기록한다. `screen` 단독 세션의 시작 완료·단일 producer가 확인된 경우에만
+Tray 처리 시작부터 Helper 실제 종료 관측까지의 1초 기준을 판단한다. 일반/특권 입력·Recovery 해제·이미 송신된 패킷의 수신 시각은 이 자료의 판정 대상이 아니다.
+
 관리자 IPC는 `admin-request`/`admin-response`의 현재 request ID와 service가 결합한 sessionId/connectionId/permissionGeneration을 사용한다. 초기 admin은 요청 허용 범위이며 `AdminAuthorization`의 2차 로컬 승인이 실제 lease를 만든다. `admin-config`는 해당 승인·target SID·monitor·mapping·output 상한만 전달하고, `admin-ready` 이후 일반 Helper에 `admin-state`를 보낸다. `admin-input`은 같은 adminGeneration의 검증된 InputStroke 최대 64개를 받아 `admin-input-ack`로 실제 성공 prefix 수를 응답한다. `admin-lease`는 검증된 data-ping에서만 갱신한다. `admin-revoke`는 긴급 중단으로 dispatch backlog를 우회한다. `admin-sas`는 현재 control+관리자 승인에서만 서비스가 정책을 진단하고 호출한다. Recovery의 `recovery-admin`은 서비스가 시작한 현재 특권 Helper의 PID를 ACK 전에 결합하고 모든 관련 Helper를 차단한 뒤 up을 복원한다.
 
 특권 프레임 mapping은 서비스가 생성하는 고유 `Global\\RemoteAssist-<GUID N>` 이름을 인증 IPC로만 전달한다. 슬롯 두 개는 각각 header 64바이트 + payload 16MiB다. header는 little-endian commit(0), permission generation(8), topology generation(16), admin generation(24), width(32), height(36), stride(40), payload bytes(44), secure desktop flag(48), reserved 0(52), monotonic timestamp ms(56)다. commit은 프레임 순번×2이며 쓰는 동안 홀수다. 단일 SYSTEM writer가 payload를 복사한 뒤 even commit을 publish한다. reader는 승인된 세 세대와 geometry/stride/크기를 확인하고 복사 전후 commit이 같은 최신 슬롯만 소비한다. 아직 쓰는 슬롯·변조·잘린 크기·이전 세대는 송신하지 않는다. 관리자 해제 전에 SYSTEM이 두 슬롯을 지운다. 파일이나 로그로 프레임을 저장하지 않는다.
@@ -159,5 +167,11 @@ control JSON은 UTF-8 32KiB 상한과 중복 필드 거부를 적용한다. `seq
 media-lease는 Helper→서비스 전용이며 body는 sessionId, 현재 연결 generation, Environment.TickCount64의 실제 FrameSent tick이다. 500ms 주기로 최근1000ms 안의 실제 전송이 있을 때만 보낸다. 서비스는 현재 screen 승인/활성·같은 세션/세대·0..1500ms 신선도·증가한 tick만 인정한다. active 시작 첫 프레임15초, 이후 정지3초에 소유 helper Job과 세션을 종료한다. inactive/geometry 재승인/transport 복구에서는 감시를 중단하고 재개 시 새 첫 프레임 기한을 시작한다. IPC heartbeat만으로 media 진행을 인정하지 않는다. Viewer는 실제 decodedFrames 증가가15초 없으면 종료하고 monitor 승인/복구 대기는 제외한다. 로컬 즉시 종료는 이 타이머를 기다리지 않는다.
 
 건별 승인 또는 실행을 취소해 입력 재개 안전성을 확인할 수 없는 OperationCanceledException은 전체 지원 종료다. 취소가 이미 수행된 Runbook 효과를 되돌리지는 않는다.
+
+승인 대기 Runbook의 취소는 서비스가 같은 ID의 `runbook-dismiss`(body 없음)를 Tray에 보내 승인 창을 닫고, `runbook-dismissed`(body 없음)를 받은 뒤 cancelled 결과를 Helper에 보낸다. 해당 ACK 전에는 입력을 재개하지 않는다. 취소와 경합한 기존 승인 응답은 실행하지 않으며, 닫기 ACK가 2초 안에 없으면 전체 세션을 종료한다. 두 타입은 인증된 서비스↔Tray 전용이다.
+
+승인 결정과 worker 시작 사이도 같은 요청의 실행 예약 상태다. 이 구간의 취소를 기억해 worker를 시작하지 않으며, worker가 이미 준비됐으면 그 요청의 token/Job을 취소한다. 취소 callback은 서비스의 전역 세션 잠금 밖에서 실행한다.
+
+승인 결정과 worker 시작 사이도 같은 요청의 실행 예약 상태다. 이 구간의 취소를 기억해 worker를 시작하지 않으며, worker가 이미 준비됐으면 그 요청의 token/Job을 취소한다. 취소 callback은 서비스의 전역 세션 잠금 밖에서 실행한다.
 
 서비스의 종료 감사는 세션 잠금 밖에서 기록한다. 종료 시 먼저 권한/Job/입력을 차단하고 UI에 종료를 알리며 기록 작업은 최대32개로 제한한다. 정상 서비스 shutdown은 기록 완료를5초 기다리고 저장이 멈추면 기존 spool을 보존한다. 필수 감사는2초 안에 journal 잠금을 얻지 못하면 새 작업을 거부한다. 로컬 즉시 종료는 감사 디스크 I/O 뒤에 대기하지 않는다.

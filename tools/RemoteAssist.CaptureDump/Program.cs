@@ -90,7 +90,7 @@ finally
     capture?.Dispose();
 }
 
-// 기본은 WGC. DXGI는 명시하거나 WGC 미지원일 때 쓴다 — docs/technical-specification.md 참고.
+// 자동 선택은 제품과 같은 WGC 우선/초기화 실패 폴백이다.
 static IScreenCapture CreateCapture(Options opts)
 {
     switch (opts.Backend)
@@ -104,14 +104,9 @@ static IScreenCapture CreateCapture(Options opts)
             return new WgcScreenCapture(opts.Monitor);
 
         default:
-            if (WgcScreenCapture.IsSupported())
-            {
-                Console.WriteLine("백엔드: Windows Graphics Capture (자동 선택)");
-                return new WgcScreenCapture(opts.Monitor);
-            }
-
-            Console.WriteLine("백엔드: DXGI Desktop Duplication (WGC 미지원이라 폴백)");
-            return new DxgiScreenCapture(opts.Monitor);
+            var capture=ScreenCaptureFactory.Create(Monitors.Get(opts.Monitor));
+            Console.WriteLine("백엔드: "+capture.GetType().Name+" (자동 선택)");
+            return capture;
     }
 }
 
