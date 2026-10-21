@@ -6,6 +6,7 @@ using RemoteAssist.Host.Core;
 using RemoteAssist.Host.Core.Input;
 using RemoteAssist.Host.Core.Ipc;
 using RemoteAssist.Host.Core.Windows;
+using RemoteAssist.Host.Core.Diagnostics;
 
 RecoveryRuntime? runtime=null;
 try
@@ -40,6 +41,8 @@ sealed class RecoveryRuntime
     readonly List<Process> adminHelpers=[];
     long lastLease;
     bool released;
+    string? bindingId;
+    long bindingGeneration;
     public IpcPeerSession Peer {get;set;}=null!;
     public bool MustStop
     {get{lock(gate)return released||(ledger is null?started.Elapsed>TimeSpan.FromSeconds(10):helper!.HasExited||(ledger.Count>0&&Stopwatch.GetElapsedTime(lastLease)>TimeSpan.FromSeconds(1)));}}
@@ -52,6 +55,7 @@ sealed class RecoveryRuntime
                 case "recovery-bind":
                     if(ledger!=null)throw new InvalidDataException("복원 바인딩을 변경할 수 없다.");
                     var binding=message.Body?.Deserialize<RecoveryBinding>()??throw new InvalidDataException("복원 바인딩 누락");
+                    bindingId=binding.SessionId;bindingGeneration=binding.PermissionGeneration;
                     var session=(uint)Process.GetCurrentProcess().SessionId;
                     if(binding.SessionId.Length is <1 or >64||binding.PermissionGeneration<1||binding.HelperPid<=0||SessionProcess.RecoveryConsoleUserSid(session)!=binding.UserSid)throw new UnauthorizedAccessException("복원 대상 바인딩 오류다.");
                     helper=Process.GetProcessById(binding.HelperPid);
@@ -59,6 +63,7 @@ sealed class RecoveryRuntime
                     _=helper.Handle;
                     if(helper.SessionId!=session||!string.Equals(helper.MainModule?.FileName,ProtectedInstallation.ResolveExecutable("RemoteAssist.Host.Helper.exe"),StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("복원 대상 Helper 불일치다.");
                     ledger=new(binding.SessionId,binding.PermissionGeneration,new WindowsRecoveryBackend(session,binding.UserSid));lastLease=Stopwatch.GetTimestamp();
+                    CaseTrace.Write("recovery-bound",bindingId,bindingGeneration,new {helperPid=binding.HelperPid,session,userSid=binding.UserSid});
                     Peer.Post("recovery-ack",id:message.Id);break;
                 case "recovery-reserve":
                     if(ledger==null||MustStop)throw new InvalidDataException("복원 권한 또는 lease가 없다.");
@@ -97,6 +102,7 @@ sealed class RecoveryRuntime
             foreach(var child in children)
                 try{if(!child.HasExited)child.WaitForExit((int)Math.Max(0,500-fence.ElapsedMilliseconds));}catch(Exception ex){LocalDiagnostic.Failure("recovery-helper-wait",ex);}
             if(children.Any(child=>!child.HasExited)){LocalDiagnostic.Failure("recovery-helper-alive",new IOException());return;}
+            CaseTrace.Write("producers-fenced",bindingId,bindingGeneration,new {pids=children.Select(c=>c.Id).ToArray()});
             for(var attempt=0;ledger is {Count:>0}&&attempt<3;attempt++)
                 try{ledger.Release();}catch(Exception ex){LocalDiagnostic.Failure("recovery-up",ex);}
             foreach(var child in children)child.Dispose();

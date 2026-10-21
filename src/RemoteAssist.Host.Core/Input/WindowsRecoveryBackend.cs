@@ -25,7 +25,13 @@ public sealed class WindowsRecoveryBackend(uint sessionId,string userSid):IInput
                 if(desktop==0||!SetThreadDesktop(desktop))throw new Win32Exception(Marshal.GetLastWin32Error());
                 // Recheck the session immediately before the only permitted native write.
                 if(!SessionProcess.IsInteractiveConsole(sessionId)||SessionProcess.RecoveryConsoleUserSid(sessionId)!=userSid)throw new UnauthorizedAccessException("복원 대상 콘솔/사용자가 종료됐다.");
-                result.TrySetResult(WindowsInputBackend.SendRecoveryUps(strokes));
+                var heldBefore=(GetAsyncKeyState(123)&0x8000)!=0;
+                var requestedTick=System.Diagnostics.Stopwatch.GetTimestamp();
+                var count=WindowsInputBackend.SendRecoveryUps(strokes);
+                RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("recovery-native-up",metadata:new {
+                    session=sessionId,requestedTick,f12HeldBefore=heldBefore,count,
+                    f12Up=strokes.Take(Math.Max(0,count)).Count(s=>s.Kind==StrokeKind.Key&&s.Key==123)});
+                result.TrySetResult(count);
             }
             catch(Exception ex){result.TrySetException(ex);}
             finally{if(desktop!=0){SetThreadDesktop(original);CloseDesktop(desktop);}}
@@ -37,4 +43,5 @@ public sealed class WindowsRecoveryBackend(uint sessionId,string userSid):IInput
     [DllImport("user32.dll")]static extern bool CloseDesktop(nint desktop);
     [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")]static extern nint GetThreadDesktop(uint thread);
+    [DllImport("user32.dll")]static extern short GetAsyncKeyState(int key);
 }

@@ -33,7 +33,9 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
             var grant=permissions.Current;
             if(stopped||!paused||grant==null||!permissions.Allows(Capability.Control,grant.Generation))throw new UnauthorizedAccessException("입력 승인 전환 상태 오류다.");
             sequences??=new(grant.SessionId,connectionGeneration,grant.Generation,monitor.DeviceName,topologyGeneration);
-            var epoch=sequences.AdvanceLocalPhase();paused=false;return epoch;
+            var epoch=sequences.AdvanceLocalPhase();paused=false;
+            RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("input-resumed",grant.SessionId,grant.Generation,new {epoch});
+            return epoch;
         }
     }
     public bool Dispatch(string channel,ReadOnlyMemory<byte> bytes)

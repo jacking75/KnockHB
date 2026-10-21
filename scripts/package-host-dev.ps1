@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)][uri]$SignalingUri,
     [Parameter(Mandatory=$true)][string]$SdkDirectory,
-    [Parameter(Mandatory=$true)][string]$Output
+    [Parameter(Mandatory=$true)][string]$Output,
+    [switch]$ForceRelay
 )
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -45,7 +46,7 @@ try{
     $dlls|ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload 'ffmpeg')}
     Copy-Item -LiteralPath (Join-Path $repo 'third_party/ffmpeg/notices') -Destination $payload -Recurse
     Copy-Item -LiteralPath (Join-Path $repo 'deploy/runbooks') -Destination $payload -Recurse
-    [IO.File]::WriteAllText((Join-Path $payload 'host.settings.json'),(@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false}|ConvertTo-Json),$utf8)
+    [IO.File]::WriteAllText((Join-Path $payload 'host.settings.json'),(@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false;ForceRelay=[bool]$ForceRelay}|ConvertTo-Json),$utf8)
     $files=@(Get-ChildItem -LiteralPath $payload -Recurse -File|ForEach-Object {
         if($_.Attributes-band[IO.FileAttributes]::ReparsePoint){throw '후보 reparse 경로 금지'}
         @{path=$_.FullName.Substring($payload.Length+1);size=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash}

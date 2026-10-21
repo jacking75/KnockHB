@@ -13,7 +13,7 @@ Assert-E2eTools $manifest $RunDir
 Add-Type -Path (Join-Path $PSScriptRoot 'e2e-native.cs')
 $utf8=New-Object Text.UTF8Encoding($false)
 $plan=Get-Content (Join-Path $RunDir 'product-plan.json') -Raw -Encoding UTF8|ConvertFrom-Json
-if($plan.id-ne$manifest.id-or$plan.manifestSha256-ne$ManifestSha256-or$plan.profile-ne'lan-view-consent-stop'-or$plan.review-ne'ACCEPTED'){throw 'Reviewed selected campaign required'}
+if($plan.id-ne$manifest.id-or$plan.manifestSha256-ne$ManifestSha256-or$plan.profile-ne$manifest.profile-or$plan.review-ne'ACCEPTED'){throw 'Reviewed selected campaign required'}
 $shell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 $sc=Join-Path $env:SystemRoot 'System32/sc.exe'
 $image=Join-Path $env:ProgramFiles 'RemoteAssist-Dev/RemoteAssist.Host.Service.exe'
@@ -23,15 +23,12 @@ $thumb=(New-Object Security.Cryptography.X509Certificates.X509Certificate2($cert
 if($thumb-ne$manifest.tls.thumbprint){throw 'TLS identity changed'}
 $script:cleaning=$false;$script:watcher=$null
 function Save($Name,$Value,[switch]$New){
- $path=Join-Path $RunDir $Name;$temp=$path+'.'+$PID+'.tmp'
+ $path=Join-Path $RunDir $Name
  if($New){Write-E2eNewJson $path $Value;return}
- [IO.File]::WriteAllText($temp,($Value|ConvertTo-Json -Depth 5),$utf8)
- if(Test-Path $path){[IO.File]::Replace($temp,$path,[NullString]::Value)}else{[IO.File]::Move($temp,$path)}
+ Write-E2eAtomicJson $path $Value
 }
 function Read($Name){
- $stream=New-Object IO.FileStream((Join-Path $RunDir $Name),[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite-bor[IO.FileShare]::Delete))
- $reader=New-Object IO.StreamReader($stream,[Text.Encoding]::UTF8)
- try{$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
+ return Read-E2eJson (Join-Path $RunDir $Name)
 }
 function Beat {if($Role-eq'Controller'){Save 'product-heartbeat.json' @{tick=[E2eOwnedCommand]::Tick}}}
 function Owned([string]$Exe,[string[]]$Values,[int]$Milliseconds){
@@ -94,7 +91,9 @@ function Cleanup {
 }
 if($Role-eq'Recovery'){
  $start=Read 'product-start.json';$deadline=[long]$start.deadline;$activeEnd=[long]$start.activeEnd
- if($start.id-ne$manifest.id-or[E2eOwnedCommand]::Remaining($deadline)-lt150000){throw 'Recovery identity/reserve missing'}
+ if($start.id-ne$manifest.id){throw 'Recovery identity missing'}
+ # An exhausted test budget must not disable finite safety cleanup.
+ if([E2eOwnedCommand]::Remaining($deadline)-eq0){$deadline=[E2eOwnedCommand]::Deadline(30000)}
  $running=Read 'product-running.json'
  $service=@($running.ownedProcesses|Where-Object {$_.image-eq$image})
  if($service.Count-eq1){
@@ -126,12 +125,12 @@ if($Role-eq'Watchdog'){
    continue
   }
   Start-Sleep -Milliseconds 50
- }}catch{Save 'product-watchdog-error.json' @{error=$_.Exception.GetType().Name}}
+ }}catch{Save 'product-watchdog-error.json' (Get-E2eFailure $_ 'watchdog' $Role $script:cleaning)}
  finally{
   if(!(Test-Path (Join-Path $RunDir 'product-cleanup.json'))){
    $p=Get-Process -Id $start.pid -ErrorAction SilentlyContinue
    if($p-and$p.StartTime.ToUniversalTime().Ticks-eq$start.start-and$p.Path-eq$shell){$p.Kill();$null=$p.WaitForExit(1000)}
-   try{Cleanup}catch{Save 'product-recovery-required.json' @{error=$_.Exception.GetType().Name}}
+   try{Cleanup}catch{Save 'product-recovery-required.json' (Get-E2eFailure $_ 'cleanup' $Role $script:cleaning)}
   }
   if(!(Test-Path (Join-Path $RunDir 'product-recovery-verified.json'))){Save 'product-recovery-required.json' @{error='Independent recovery confirmation required'}}
  }
@@ -154,7 +153,9 @@ try{
  while(!(Test-Path (Join-Path $RunDir 'product-watchdog.json'))){if([E2eOwnedCommand]::Remaining($ready)-eq0){throw 'Watchdog not ready'};Beat;Start-Sleep -Milliseconds 50}
  $wd=Read 'product-watchdog.json';$script:watcher=Get-Process -Id $wd.pid
  if($watcher.StartTime.ToUniversalTime().Ticks-ne$wd.start-or$watcher.Path-ne$shell){throw 'Watchdog identity changed'}
- Certificate 'Add'
+ if($manifest.version-eq4){
+  if((Owned $shell @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'e2e-tls-identity.ps1'),'-Certificate',$cert,'-Sha256',$manifest.tls.sha256) 10000)-ne0){throw 'Existing TLS chain validation failed'}
+ }else{Certificate 'Add'}
  Installer 'Install'
  if((Owned $sc @('start','RemoteAssistHost') 10000)-ne0){throw 'Product service start failed'}
  $runningEnd=[Math]::Min($activeEnd,[E2eOwnedCommand]::Deadline(15000));$started=Inspect
@@ -164,7 +165,19 @@ try{
  while([E2eOwnedCommand]::Remaining($activeEnd)-gt0-and!(Test-Path (Join-Path $RunDir 'finish.json'))){
   if($watcher.HasExited){throw 'Watchdog lost'}
   $service=Inspect
-  if($service.serviceAbsent-or$service.serviceState-eq'Stopped'){throw 'Product service exited unexpectedly'}
+  if($service.serviceAbsent-or$service.serviceState-eq'Stopped'){
+   $expectedFault=$false
+   if($manifest.version-eq4-and$manifest.caseId-eq'C16'){
+    $intentPath=Join-Path (Join-Path $manifest.staging 'observer') 'fault-fired.json.intent'
+    if(Test-Path -LiteralPath $intentPath){
+     $intent=Read-E2eJson $intentPath
+     $bound=@($started.ownedProcesses|Where-Object {$_.image-eq$image-and$_.pid-eq$intent.servicePid})
+     $expectedFault=$intent.runId-eq$manifest.id-and$bound.Count-eq1
+    }
+   }
+   if(!$expectedFault){throw 'Product service exited unexpectedly'}
+   # Deliberate C16 crash: keep observers/watchdogs alive, never restart SCM.
+  }
   Beat;Start-Sleep -Milliseconds 500
  }
  if(!(Test-Path (Join-Path $RunDir 'finish.json'))){throw 'Selected execution time limit'}

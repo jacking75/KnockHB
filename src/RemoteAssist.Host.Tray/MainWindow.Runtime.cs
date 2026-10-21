@@ -78,6 +78,8 @@ public partial class MainWindow
                     Show();WindowState=WindowState.Normal;Activate();dialog.ShowDialog();
                     if(pendingId!=id||currentSession!=session||consent!=dialog)return;
                     pendingId=null;consent=null;
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("consent-ui",session,dialog.SelectedCapabilities==0?0:1,
+                        new {id,connectionId=connection,mask=dialog.SelectedCapabilities,decision=dialog.Decision});
                     TryPost("consent",new {sessionId=session,connectionId=connection,capabilities=dialog.SelectedCapabilities},id);
                 }));
                 break;
@@ -93,6 +95,7 @@ public partial class MainWindow
                     Show();WindowState=WindowState.Normal;Activate();adminDialog.ShowDialog();
                     if(adminPending!=adminId||currentSession!=adminSession||adminConsent!=adminDialog)return;
                     adminPending=null;adminConsent=null;
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("admin-consent-ui",adminSession,generation,new {id=adminId,approved=adminDialog.Approved});
                     TryPost("admin-response",new {sessionId=adminSession,connectionId=adminConnection,permissionGeneration=generation,approved=adminDialog.Approved},adminId);
                 }));break;
             case "runbook-request":
@@ -102,8 +105,10 @@ public partial class MainWindow
                 var bookSession=currentSession;var bookDialog=new ActionConsentWindow(book.RequiresAdmin?"이번 관리자 Runbook 실행 승인":"이번 Runbook 실행 승인",$"{book.Title}\n버전 {book.BookVersion} · SHA256 {book.Hash}\n인자 detail={bookRequest.Args!["detail"]}\n{book.Impact}\n최대 20초 · 출력 제한 · 취소는 이미 수행한 변경을 복원하지 않는다.\n\n실제 실행 스크립트:\n{book.Source}"){Owner=this};actionDialog=bookDialog;pendingRunbookId=bookRequest.Id;
                 Dispatcher.BeginInvoke(new Action(()=>{if(actionDialog!=bookDialog||currentSession!=bookSession)return;Show();WindowState=WindowState.Normal;Activate();bookDialog.ShowDialog();if(actionDialog!=bookDialog||currentSession!=bookSession)return;actionDialog=null;pendingRunbookId=null;TryPost("runbook-response",new {approved=bookDialog.Approved},bookRequest.Id);}));break;
             case "runbook-dismiss":
+                RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("dismiss-received",currentSession,1,new {id=message.Id});
                 if(message.Body!=null||!Guid.TryParseExact(message.Id,"N",out _)||currentSession==null)throw new InvalidDataException("Runbook 창 닫기 바인딩 오류다.");
                 if(pendingRunbookId==message.Id){var closing=actionDialog;actionDialog=null;pendingRunbookId=null;closing?.Close();}
+                RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("dialog-closed",currentSession,1,new {id=message.Id,dialogPresent=actionDialog!=null});
                 // The dialog may have closed just before cancellation. Its old response is ignored by the service.
                 TryPost("runbook-dismissed",id:message.Id);break;
             case "monitor-request":
@@ -118,12 +123,17 @@ public partial class MainWindow
                 var offer=incoming?message.Body?.Deserialize<FileMessage>():null;
                 if(incoming&&(offer==null||offer.Id!=message.Id||offer.SessionId!=currentSession||offer.PermissionGeneration!=1||offer.Generation!=connectionGeneration))throw new InvalidDataException("파일 승인 바인딩 오류다.");
                 var requestId=message.Id;var fileSession=currentSession;
+                RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("file-dialog-open",fileSession,1,new {id=requestId,incoming,name=offer?.Name,size=offer?.Size});
                 var fileWindow=new LocalActionWindow(incoming?"수신 파일 저장 승인":"보낼 파일 선택",incoming?$"지원자가 보낸 {offer!.Name} ({offer.Size} bytes)의 저장 폴더를 승인한다.":"지원자에게 보낼 파일의 전체 경로를 선택한다.",incoming?Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments):""){Owner=this};fileDialog=fileWindow;
                 Dispatcher.BeginInvoke(new Action(()=>
                 {
                     if(fileDialog!=fileWindow||currentSession!=fileSession)return;
                     fileWindow.ShowDialog();if(fileDialog!=fileWindow||currentSession!=fileSession)return;fileDialog=null;
                     fileId=fileWindow.SelectedPath==null?null:requestId;FileCancel.IsEnabled=fileId!=null;
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("file-consent-ui",fileSession,1,new {id=requestId,incoming,
+                        approved=fileWindow.SelectedPath is not null,decision=fileWindow.Decision,
+                        pathHash=fileWindow.SelectedPath is null?null:Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(System.IO.Path.GetFullPath(fileWindow.SelectedPath).ToUpperInvariant())))});
                     TryPost("file-response",new {folder=fileWindow.SelectedPath},requestId);
                 }));break;
             case "file-state":
@@ -170,7 +180,8 @@ public partial class MainWindow
     {if((capabilities&8)==0)return;fileId=Guid.NewGuid().ToString("N");FileCancel.IsEnabled=true;TryPost("file-send",id:fileId);}
     void FileCancelClicked(object sender,RoutedEventArgs e){if(fileId!=null)TryPost("file-cancel",id:fileId);}
     void StopClicked(object sender,RoutedEventArgs e)=>StopLocal();
-    void PostStop(){var mark=LocalStopMark.Create();TryPost("stop",new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=mark.Frequency});}
+    void PostStop(){var mark=LocalStopMark.Create();RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("stop-ui",currentSession,1,
+        new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=mark.Frequency});TryPost("stop",new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=mark.Frequency});}
     void StopLocal(){PostStop();EndLocal();Status.Text="종료 요청을 보냈다.";}
     void EndLocal()
     {

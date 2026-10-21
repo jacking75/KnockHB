@@ -41,6 +41,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 options=HostSettings.Parse(bytes);
             }
             options.Validate(256);
+            RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("service-settings",metadata:new {policy=options.ForceRelay?"relay":"all"});
             InstallationState.CheckCandidate();InstallationState.MarkReady();
             while(!stoppingToken.IsCancellationRequested)
             {
@@ -159,6 +160,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     dismissedOwner=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");
                     if(message.Body!=null)throw new UnauthorizedAccessException("Runbook 창 닫기 응답 본문을 허용하지 않는다.");
                     dismissedRequest=dismissedOwner.BookApproval.Dismissed(message.Id);
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("dismiss-ack",dismissedRequest.SessionId,1,new {id=message.Id});
                 }
                 CompleteRunbook(dismissedOwner,dismissedRequest,new("cancelled",null,"","요청을 취소하고 승인 창을 닫았다.",RunbookCatalog.Demand(dismissedRequest).Impact));break;
             case "monitor-response":
@@ -275,7 +277,10 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     scope.BookHistory.Enqueue(runbook.Id);if(scope.BookHistory.Count>256)scope.SeenBooks.Remove(scope.BookHistory.Dequeue());
                     scope.BookApproval.Begin(runbook);tray?.Post("runbook-request",runbook,message.Id);break;
                 case "runbook-cancel":
-                    if(scope.BookApproval.Cancel(message.Id))tray!.Post("runbook-dismiss",id:message.Id);
+                    if(scope.BookApproval.Cancel(message.Id)){
+                        RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("dismiss-sent",sessionBinding,1,new {id=message.Id});
+                        tray!.Post("runbook-dismiss",id:message.Id);
+                    }
                     if(scope.ExecutingBook?.Id==message.Id){var cancelBook=scope.BookCancel;var cancelWorker=scope.BookWorker;durable=()=>{try{cancelBook?.Cancel();}catch(ObjectDisposedException){}cancelWorker?.Dispose();};}break;
                 case "monitor-request":
                     if(!scope.Capabilities.HasFlag(Capability.Screen)||scope.AdminApproval!=null||message.Body?.GetProperty("sessionId").GetString()!=sessionBinding||!scope.MonitorPending.Add(message.Id)||scope.MonitorPending.Count>1)throw new UnauthorizedAccessException("현재 모니터 승인 요청이 아니다.");

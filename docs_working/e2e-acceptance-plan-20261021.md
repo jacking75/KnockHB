@@ -1,5 +1,7 @@
 # 개발 마감용 E2E — 확정 16개와 실행 계획
 
+> **2026-10-22 사용자 지시가 아래 기존 범위보다 우선한다.** 이번 실행 대상은 C01~C14·C16의 15개다. C15 TURN은 `EXCLUDED`이며 PASS나 준비 실패로 집계하지 않는다. NAT 환경에서 직접 연결된다고 가정하며 NAT 통과 자체의 검증을 주장하지 않는다. coturn 운영자·allocation collector·TURN 전용 포트 및 G14는 이번 준비 조건에서 제외한다. 나머지 시나리오의 동의·TLS·시간 예산·정리·복귀 조건은 유지한다. 실제 E2E 실행은 이번 변경에 포함되지 않는다.
+
 작성일: 2026-10-21. **사용자 지시에 따라 오늘 실전 테스트를 더 실행하지 않는다.** 이 묶음은 실행 중 즉흥적으로 단계를 정하지 않기 위한 계획이다. 문서 작성은 실행 준비 완료나 기능 PASS가 아니다. 자동 재개·예약 실행을 설정하지 않는다.
 
 ## 1. 범위·상태·실패 이력
@@ -64,7 +66,7 @@ C01 첫 회차는 실행 도구 실패다. ID `6a2f55ebaee74a4099177a271ea0b88c`
 | C12 | [진단 전용](e2e-C12-diagnostics-only-20261021.md) | screen 없이 diagnostics만 승인한다. 영상·캡처·원격 입력 0, 실제 CPU/메모리 정보 수신. 실패 provider는 N/A/stale이며 빈 정상 성공으로 바꾸지 않는다. | NOT RUN | G12 실제captureStartCount0와 telemetry/null/stale 관측 |
 | C13 | [Runbook 승인·완료](e2e-C13-runbook-approve-20261021.md) | 등록된 일반 권한 `network-summary` 1건의 내용·hash를 실제 창에서 확인하고 승인한다. 해당 hash 작업이 정확히 한 번 실행되고 완료 결과·감사가 있어야 한다. | NOT RUN | G13 설치resource/승인hash/worker실제실행1회를연결하는관측 |
 | C14 | [Runbook 승인 대기 취소](e2e-C14-runbook-pending-cancel-20261021.md) | `network-summary` 승인 창 대기 중 해당 요청 취소. worker 실행 0, 실제 창 닫기 ACK 뒤에만 입력 재개, 이후 시험 버튼 클릭 1회가 B 기록에 +1로 반영돼야 한다. | NOT RUN | G13 worker0·실제닫기ACK·입력재개시각의인과관측 |
-| C15 | [실제 TURN 연결](e2e-C15-turn-relay-20261021.md) | 준비된 coturn에서 relay를 강제한 화면 보기 세션 1개. 양끝 selected pair가 실제 relay이고 allocation과 일치하며 실제 영상이 증가해야 한다. | NOT RUN | G14 실제coturn운영자·할당관측·선택한한경로 |
+| C15 | [실제 TURN 연결](e2e-C15-turn-relay-20261021.md) | 2026-10-22 사용자 지시로 이번 테스트에서 제외. 기존 명세는 향후 검증용으로 보존한다. | EXCLUDED | 이번 준비 조건 아님 |
 | C16 | [서비스 장애·입력 복원](e2e-C16-service-fault-recovery-20261021.md) | 일반 제어 세션에서 예약 ACK와 F12 down을 확인한 뒤, PID/image/start time을 검증한 소유 서비스에 장애를 한 번 주입한다. 독립 Recovery의 up·OS held 0·생산 Helper 종료·세션 종료·무동의 재개 없음·정상 Default 복귀를 확인한다. | NOT RUN | G06 비밀없는예약ACK/실제down/Recovery up인과관측 |
 
 ## 2. 고정 환경과 회차 입력

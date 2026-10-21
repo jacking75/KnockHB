@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using RemoteAssist.Host.Core.Diagnostics;
 
 namespace RemoteAssist.Host.Core.Input;
 
@@ -36,6 +37,8 @@ public sealed class RecoveryLedger(string sessionId,long permissionGeneration,II
                 .Concat(unicode.Select(c=>new InputStroke(StrokeKind.Unicode,Character:(char)c,Up:true))).ToArray();
             if(strokes.Length==0)return;
             var count=backend.Send(strokes);
+            CaseTrace.Write("recovery-up",sessionId,permissionGeneration,new {count,requested=strokes.Length,
+                f12Up=strokes.Take(Math.Max(0,count)).Count(s=>s.Kind==StrokeKind.Key&&s.Key==123)});
             if(count<0||count>strokes.Length)throw new InvalidOperationException("복원 주입 개수 오류다.");
             foreach(var stroke in strokes.Take(count))
                 if(stroke.Kind==StrokeKind.Key)keys.Remove(stroke.Key);else if(stroke.Kind==StrokeKind.Button)buttons.Remove(stroke.Button);else unicode.Remove(stroke.Character);
@@ -56,6 +59,9 @@ public sealed class ReservedInputBackend(string sessionId,long permissionGenerat
         foreach(var stroke in strokes.Where(s=>!s.Up))Record(stroke,false);
         Publish(); // If ACK fails, no native write is allowed. Potential downs remain recoverable.
         var count=backend.Send(strokes);
+        CaseTrace.Write("native-input",sessionId,permissionGeneration,new {revision,count,
+            f12Down=strokes.Take(Math.Max(0,count)).Count(s=>s.Kind==StrokeKind.Key&&s.Key==123&&!s.Up),
+            f12Up=strokes.Take(Math.Max(0,count)).Count(s=>s.Kind==StrokeKind.Key&&s.Key==123&&s.Up)});
         if(count<0||count>strokes.Count)throw new InvalidOperationException("주입 개수 오류다.");
         foreach(var stroke in strokes.Take(count))Record(stroke,stroke.Up);
         Publish();return count;
@@ -66,5 +72,9 @@ public sealed class ReservedInputBackend(string sessionId,long permissionGenerat
         if(s.Kind==StrokeKind.Button){if(remove)buttons.Remove(s.Button);else buttons.Add(s.Button);}
         if(s.Kind==StrokeKind.Unicode){if(remove)unicode.Remove(s.Character);else unicode.Add(s.Character);}
     }
-    void Publish()=>acknowledge(new(sessionId,permissionGeneration,++revision,keys.ToArray(),buttons.ToArray(),unicode.ToArray()));
+    void Publish()
+    {
+        acknowledge(new(sessionId,permissionGeneration,++revision,keys.ToArray(),buttons.ToArray(),unicode.ToArray()));
+        CaseTrace.Write("reservation-ack",sessionId,permissionGeneration,new {revision,heldCount=keys.Count+buttons.Count+unicode.Count,f12Held=keys.Contains(123)});
+    }
 }

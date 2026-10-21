@@ -33,9 +33,28 @@ foreach($sid in @('S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule((New-Object Sec
 $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-545')),'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow')))
 Set-Acl -LiteralPath $runRoot -AclObject $acl
 Copy-Item -LiteralPath (Join-Path $source 'scripts') -Destination $runRoot -Recurse
+if($CampaignManifest.version-eq4){
+ $trace=Join-Path $runRoot 'trace'
+ New-Item -ItemType Directory -Path $trace|Out-Null
+ $traceAcl=Get-Acl -LiteralPath $trace
+ $traceAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($CampaignManifest.identity.b.sid)),'Modify','ContainerInherit,ObjectInherit','None','Allow')))
+ Set-Acl -LiteralPath $trace -AclObject $traceAcl
+ foreach($tool in @('desktop-tool','input-target')){
+  $toolSource=Join-Path $source $tool
+  $entries=$CampaignManifest.testTools.$tool
+  foreach($entry in $entries){
+   if($entry.path-notmatch'^[A-Za-z0-9_./-]+$'-or$entry.path.Contains('..')){throw 'Unsafe test tool path'}
+   $file=Assert-E2ePath (Join-Path $toolSource $entry.path)
+   if((Get-FileHash -LiteralPath $file).Hash-ne$entry.sha256-or(Get-Item -LiteralPath $file).Length-ne$entry.size){throw 'Test tool changed'}
+  }
+  if(@(Get-ChildItem -LiteralPath $toolSource -Recurse -File).Count-ne@($entries).Count){throw 'Unlisted test tool file'}
+  Copy-Item -LiteralPath $toolSource -Destination $runRoot -Recurse
+ }
+}
 Copy-Item -LiteralPath $certificate -Destination $runRoot
 Copy-Item -LiteralPath (Join-Path $Staging 'campaign.json') -Destination $runRoot
 $out=Join-Path $Staging 'observer';New-Item -ItemType Directory -Path $out|Out-Null
+if($CampaignManifest.version-eq4){New-Item -ItemType Directory -Path (Join-Path $out 'receive')|Out-Null}
 $owner=@{id=$id;root=$runRoot;task=('RemoteAssist-E2E-Product-'+$id);watchdog=('RemoteAssist-E2E-Watchdog-'+$id);observer=('RemoteAssist-E2E-Observe-'+$id);output=$out;manifestSha256=$CampaignManifestSha256}
 Write-E2eNewJson (Join-Path $Staging 'product-owner.json') $owner
 $shell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'

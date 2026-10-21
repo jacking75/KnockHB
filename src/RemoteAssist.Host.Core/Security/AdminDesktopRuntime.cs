@@ -81,6 +81,8 @@ public sealed class AdminDesktopRuntime:IDisposable
     void CaptureDesktop(AdminConfiguration value,Action ready)
     {
         using var desktop=new DesktopContext();
+        RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("admin-desktop",value.Approval.SessionId,value.Approval.PermissionGeneration,
+            new {desktop=desktop.Name,adminGeneration=value.Approval.AdminGeneration,session=value.WindowsSessionId,userSid=value.UserSid});
         var secure=desktop.Name=="Winlogon";var entered=Stopwatch.StartNew();
         using var indicator=secure?new SecureStopWindow(value.Monitor,Stop):null;
         var monitor=ApprovedMonitor(value);
@@ -154,6 +156,10 @@ public sealed class AdminDesktopRuntime:IDisposable
         try{Peer?.Post("stop");}catch{}
         if(worker==null)completion.TrySetResult();
     }
-    public void Dispose(){Stop();if((worker is null||worker.IsCompleted)&&Volatile.Read(ref desktopRunning)==0){mapping?.Dispose();stop.Dispose();}}
+    public void Dispose(){Stop();if((worker is null||worker.IsCompleted)&&Volatile.Read(ref desktopRunning)==0){
+        mapping?.Dispose();
+        if(config is not null)RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("admin-mapping-closed",config.Approval.SessionId,config.Approval.PermissionGeneration,
+            new {mappingOpen=false,adminGeneration=config.Approval.AdminGeneration});
+        stop.Dispose();}}
     sealed record InputWork(AdminInputBatch Batch,TaskCompletionSource<int> Reply);
 }

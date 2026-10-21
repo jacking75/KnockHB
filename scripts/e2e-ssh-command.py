@@ -6,6 +6,8 @@ sys.path.insert(0,str(root/'.artifacts/python-ssh'))
 import paramiko
 p=argparse.ArgumentParser();p.add_argument('--script',required=True);p.add_argument('--output',required=True);p.add_argument('--timeout',type=int,default=60)
 p.add_argument('--staging')
+p.add_argument('--create-staging',action='store_true',help='Create a fresh case deployment directory once')
+p.add_argument('--case-request',help='Fixed bridge request basename; not executable code')
 p.add_argument('--campaign',help='Explicit local frozen campaign JSON; product actions reject legacy pointers')
 p.add_argument('--remote-deadline',type=int)
 p.add_argument('--remote-active-end',type=int)
@@ -16,6 +18,11 @@ source=Path(a.script).resolve();output=Path(a.output).resolve()
 if root not in source.parents or (root/'.artifacts').resolve() not in output.parents or output.exists() or not 1<=a.timeout<=180:
     raise SystemExit('Reviewed workspace script, new artifact output and bounded timeout required')
 code=source.read_text(encoding='utf-8-sig')
+if a.create_staging and (source.name!='e2e-case-deploy.ps1' or a.campaign or not a.staging):
+    raise SystemExit('Fresh staging is restricted to the fixed deployment script')
+if a.case_request and (source.name!='e2e-case-bridge.ps1' or not a.campaign or
+                       not re.fullmatch(r'case-request-[a-f0-9]{32}\.json',a.case_request)):
+    raise SystemExit('Case request must use the fixed reviewed bridge')
 campaign=None
 if source.name.startswith('e2e-product-') and not a.campaign:
     raise SystemExit('Product action requires --campaign; legacy stage/run pointers are disabled')
@@ -40,6 +47,14 @@ with socket.create_connection(('192.168.0.74',22),timeout=4) as connection:
         key=transport.get_remote_server_key()
         if key.get_name()!=pin['keyType'] or key.get_base64()!=pin['key']:raise RuntimeError('SSH host key changed')
         transport.auth_password('jacking75NoteBook',password,fallback=False);password=None
+        if a.create_staging:
+            if not re.fullmatch(r'C:/Users/jacking75NoteBook/RemoteAssist-E2E-[0-9]+',a.staging):
+                raise RuntimeError('Unexpected fresh staging path')
+            with paramiko.SFTPClient.from_transport(transport) as sftp:
+                sftp.get_channel().settimeout(5)
+                # mkdir is intentionally create-once; an existing directory is
+                # never adopted or overwritten as a new campaign.
+                sftp.mkdir(a.staging)
         # Reuse the pinned preparation connection for explicitly named evidence/package files.
         if a.upload or a.download:
             with paramiko.SFTPClient.from_transport(transport) as sftp:
@@ -57,6 +72,7 @@ with socket.create_connection(('192.168.0.74',22),timeout=4) as connection:
         if a.staging:
             if not re.fullmatch(r'C:/Users/jacking75NoteBook/RemoteAssist-E2E-[0-9]+',a.staging):raise RuntimeError('Unexpected staging path')
             prefix+="$Staging='"+a.staging+"';\n"
+        if a.case_request:prefix+="$CaseRequestName='"+a.case_request+"';\n"
         if campaign:
             contract=next(t for t in campaign['tools'] if t['path']=='scripts/e2e-run-contract.ps1')
             if not re.fullmatch('[a-fA-F0-9]{64}',contract['sha256']):raise RuntimeError('Invalid contract hash')

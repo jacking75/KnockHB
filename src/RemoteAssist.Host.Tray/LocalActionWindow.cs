@@ -8,6 +8,7 @@ internal sealed class LocalActionWindow:Window
 {
     readonly DispatcherTimer expiry=new(){Interval=TimeSpan.FromSeconds(28)};
     public string? SelectedPath {get;private set;}
+    public string Decision {get;private set;}="closed";
     public LocalActionWindow(string title,string summary,string initialPath)
     {
         Title=title;Width=560;Height=320;ResizeMode=ResizeMode.NoResize;WindowStartupLocation=WindowStartupLocation.CenterOwner;
@@ -15,9 +16,14 @@ internal sealed class LocalActionWindow:Window
         panel.Children.Add(new TextBlock {Text=summary,TextWrapping=TextWrapping.Wrap});
         panel.Children.Add(new TextBlock {Text="로컬 고정 NTFS 경로를 입력한다. 기존 파일을 덮어쓰거나 실행하지 않는다. 28초 뒤 거부한다.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,8)});
         var path=new TextBox {Text=initialPath};panel.Children.Add(path);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(path,"LocalFilePath");
         var approve=new Button {Content="이 작업 승인",Margin=new Thickness(0,16,0,0),Padding=new Thickness(8)};
+        System.Windows.Automation.AutomationProperties.SetAutomationId(approve,"LocalFileApprove");
+        approve.Click+=(_,_)=>Decision="approved";
         approve.Click+=(_,_)=>{if(string.IsNullOrWhiteSpace(path.Text))return;SelectedPath=path.Text;Close();};panel.Children.Add(approve);
         var deny=new Button {Content="거부",Margin=new Thickness(0,8,0,0),IsCancel=true};deny.Click+=(_,_)=>Close();panel.Children.Add(deny);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(deny,"LocalFileDeny");
+        deny.Click+=(_,_)=>Decision="denied";
         Loaded+=(_,_)=>expiry.Start();expiry.Tick+=(_,_)=>Close();Closed+=(_,_)=>expiry.Stop();
     }
 }

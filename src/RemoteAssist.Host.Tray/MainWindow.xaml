@@ -19,15 +19,15 @@
             <Button x:Name="StartButton" Content="새 지원 코드 만들기" Click="StartClicked" Height="38" IsEnabled="False" AutomationProperties.AutomationId="HostStart"/>
             <Button x:Name="StopButton" Content="즉시 종료" Click="StopClicked" Height="42" Margin="0,8,0,0" Background="#B91C1C" Foreground="White" FontWeight="Bold" AutomationProperties.AutomationId="HostStop"/>
             <TextBlock Text="승인한 세션의 채팅" Margin="0,12,0,4" FontWeight="SemiBold"/>
-            <TextBox x:Name="ChatHistory" Height="100" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+            <TextBox x:Name="ChatHistory" Height="100" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="ChatHistory"/>
             <DockPanel Margin="0,6,0,0">
-                <Button x:Name="ChatSend" DockPanel.Dock="Right" Content="보내기" IsEnabled="False" Click="ChatClicked" Padding="12,4"/>
-                <TextBox x:Name="ChatText" MaxLength="4096" IsEnabled="False"/>
+                <Button x:Name="ChatSend" AutomationProperties.AutomationId="ChatSend" DockPanel.Dock="Right" Content="보내기" IsEnabled="False" Click="ChatClicked" Padding="12,4"/>
+                <TextBox x:Name="ChatText" AutomationProperties.AutomationId="ChatText" MaxLength="4096" IsEnabled="False"/>
             </DockPanel>
-            <Button x:Name="FileSend" Content="내가 선택한 파일 보내기" IsEnabled="False" Click="FileClicked" Margin="0,12,0,0" Height="32"/>
-            <TextBlock x:Name="FileStatus" Text="파일 전송 대기" Margin="0,6,0,0"/>
+            <Button x:Name="FileSend" AutomationProperties.AutomationId="FileSend" Content="내가 선택한 파일 보내기" IsEnabled="False" Click="FileClicked" Margin="0,12,0,0" Height="32"/>
+            <TextBlock x:Name="FileStatus" AutomationProperties.AutomationId="FileStatus" Text="파일 전송 대기" Margin="0,6,0,0"/>
             <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Margin="0,6,0,0"/>
-            <Button x:Name="FileCancel" Content="파일 전송 취소" IsEnabled="False" Click="FileCancelClicked" Height="28"/>
+            <Button x:Name="FileCancel" AutomationProperties.AutomationId="FileCancel" Content="파일 전송 취소" IsEnabled="False" Click="FileCancelClicked" Height="28"/>
         </StackPanel>
     </Border>
 </Window>

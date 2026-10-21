@@ -22,12 +22,18 @@ public static class RunbookExecution
         deadline.Token.ThrowIfCancellationRequested();
         if(config.ExpiresAt<=DateTimeOffset.UtcNow)throw new UnauthorizedAccessException("Runbook 실행 준비 중 승인이 만료됐다.");
         using var process=Process.Start(start)??throw new IOException("Runbook engine 시작 실패다.");
+        RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("runbook-start",config.Request.SessionId,config.Request.PermissionGeneration,
+            new {id=config.Request.Id,bookId=book.BookId,bookVersion=book.BookVersion,hash=book.Hash,detail=config.Request.Args!["detail"],
+                requiresAdmin=book.RequiresAdmin,session=config.WindowsSessionId,userSid=identity.User?.Value,isSystem=identity.IsSystem,
+                workerPid=Environment.ProcessId,enginePid=process.Id});
         int overflow=0;
         try
         {
             Action breached=()=>{Interlocked.Exchange(ref overflow,1);deadline.Cancel();};
             var stdout=ReadBounded(process.StandardOutput,deadline.Token,breached);var stderr=ReadBounded(process.StandardError,deadline.Token,breached);
             await Task.WhenAll(stdout,stderr,process.WaitForExitAsync(deadline.Token)).WaitAsync(deadline.Token);
+            RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("runbook-exit",config.Request.SessionId,config.Request.PermissionGeneration,
+                new {id=config.Request.Id,exitCode=process.ExitCode,enginePid=process.Id});
             var result=new RunbookResult(process.ExitCode==0?"completed":"failed",process.ExitCode,await stdout,(await stderr).Length>0?"실행 엔진 오류다.":"",book.Impact);result.Validate();return result;
         }
         catch(OperationCanceledException){if(!process.HasExited)process.Kill(true);return new(Volatile.Read(ref overflow)!=0?"failed":ct.IsCancellationRequested?"cancelled":"timed-out",null,"",Volatile.Read(ref overflow)!=0?"작업 출력 상한이다.":"작업을 중단했다.",book.Impact);}

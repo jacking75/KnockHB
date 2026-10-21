@@ -133,6 +133,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
     }
     public async Task<SessionCredentials> StartAsync(CancellationToken ct = default)
     {
+        CaseTrace.Write("session-runtime-start");
         if(Volatile.Read(ref _ended)!=0)throw new InvalidOperationException("종료한 세션은 시작할 수 없다.");
         if (Interlocked.Exchange(ref _started, 1) != 0) throw new InvalidOperationException("세션은 한 번만 시작할 수 있다.");
         try
@@ -240,6 +241,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         // Only implemented capabilities can be granted. Future features stay denied.
         if (capability.HasFlag(Capability.Runbook)&&RunbookOperation==null||capability.HasFlag(Capability.File)&&(RequestFileApproval==null||AuditFile==null)||capability.HasFlag(Capability.Control)&&CreateInputBackend==null||capability.HasFlag(Capability.Admin)&&(!capability.HasFlag(Capability.Control)||AdminCommand==null)||capability.HasFlag(Capability.Clipboard)&&ClipboardOperation==null||capability.HasFlag(Capability.Chat)&&ChatReceived==null) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
         var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, TimeSpan.FromHours(2));
+        CaseTrace.Write("consent-granted",grant.SessionId,grant.Generation,new {mask=(int)capability,connectionId=grant.ConnectionId});
         await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = FeatureContract.Permissions((int)capability), PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
         await CreateTransport(grant);
         _refreshTask=RefreshLoop();
@@ -258,6 +260,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         _pc = new RTCPeerConnection(new RTCConfiguration
         { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all }, 0, new PortRange(27002, 27099));
         var pc = _pc;
+        CaseTrace.Write("transport-created",grant.SessionId,grant.Generation,new {connectionGeneration=generation,policy=_options.ForceRelay?"relay":"all"});
         var controlChannel=await pc.createDataChannel("control",new RTCDataChannelInit {ordered=true});
         var control=new ControlDataSession(controlChannel,_permissions,grant,_monitor,fail,InputLeaseObserved,message=>
         {
@@ -325,6 +328,12 @@ public sealed class ScreenShareSession : IAsyncDisposable
         var recovering=0;
         pc.onconnectionstatechange += state =>
         {
+            if(state==RTCPeerConnectionState.connected&&pc.GetRtpChannel() is RtpIceChannel ice&&ice.NominatedEntry is {} pair)
+                CaseTrace.Write("selected-pair",grant.SessionId,grant.Generation,new {connectionGeneration=generation,
+                    policy=_options.ForceRelay?"relay":"all",selected=pair.Nominated,
+                    localType=pair.LocalCandidate.type.ToString(),remoteType=pair.RemoteCandidate.type.ToString(),
+                    localAddress=pair.LocalCandidate.address,localPort=pair.LocalCandidate.port,
+                    remoteAddress=pair.RemoteCandidate.address,remotePort=pair.RemoteCandidate.port});
             if(ConnectionGeneration!=generation||_lifetime.IsCancellationRequested)return;
             if(state is RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected){lock(_endGate)_mediaPaused=true;_inputData?.SuspendForApproval();if(Interlocked.Exchange(ref recovering,1)==0)_ = RecoverDisconnected(pc,generation);}
             else if(state==RTCPeerConnectionState.closed)fail("WebRTC 연결 종료다.");
@@ -390,6 +399,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
     private void StartStreaming(long generation)
     {
         _captureThread = new Thread(() => CaptureLoop(generation)) { Name = "RemoteAssist capture", IsBackground = true };
+        CaseTrace.Write("capture-start",Credentials?.SessionId,generation,new {monitor=_monitor.DeviceName,x=_monitor.X,y=_monitor.Y,width=_monitor.Width,height=_monitor.Height});
         _captureThread.Start();
     }
     MonitorDescriptor Descriptor(MonitorInfo monitor)=>new(monitor.DeviceName,TopologyGeneration,monitor.X,monitor.Y,monitor.Width,monitor.Height);

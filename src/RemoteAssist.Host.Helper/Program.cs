@@ -45,7 +45,12 @@ sealed class HelperRuntime : IAsyncDisposable
                 if(options==null||session!=null)throw new InvalidDataException("헬퍼 시작 상태 오류다.");
                 var owned=new ScreenShareSession(options);session=owned;
                 IInputBackend? reservedBackend=null;
-                owned.CreateInputBackend=grant=>reservedBackend??=new ReservedInputBackend(grant.SessionId,grant.Generation,new AdminRoutingInputBackend(new WindowsInputBackend(monitorProvider:()=>owned.Monitor),()=>owned.AdminFrame),reservation=>acknowledgements.Request(Peer,"recovery-reserve",reservation,Peer.Token).GetAwaiter().GetResult());
+                owned.CreateInputBackend=grant=>{
+                    if(reservedBackend is not null)return reservedBackend;
+                    reservedBackend=new ReservedInputBackend(grant.SessionId,grant.Generation,new AdminRoutingInputBackend(new WindowsInputBackend(monitorProvider:()=>owned.Monitor),()=>owned.AdminFrame),reservation=>acknowledgements.Request(Peer,"recovery-reserve",reservation,Peer.Token).GetAwaiter().GetResult());
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("input-backend-ready",grant.SessionId,grant.Generation,new {heldCount=0,epoch=1});
+                    return reservedBackend;
+                };
                 owned.InputLeaseObserved=()=>Peer.Post("recovery-lease");
                 owned.AdminCommand=message=>Peer.Post(message.T=="admin-request"?"admin-request":"admin-sas",id:message.Id);
                 owned.ChatReceived=message=>Peer.Post("chat",message,message.Id);
