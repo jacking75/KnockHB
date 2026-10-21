@@ -35,16 +35,18 @@ internal static class Program
             using var watchdog=new System.Threading.Timer(_=>Environment.Exit(124),null,TimeSpan.FromMilliseconds(Math.Max(1,milliseconds)),Timeout.InfiniteTimeSpan);
             switch (op)
             {
-                case "snapshot": Save(output, Snapshot()); break;
+                case "snapshot": Save(output, Snapshot(request)); break;
                 case "inspect-owned":
                     var remaining=new List<int>();var changed=new List<int>();
+                    var inspected=new List<int>();
                     foreach(var identity in request.GetProperty("owners").EnumerateArray())
                     {
+                        inspected.Add(identity.GetProperty("pid").GetInt32());
                         try {using var process=Owner(identity);if(!process.HasExited)remaining.Add(process.Id);}
                         catch(ArgumentException) { }
                         catch(InvalidOperationException){changed.Add(identity.GetProperty("pid").GetInt32());}
                     }
-                    Save(output,new {available=true,remaining,changed,resourcesAbsent=remaining.Count==0&&changed.Count==0,tick=Tick,frequency=Stopwatch.Frequency});
+                    Save(output,new {runId=request.GetProperty("runId").GetString(),available=true,remaining,changed,inspectedPids=inspected,resourcesAbsent=remaining.Count==0&&changed.Count==0,tick=Tick,frequency=Stopwatch.Frequency});
                     break;
                 case "session-watch":
                     RequireDefault(request);
@@ -66,6 +68,7 @@ internal static class Program
                     break;
                 case "uia": Save(output, Uia(request)); break;
                 case "clipboard-guard": ClipboardGuard(request, root, output, end); break;
+                case "clipboard-lifetime": Save(output,ClipboardLifetime(request,root,end));break;
                 case "clipboard-compare":
                     RequireDefault(request);
                     Save(output, new { available = true, osEqualsTestText = System.Windows.Clipboard.ContainsText() &&
@@ -77,6 +80,7 @@ internal static class Program
                     var trigger=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe");
                     var hash=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(trigger)));
                     if(hash!=request.GetProperty("triggerSha256").GetString())throw new InvalidOperationException("uac-trigger-changed");
+                    var uacStarted=Tick;
                     try
                     {
                         using var child=Process.Start(new ProcessStartInfo(trigger)
@@ -84,7 +88,7 @@ internal static class Program
                         Save(output,new {available=true,cancelled=false,unexpectedApproval=true,tick=Tick});
                     }
                     catch(System.ComponentModel.Win32Exception ex) when(ex.NativeErrorCode==1223)
-                    {Save(output,new {available=true,cancelled=true,unexpectedApproval=false,tick=Tick,frequency=Stopwatch.Frequency});}
+                    {Save(output,new {runId=request.GetProperty("runId").GetString(),available=true,cancelled=true,unexpectedApproval=false,startedTick=uacStarted,tick=Tick,frequency=Stopwatch.Frequency});}
                     break;
                 case "ocr-cancel": case "ocr-security": Save(output,OcrCancel(request,root).GetAwaiter().GetResult()); break;
                 default: throw new InvalidDataException("closed-operation-set");
@@ -146,14 +150,14 @@ internal static class Program
         }
         finally { CloseDesktop(handle); }
     }
-    static object Snapshot()
+    static object Snapshot(JsonElement request)
     {
         var desktop = Desktop();
         if (desktop != "Default") throw new InvalidOperationException("held-state-unavailable-on-secure-desktop");
         using var current = Process.GetCurrentProcess();
         var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
         if (!GlobalMemoryStatusEx(ref memory)) throw new InvalidOperationException("memory-unavailable");
-        return new { available = true, desktop, sid = WindowsIdentity.GetCurrent().User?.Value,
+        return new { runId=request.GetProperty("runId").GetString(),caseId=request.GetProperty("caseId").GetString(),available = true, desktop, sid = WindowsIdentity.GetCurrent().User?.Value,
             session = current.SessionId,activeSessionId=WTSGetActiveConsoleSessionId(), pid = current.Id, createdAt = current.StartTime.ToUniversalTime().Ticks,
             imagePath = Environment.ProcessPath, tick = Tick, frequency = Stopwatch.Frequency,
             heldVirtualKeys = Enumerable.Range(1, 254).Where(v => (GetAsyncKeyState(v) & 0x8000) != 0).ToArray(),
@@ -175,18 +179,17 @@ internal static class Program
         var result=await engine.RecognizeAsync(bitmap);
         if(request.GetProperty("operation").GetString()=="ocr-security")
         {
-            var groups=new[]{new[]{"잠금","Lock"},new[]{"로그아웃","Sign out"},new[]{"작업 관리자","Task Manager"},new[]{"사용자 전환","Switch user"}};
-            var groupCount=groups.Count(g=>g.Any(s=>result.Text.Contains(s,StringComparison.OrdinalIgnoreCase)));
-            if(groupCount<2)throw new InvalidOperationException("security-scene-unconfirmed");
+            if(!OcrPolicy.Security(result.Text))throw new InvalidOperationException("security-scene-unconfirmed");
             return new {available=true,kind="Windows security options",actualScreenMatched=true,tick=Tick,frequency=Stopwatch.Frequency};
         }
         var words=result.Lines.SelectMany(l=>l.Words).ToArray();
-        var matches=words.Where(w=>w.Text is "아니요" or "아니오" or "No" or "취소" or "Cancel").ToArray();
+        var matches=words.Where(w=>OcrPolicy.Cancel(w.Text)).ToArray();
         if(matches.Length!=1)throw new InvalidOperationException("cancel-target-not-unique");
         var title=result.Text;
-        var isUac=title.Contains("사용자 계정 컨트롤",StringComparison.Ordinal)||title.Contains("User Account Control",StringComparison.OrdinalIgnoreCase);
+        var isUac=OcrPolicy.Uac(title)&&!OcrPolicy.Security(title);
         if(!isUac)throw new InvalidOperationException("uac-scene-unconfirmed");
         var rect=matches[0].BoundingRect;
+        if(rect.X<0||rect.Y<0||rect.Width<=0||rect.Height<=0||rect.Right>bitmap.PixelWidth||rect.Bottom>bitmap.PixelHeight)throw new InvalidOperationException("ocr-target-bounds");
         return new {available=true,uacSceneMatched=true,x=rect.X+rect.Width/2,y=rect.Y+rect.Height/2,
             width=bitmap.PixelWidth,height=bitmap.PixelHeight,tick=Tick,frequency=Stopwatch.Frequency};
     }
@@ -247,6 +250,75 @@ internal static class Program
         try { ClipboardGuardInitialized(request, root, output, end); }
         finally { OleUninitialize(); }
     }
+    // Separate B03 fixture, never invoked by a product case or build/self-check.
+    // Parent keeps the original private copy across a child OLE provider exit.
+    static object ClipboardLifetime(JsonElement request,string root,long end)
+    {
+        RequireDefault(request);
+        if(request.GetProperty("caseId").GetString()!="C11")throw new InvalidOperationException("clipboard-lifetime-case");
+        var workEnd=end-Stopwatch.Frequency*11;
+        if(workEnd<=Tick)throw new InvalidOperationException("clipboard-lifetime-recovery-budget");
+        Marshal.ThrowExceptionForHR(OleInitialize(IntPtr.Zero));
+        try
+        {
+            using var original=ClipboardSnapshot.Capture();
+            var id=Guid.NewGuid().ToString("N");
+            var childOutput=Child(root,Path.Combine(root,id+"-captured.json"));
+            var restored=Child(root,Path.Combine(root,id+"-restored.json"));
+            var childRequest=Child(root,Path.Combine(root,id+"-request.json"));
+            var signal=Child(root,Path.Combine(root,id+"-restore"));
+            var spec=System.Text.Json.Nodes.JsonNode.Parse(request.GetRawText())!.AsObject();
+            spec["operation"]="clipboard-guard";spec["output"]=childOutput;spec["restoredOutput"]=restored;
+            spec["restoreSignal"]=signal;spec["deadlineTick"]=Math.Min(workEnd,Tick+Stopwatch.Frequency*15);
+            Save(childRequest,spec);
+            Process? child=null;
+            try
+            {
+                var info=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true};
+                info.ArgumentList.Add("--request");info.ArgumentList.Add(childRequest);
+                child=Process.Start(info)??throw new IOException("clipboard-lifetime-child");_=child.Handle;
+                while(!File.Exists(childOutput))
+                {
+                    if(child.HasExited||Tick>=workEnd)throw new TimeoutException("clipboard-lifetime-capture");
+                    System.Windows.Forms.Application.DoEvents();Thread.Sleep(10);
+                }
+                var captured=Read(childOutput);
+                if(captured.GetProperty("pid").GetInt32()!=child.Id||!captured.GetProperty("captured").GetBoolean())throw new IOException("clipboard-lifetime-owner");
+                Save(signal,new {runId=request.GetProperty("runId").GetString()});
+                while(!child.HasExited)
+                {
+                    if(Tick>=workEnd)throw new TimeoutException("clipboard-lifetime-exit");
+                    System.Windows.Forms.Application.DoEvents();Thread.Sleep(10);
+                }
+                if(child.ExitCode!=0)throw new IOException("clipboard-lifetime-child-failed");
+                var done=Read(restored);
+                if(!done.GetProperty("baselineRestored").GetBoolean()||!done.GetProperty("comparisonVerified").GetBoolean()||
+                    !done.GetProperty("flushCompleted").GetBoolean()||!done.GetProperty("withinLimit").GetBoolean())throw new IOException("clipboard-lifetime-flush");
+                using var after=ClipboardSnapshot.Capture();
+                if(!original.EquivalentTo(after))throw new IOException("clipboard-lifetime-after-exit-mismatch");
+            }
+            finally
+            {
+                try
+                {
+                    if(child is not null&&!child.HasExited){child.Kill();if(!child.WaitForExit(1000))throw new IOException("clipboard-lifetime-child-remains");}
+                }
+                finally
+                {
+                    child?.Dispose();
+                    using var limit=new System.Threading.Timer(_=>Environment.Exit(124),null,10000,Timeout.Infinite);
+                    original.Restore();
+                }
+            }
+            return new {schema="remoteassist-clipboard-lifetime-v1",runId=request.GetProperty("runId").GetString(),caseId="C11",
+                candidateSha256=request.GetProperty("candidateSha256").GetString(),available=true,baselineRestored=true,
+                flushCompleted=true,helperExited=true,helperExitSurvived=true,comparisonVerified=true,
+                executableSha256=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Environment.ProcessPath!))),
+                assemblySha256=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(typeof(Program).Assembly.Location))),
+                sid=WindowsIdentity.GetCurrent().User?.Value,session=Process.GetCurrentProcess().SessionId,tick=Tick,frequency=Stopwatch.Frequency};
+        }
+        finally{OleUninitialize();}
+    }
     static void ClipboardGuardInitialized(JsonElement request, string root, string output, long end)
     {
         var stop = Child(root, request.GetProperty("restoreSignal").GetString()!);
@@ -257,11 +329,17 @@ internal static class Program
         if (!mutex.WaitOne(0)) throw new InvalidOperationException("clipboard-owner-busy");
         try
         {
-            using var snapshot = ClipboardSnapshot.Capture();
+            ClipboardSnapshot captured;
+            using(var captureLimit=new System.Threading.Timer(_=>Environment.Exit(124),null,10000,Timeout.Infinite))
+                captured=ClipboardSnapshot.Capture();
+            using var snapshot=captured;
+            using var guardProcess=Process.GetCurrentProcess();
+            var createdAt=guardProcess.StartTime.ToUniversalTime().ToString("o");
             try
             {
                 Save(output, new { available = true, captured = true, restorable = true, ownerMatched = true,
-                    runId = request.GetProperty("runId").GetString(), pid = Environment.ProcessId, tick = Tick, frequency = Stopwatch.Frequency });
+                    runId = request.GetProperty("runId").GetString(), caseId=request.GetProperty("caseId").GetString(),
+                    state="captured",createdAt,pid = Environment.ProcessId, tick = Tick, frequency = Stopwatch.Frequency });
                 // Fixed deadline independent of the orchestrator. Pump COM/STA
                 // messages while retaining the private deep snapshot in memory.
                 while (Tick < end && !File.Exists(stop))
@@ -273,8 +351,18 @@ internal static class Program
             finally
             {
                 var started = Tick;
-                snapshot.Restore();
+                using var restoreLimit=new System.Threading.Timer(_=>Environment.Exit(124),null,10000,Timeout.Infinite);
+                try{snapshot.Restore();}
+                catch(Exception error)
+                {
+                    Save(restored+".error",new {available=false,baselineRestored=false,state="restore-failed",
+                        runId=request.GetProperty("runId").GetString(),caseId=request.GetProperty("caseId").GetString(),
+                        pid=Environment.ProcessId,createdAt,startedTick=started,tick=Tick,frequency=Stopwatch.Frequency,error=error.GetType().Name});
+                    throw;
+                }
                 Save(restored, new { available = true, baselineRestored = true, privateContentExposed = false,
+                    runId=request.GetProperty("runId").GetString(),caseId=request.GetProperty("caseId").GetString(),
+                    pid=Environment.ProcessId,createdAt,state="restored",flushCompleted=true,comparisonVerified=true,
                     startedTick = started, tick = Tick, frequency = Stopwatch.Frequency,
                     withinLimit = Tick - started <= Stopwatch.Frequency * 10 });
             }
@@ -287,6 +375,7 @@ internal static class Program
             WindowsIdentity.GetCurrent().User?.Value != "S-1-5-18") throw new InvalidOperationException("fault-role");
         var ownerFile = Full(request.GetProperty("devOwner").GetString()!);
         var owner = Read(ownerFile);
+        var ownerHash=System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(ownerFile));
         var id = request.GetProperty("runId").GetString();
         if (owner.GetProperty("id").GetString() != id) throw new InvalidOperationException("fault-owner");
         using var service = Owner(request.GetProperty("service"));
@@ -318,11 +407,13 @@ internal static class Program
                 e.GetProperty("code").GetInt32() == 123 && e.GetProperty("action").GetString() == "down").GetProperty("tick").GetInt64();
             if (Tick < down || Tick - down > Stopwatch.Frequency / 2) throw new InvalidOperationException("fault-trigger-deadline");
             // Persist the one-shot consumption BEFORE the only destructive call.
+            if(!ownerHash.SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(ownerFile))))throw new InvalidOperationException("fault-owner-changed");
             Save(firedPath + ".intent", new { runId = id, servicePid = service.Id, tick = Tick });
             var fired = Tick;
             service.Kill();
             if (!service.WaitForExit(500)) throw new InvalidOperationException("fault-exit-timeout");
             Save(firedPath, new { available = true, consumedCount = 1, identityMatched = true, f12HeldAtFault = true,
+                runId=id,caseId="C16",servicePid=service.Id,serviceStart=service.StartTime.ToUniversalTime().Ticks,fixturePid=fixture.Id,
                 nativeDownTick = down, faultTick = fired, exitedTick = Tick, frequency = Stopwatch.Frequency });
             return;
         }

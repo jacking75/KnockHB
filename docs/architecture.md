@@ -42,6 +42,8 @@ ScreenShareSession이 bounded 직렬 상태 큐·시그널링 수신·heartbeat�
 
 서비스의 session.gate 독점 파일 잠금은 지원 수명 전체에 유지된다. 업데이트/제거는 이 잠금을 얻어야 한다. 종료 시 새 작업과 송신/입력을 막고 독립 복원·자원 정리를 수행한 뒤 lease를 해제한다. 감사 실패가 종료를 막지 않는다.
 
+서비스 강제 종료 시 독립 SYSTEM Recovery가 인증된 서비스 handle의 사망을 확인한다. 먼저 입력 생산자를 차단하고 예약 up을 복원한 뒤 실제 session/connection의 종료 감사를 기록한다. 정상 종료와 Recovery는 동일한 `AppendSessionEndedOnce`를 사용한다. 보호 audit 디렉터리의 배타 파일 handle을 프로세스 간 mutex로 사용하며 대기는 2초로 제한한다. 모든 append/회전 및 Reporter ACK를 직렬화한다. current·3개 회전 파일과 pending spool에서 기존 종료 EventId를 찾고 spool만 남았으면 같은 EventId/Utc로 저널을 보충한다. 파손·경로 검증 실패는 감사 실패이며 입력 복구 결과와 구분한다.
+
 ## 미디어와 입력
 
 안정된 모니터 identity/geometry를 승인에 묶는다. WGC 우선이며 미지원 때 동일 모니터의 DXGI 폴백만 허용한다. BGRA 크기/stride/세대를 검사하고 방향을 유지해 짝수 크기로 축소한다. DXGI는 회전/커서 합성을 처리한다. 모니터 제거는 종료이고 배치/해상도 변경은 새 현장 승인 후 capture/staging/scaler/encoder 재구성과 IDR/geometry ACK로 재개한다.

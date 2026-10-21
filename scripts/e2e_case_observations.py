@@ -15,6 +15,69 @@ def last(rows,kind,field='kind'):
     if not matches:raise Pending(kind)
     return matches[-1]
 
+def invariants(case,browser,events,trace,complete=True):
+    """Arrived violations fail before any Pending/audit wait can hide them."""
+    index=int(case[1:])-1
+    channels=[r['label'] for r in events if r.get('kind')=='channel-created']
+    require(len(channels)==len(set(channels)) and set(channels)<=set(CHANNELS[index]),'unauthorized-or-duplicate-channel')
+    consent=[r for r in trace if r['kind']=='consent-ui']
+    if consent:
+        require(len(consent)==1 and consent[0]['metadata']['mask']==MASKS[index],'unexpected-consent-mask')
+        if 'tick' in consent[0]:
+            require(all(r['tick']>=consent[0]['tick'] for r in trace if r['kind'] in ('native-input','capture-start','runbook-start')),'producer-before-consent')
+    elif complete:
+        require(not channels and not browser.get('frames',0) and not any(r['kind'] in ('native-input','capture-start','runbook-start') for r in trace),'activity-before-consent')
+    if case!='C15':
+        pairs=browser.get('selected',[])+[r['metadata'] for r in trace if r['kind']=='selected-pair']
+        require(all('relay' not in (p.get('localType'),p.get('remoteType')) for p in pairs),'direct-path-assumption-not-met')
+    def msgs(t):return [r for r in events if r.get('message',{}).get('t',r.get('message',{}).get('type'))==t]
+    if case in ('C02','C12'):
+        require(not browser.get('frames',0) and not any(r['kind'] in ('native-input','capture-start') for r in trace),'forbidden-video-or-input')
+    if case=='C02':require(not msgs('data-ready') and not msgs('offer'),'unapproved-session-start')
+    if case in ('C07','C08','C09'):
+        require(not any(r['kind']=='save-stream-error' for r in events),'native-save-failed')
+        binary=[r for r in events if r['kind'].endswith('-binary')]
+        accepts=msgs('file-accept');rejects=msgs('file-reject')
+        offers=msgs('file-offer')
+        require(all(len(msgs(kind))<=1 for kind in ('file-offer','file-complete','file-received')),'duplicate-file-terminal')
+        require(len(accepts)<=1 and len(rejects)<=1,'duplicate-file-decision')
+        require(not binary or accepts and binary[0]['tick']>=accepts[0]['tick'],'file-before-accept')
+        require(not binary or len(offers)==1 and all(r.get('id')==offers[0]['message']['id'] for r in binary),'file-packet-id')
+        require(all(r.get('validHeader') is True and type(r.get('chunkSeq')) is int and type(r.get('length')) is int and
+                    r.get('chunkSeq')==i and r.get('length')==16384 for i,r in enumerate(binary)), 'file-chunk-order-or-size')
+        if rejects:require(not accepts and not binary and not msgs('file-complete') and not msgs('file-received'),'file-after-deny')
+    if case in ('C13','C14'):
+        workers=[r for r in trace if r['kind']=='runbook-start']
+        approvals=[r for r in trace if r['kind']=='runbook-consent-ui' and r['metadata'].get('approved')]
+        require(len(workers)<=1 and (case!='C14' or not workers),'unexpected-worker')
+        if workers:
+            require(len(approvals)==1 and approvals[0]['tick']<=workers[0]['tick'] and
+                    approvals[0]['metadata'].get('id')==workers[0]['metadata'].get('id'),'worker-before-approval')
+
+def await_completion(case,source,s):
+    """Explicit normal arrival gates, never a catch-all around predicates."""
+    b=s['browser'];events=s['events'];trace=s['trace']
+    def has(t):return any(r.get('message',{}).get('t',r.get('message',{}).get('type'))==t for r in events)
+    if source in ('session','consent','baseline','catalog') and case!='C02':
+        if not has('data-ready'):raise Pending('data-ready')
+    if source in ('end','final','revoked','denied') and case not in ('C03',):
+        if not b.get('joinVisible',False):raise Pending('viewer-end')
+    if source=='final' and case in ('C07','C08') and s['receivedFile']['finalCount']==0:raise Pending('final-file')
+    if source=='save' and any(r['kind']=='save-stream-error' for r in events):require(False,'save-stream-error')
+    if source in ('request','pending') and case in ('C13','C14') and not s['bookDialogPresent']:raise Pending('book-dialog')
+    if case in ('C13','C14'):
+        for worker in (r['metadata'] for r in trace if r['kind']=='runbook-start'):
+            require(worker['hash']==s['installedBookHash'] and worker['userSid']==s['baselineOS']['sid'] and
+                    worker['session']==s['baselineOS']['session'] and worker['isSystem'] is False,'worker-binding-or-privilege')
+    if source=='admin-pending' and not any(r.get('message',{}).get('state')=='pending' for r in events):raise Pending('admin-pending')
+    if source in ('click','drag','wheel','key','text') and case in ('C03','C14'):
+        f=s['fixture'];base=s['fixtureBaseline']
+        if source=='click' and f['clicks']==base['clicks']:raise Pending('target-click')
+    if case=='C10':
+        if source=='a-chat' and b['chatBLineCount']==0:raise Pending('a-chat-ui')
+        if source=='b-chat' and s['bChat']['remoteLineCount']==0:raise Pending('b-chat-ui')
+        if source in ('a-sent','b-sent') and not has('chat'):raise Pending('chat-message')
+
 
 def derive(case,source,s):
     b=s['browser'];events=s['events'];trace=s['trace'];local=s['last'];ctx=s['context']
@@ -33,8 +96,12 @@ def derive(case,source,s):
                 'PermissionGeneration':0 if case=='C02' else 1,'operationId':s.get('operationId')}
     def session():
         ui=tlast('consent-ui')['metadata']
+        require(ui['mask']==MASKS[int(case[1:])-1],'unexpected-consent-mask')
         data=message('data-ready')['message']
         channels=[r['label'] for r in events if r['kind']=='channel-created']
+        require(set(channels)<=set(CHANNELS[int(case[1:])-1]),'unauthorized-channel')
+        if set(channels)!=set(CHANNELS[int(case[1:])-1]):raise Pending('allowed-channels')
+        channels=sorted(channels,key=CHANNELS[int(case[1:])-1].index)
         return {'mask':ui['mask'],'channels':channels,'beforeConsentFrames':s['preConsent']['framesMax'],
                 'beforeConsentInputCount':s['preConsent']['nativeCount'],'ownerMatched':s['ownersMatched'],
                 'consentMatched':ui['mask']==sum({'screen':1,'control':2,'admin':4,'file':8,'clipboard':16,
@@ -47,7 +114,7 @@ def derive(case,source,s):
                 'observationValid':s['os']['available']}
     def returned():
         os=s['os'];base=s['baselineOS']
-        return {'desktop':os['desktop'],'session':os['activeSessionId'],'sid':os['sid'],'baselineSid':base['sid'],
+        return {'desktop':os['desktop'],'session':os['activeSessionId'],'baselineSession':base['session'],'sid':os['sid'],'baselineSid':base['sid'],
                 'osHeld':len(os['heldVirtualKeys'])}
     def file_offer():
         row=message('file-offer');m=row['message'];
@@ -97,7 +164,12 @@ def derive(case,source,s):
             'foreground':f['foreground'],'ownerHandlesBound':s['serviceIdentityMatched'],
             **(dict(**book(),workerStartCount=len(trows('runbook-start')),inputReady=b['inputReady']=='true') if case=='C14' else {})}
     if case=='C03':
-        if source=='text':return {'text':s['fixture']['text']}
+        if source=='text':
+            if s['fixture']['text']=='':raise Pending('target-text')
+            return {'text':s['fixture']['text']}
+        if source=='key' and (f['f12Down']-baseline['f12Down']<1 or f['f12Up']-baseline['f12Up']<1):raise Pending('target-key-pair')
+        if source=='wheel' and f['wheel']==baseline['wheel']:raise Pending('target-wheel')
+        if source=='drag' and f['dragCount']==baseline['dragCount']:raise Pending('target-drag')
         if source=='key':return {'f12DownDelta':f['f12Down']-baseline['f12Down'],'f12UpDelta':f['f12Up']-baseline['f12Up'],
             'defaultPrevented':last(events,'f12-keydown')['defaultPrevented']}
         if source=='wheel':return {'wheelDeltaSum':f['wheelDeltaSum']-baseline['wheelDeltaSum'],'wheelCount':f['wheel']-baseline['wheel'],'observationValid':f['observationValid']}
@@ -117,6 +189,7 @@ def derive(case,source,s):
             'inputEnabled':b['inputEnabled'],'productHeld':held()['productHeld']}
         if source in ('admin-active','admin'):
             row=message('admin-state','dc-received')['message']
+            if row.get('state') in ('pending','inactive'):raise Pending('admin-approval')
             return {'active':active,'localApprovalMatched':s['adminLocalApprovalMatched'],'generation':row.get('adminGeneration',0),
                     'currentGeneration':row.get('generation')==ctx.generation,'productHeld':held()['productHeld']}
         if source=='baseline':return {**returned(),**held(),'adminActive':active}
@@ -147,6 +220,7 @@ def derive(case,source,s):
         if source=='source':return {**s['sourceFile'],'selectionCount':local['file-selection-count']}
         if source=='offer':return file_offer()
         if source=='accept':return {'acceptedLocally':s['fileAcceptedLocally'],'approveCount':local['receive-approve-count'],'pathOwnerMatched':s['receivePathMatched']}
+        if source=='save' and not any(r['kind']=='save-picker-approved' for r in events):raise Pending('save-picker')
         if source=='save':return {'saveApproved':len([r for r in events if r['kind']=='save-picker-approved'])==1,
             'saveApi':'showSaveFilePicker' if any(r['kind']=='save-picker-open' for r in events) else 'unobserved',
             'approveCount':local['receive-approve-count'],'pathOwnerMatched':s['receivePathMatched']}
@@ -154,6 +228,10 @@ def derive(case,source,s):
             offered=message('file-offer')['message'];complete=message('file-complete');receipt=message('file-received')
             packets=[r for r in events if r['kind'].endswith('-binary') and r.get('id')==offered['id']]
             require(all(r.get('validHeader') is True for r in packets),'file-header-invalid')
+            if case=='C08':
+                closed=[r for r in events if r['kind']=='save-stream-closed']
+                if not closed:raise Pending('save-stream-close')
+                require(len(closed)==1 and closed[0].get('id')==offered['id'] and complete['tick']<=closed[0]['tick']<=receipt['tick'],'file-save-close-correlation')
             times=[r['tick'] for r in packets]+[complete['tick'],receipt['tick']]
             return {'offerId':offered['id'],'completeId':complete['message']['id'],'receiptId':receipt['message']['id'],
                 'chunkSeqs':[r['chunkSeq'] for r in packets],'chunkLengths':[r['length'] for r in packets],
@@ -178,6 +256,14 @@ def derive(case,source,s):
         if source=='session':return {**session(),'chatEnabled':b['chatEnabled'],'automaticRequests':len(messages('clipboard-set'))+len(messages('clipboard-get'))}
         if source in ('set','get'):
             sent=message('clipboard-'+source,'dc-sent');response=message('clipboard-applied' if source=='set' else 'clipboard-text','dc-received')
+            require(len(messages('clipboard-'+source,'dc-sent'))==1 and
+                    len(messages('clipboard-applied' if source=='set' else 'clipboard-text','dc-received'))==1,'duplicate-clipboard-operation')
+            require(sent['message']['id']==response['message']['id'],'clipboard-response-id')
+            from e2e_case_runtime import elapsed
+            elapsed({'frequency':1000,'sent':sent['tick'],'response':response['tick']},'sent','response',2000)
+            require(response['message']['hash']==s['testClipboardHash'],'clipboard-response-hash')
+            if source=='get':require(response['message'].get('testText')=='RA-CLIP😀','clipboard-response-text')
+            if source=='get' and not b['clipboardEqualsTest']:raise Pending('clipboard-ui')
             return {'id':sent['message']['id'],'responseId':response['message']['id'],
                 'hash':sent['message'].get('hash',s['testClipboardHash']),'responseHash':response['message']['hash'],
                 'requestedTick':sent['tick'],'responseTick':response['tick'],'frequency':1000,'applied':source=='set',
@@ -210,7 +296,7 @@ def derive(case,source,s):
             start=tlast('runbook-start');end=tlast('runbook-exit');m=start['metadata']
             require(m['id']==end['metadata']['id'],'worker-result-id')
             return {'startCount':len(trows('runbook-start')),'state':message('runbook-result')['message']['result']['state'],
-                'exitCode':end['metadata']['exitCode'],'session':m['session'],'isSystem':m['isSystem'],
+                'exitCode':end['metadata']['exitCode'],'session':m['session'],'baselineSession':s['baselineOS']['session'],'isSystem':m['isSystem'],
                 'installedHash':s['installedBookHash'],'executedHash':m['hash'],'userSid':m['userSid'],'baselineSid':s['baselineOS']['sid'],
                 'startTick':start['tick'],'exitTick':end['tick'],'frequency':start['frequency']}
         if source=='end':return {**audit(),'exited':not s['workerPids']}
@@ -218,7 +304,11 @@ def derive(case,source,s):
         if source=='cancel':return {'cancelCount':len(messages('runbook-cancel','dc-sent')),
             'requestId':message('runbook-cancel')['message']['id'],'pendingId':message('runbook-request')['message']['id']}
         if source=='dismiss':
-            sent=tlast('dismiss-sent');closed=tlast('dialog-closed');ack=tlast('dismiss-ack');resumed=tlast('input-resumed')
+            sent=tlast('dismiss-sent');closed=tlast('dialog-closed');ack=tlast('dismiss-ack')
+            require(sent['metadata']['id']==closed['metadata']['id']==ack['metadata']['id']==s['operationId'],'dismiss-operation')
+            resumes=[r for r in trows('input-resumed') if r['metadata']['epoch']>s['initialInputEpoch']]
+            if not resumes:raise Pending('new-epoch-resume')
+            require(len(resumes)==1,'duplicate-resume');resumed=resumes[0]
             return {'requestId':sent['metadata']['id'],'ackId':ack['metadata']['id'],'dismissSentTick':sent['tick'],
                 'dialogClosedTick':closed['tick'],'dismissAckTick':ack['tick'],'resumedTick':resumed['tick'],
                 'frequency':sent['frequency'],'dialogPresent':s['bookDialogPresent'],'machine':'pc-b'}
@@ -241,13 +331,25 @@ def derive(case,source,s):
             if not downs:raise Pending('native-f12-down')
             down=downs[-1];acks=[r for r in trace if r['kind']=='reservation-ack' and r['metadata']['revision']==down['metadata']['revision'] and r['pid']==down['pid']]
             require(len(acks)==1,'reservation-correlation')
+            if 'frequency' in down:
+                require(down['frequency']==acks[0]['frequency']==fault['frequency'],'fault-clock-domain')
+                require(down.get('processStartUtcTicks')==acks[0].get('processStartUtcTicks') and down.get('generation')==acks[0].get('generation'), 'fault-producer-generation')
             result={**fault,'ackTick':acks[0]['tick'],'nativeDownTick':down['tick'],'nativeDownDelta':sum(r['metadata']['f12Down'] for r in downs)}
             if source=='recovery-order':
                 fenced=tlast('producers-fenced');up=tlast('recovery-up')
+                native=tlast('recovery-native-up')
+                require(all(type(v) is int for v in (up['metadata'].get('count'),up['metadata'].get('requested'),up['metadata'].get('f12Up'),
+                        native['metadata'].get('count'),native['metadata'].get('f12Up'))),'native-recovery-count-type')
+                require(up['metadata'].get('count')==up['metadata'].get('requested')==1 and up['metadata'].get('f12Up')==1 and
+                        native['metadata'].get('count')==1 and native['metadata'].get('f12Up')==1,'native-recovery-up-not-completed')
+                require(fenced['pid']==up['pid']==native['pid'] and fenced['frequency']==up['frequency']==native['frequency']==fault['frequency'], 'recovery-clock-producer')
+                require(fenced.get('processStartUtcTicks')==up.get('processStartUtcTicks')==native.get('processStartUtcTicks'),'recovery-producer-start')
+                require(down['pid'] in fenced['metadata']['pids'],'down-producer-not-fenced')
                 result.update(machine='pc-b',producerFencedTick=fenced['tick'],recoveryUpTick=up['tick'],
                     toolUpCausedRecovery=s['toolUpCausedRecovery'])
             return result
-        if source=='return':return {**returned(),'newHelperCount':s['producerRestartCount'],'sessionEnded':b['joinVisible'],'serviceRestarted':s['serviceRestarted']}
+        if source=='return':return {**returned(),'newHelperCount':s['producerRestartCount'],'sessionEnded':b['joinVisible'],'serviceRestarted':s['serviceRestarted'],
+                                   'helperCount':len(s['helperPids']),'adminHelperCount':len(s['adminPids']),'workerCount':len(s['workerPids'])}
         if source=='end':return {**audit(),'serviceRestarted':s['serviceRestarted']}
     if source=='video' and case in ('C01','C15'):
         return {'samples':s['videoSamples'],'markerMatched':s['videoMarkerMatched'],'monitorMatched':s['videoMonitorMatched'],

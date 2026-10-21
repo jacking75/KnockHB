@@ -27,10 +27,14 @@ def observation_window(o,ctx,deadline,key):
     while ctx.clock()-started<5_000_000_000:
         ctx.remaining(deadline);samples.append(o.browser(ctx))
         require(not samples[-1]['inputEnabled'],'input-enabled-in-negative-window')
+        current=o.events(ctx)[first:]
+        require(not any(r['kind']=='channel-created' or r.get('message',{}).get('t',r.get('message',{}).get('type')) in
+                        ('offer','data-ready') for r in current),'forbidden-event-in-negative-window')
+        require(samples[-1]['frames']==0 if key=='preConsent' or ctx.case_id=='C02' else True,'video-in-negative-window')
         time.sleep(min(.05,ctx.remaining(deadline)))
     events=o.events(ctx)[first:]
     product=o.product(ctx,deadline)
-    result={'framesMax':max(x['frames'] for x in samples),'observedWindowMs':5000,
+    result={'framesMax':max(x['frames'] for x in samples),'observedWindowMs':int((ctx.clock()-started)/1_000_000),
         'nativeCount':sum(r['metadata']['count'] for r in product['trace'] if r['kind']=='native-input'),
         'newOffers':sum(r.get('message',{}).get('type')=='offer' for r in events),
         'newDataReady':sum(r.get('message',{}).get('t')=='data-ready' for r in events),
@@ -51,9 +55,14 @@ def receive_files(o,ctx,product):
 
 
 def assemble(o,source,ctx,deadline):
+    b=o.browser(ctx);events=o.events(ctx)
+    from e2e_case_observations import invariants
+    invariants(ctx.case_id,b,events,[],complete=False)
+    p=o.product(ctx,deadline);trace=p['trace']
+    if ctx.session_id is not None:require(all(r.get('sessionId') in (None,ctx.session_id) for r in trace),'trace-session-mismatch')
+    invariants(ctx.case_id,b,events,trace)
     if ctx.observation_after and (ctx.run_dir/'browser-observation.json').stat().st_mtime_ns<ctx.observation_after:
         raise Pending('post-action-browser-snapshot')
-    b=o.browser(ctx);events=o.events(ctx);p=o.product(ctx,deadline);trace=p['trace']
     messages=[r['message'] for r in events if 'message' in r]
     connection=[m['connectionId'] for m in messages if m.get('connectionId')]
     require(len(set(connection))<=1,'connection-changed')
@@ -124,6 +133,7 @@ def assemble(o,source,ctx,deadline):
     s['producerRestartCount']=max(0,len(starts)-1)
     if ctx.case_id=='C06' and 'lock-tick' in o.last:
         s['producerRestartCount']+=sum(r['kind']=='capture-start' and r['tick']>o.last['lock-tick'] for r in trace)
+        require(s['producerRestartCount']==0,'capture-resumed-after-lock')
     if ctx.case_id in ('C07','C08','C09'):
         a,r=receive_files(o,ctx,p);s.update(aReceive={'empty':not a},bReceive={'empty':not r})
         sourcepath=ctx.run_dir/'inputs'/('ra-'+ctx.case_id.lower()+'.bin')
@@ -166,7 +176,6 @@ def assemble(o,source,ctx,deadline):
         s['initialInputEpoch']=o.last.get('initialInputEpoch')
         s.update(o.last.get('book-consent',{}))
         if 'book-consent' in o.last:s['dialogBookHash']=o.last['book-consent']['dialogHash']
-        if 'book-consent' in o.last:s['dialogBookHash']=o.last['book-consent']['dialogHash']
     if ctx.case_id in ('C01','C15') and source=='video':
         capture=last(trace,'capture-start')['metadata'];marker=s['fixture']['marker']
         probe=ctx.run_dir/'video-marker-probe.json'
@@ -188,6 +197,10 @@ def assemble(o,source,ctx,deadline):
         s['serviceIdentityMatched']=bool(processes('RemoteAssist.Host.Service.exe'))
         if source in ('down','fault','recovery-order'):
             s['fault']=o.desktop.await_file('pc-b','fault-fired.json',ctx,deadline)
+            require(s['fault'].get('runId')==ctx.run_id and s['fault'].get('caseId')==ctx.case_id and
+                    s['fault'].get('fixturePid')==o.fixture['pid'],'fault-source-owner')
+            require(s['fault'].get('servicePid')==o.last['fault-service']['pid'] and
+                    s['fault'].get('serviceStart')==o.last['fault-service']['start'],'fault-service-generation')
         if source=='recovery-order':
             native=last(trace,'recovery-native-up')['metadata']
             s['toolUpCausedRecovery']=not native['f12HeldBefore']
@@ -202,7 +215,11 @@ def read(o,source,ctx,deadline):
             if ctx.case_id=='C11' and source=='baseline':payload=o.last['clipboard-baseline']
             else:
                 s=assemble(o,source,ctx,deadline)
+                from e2e_case_observations import await_completion
+                await_completion(ctx.case_id,source,s)
                 terminal=source in ('audit','end','final') and ctx.case_id not in ('C03',)
+                terminal_rows=[r for r in s['audit'] if r.get('Kind')==3 and r.get('SessionId')==ctx.session_id]
+                require(len(terminal_rows)<=1,'duplicate-terminal-audit')
                 if terminal and not any(r.get('Kind')==3 and r.get('SessionId')==ctx.session_id for r in s['audit']):raise Pending('session-end-audit')
                 payload=derive(ctx.case_id,source,s)
             record={'runId':ctx.run_id,'caseId':ctx.case_id,'stepId':ctx.active_step,'source':source,

@@ -120,7 +120,10 @@ def elapsed(record, start, end, limit):
 
 def equal(actual, expected):
     # Python's True == 1 must not make malformed observations pass.
-    return type(actual) is type(expected) and actual == expected
+    if type(actual) is not type(expected):return False
+    if isinstance(actual,dict):return actual.keys()==expected.keys() and all(equal(actual[k],expected[k]) for k in actual)
+    if isinstance(actual,(list,tuple)):return len(actual)==len(expected) and all(equal(a,b) for a,b in zip(actual,expected))
+    return actual==expected
 
 
 def assert_fields(data, fields):
@@ -185,12 +188,39 @@ class Context:
     candidate_sha256: str | None = None
     tool_manifest_sha256: str | None = None
     screen_occupied_seconds: float | None = None
+    screen_start_tick: int | None = None
+    screen_end_tick: int | None = None
+    phase_ticks: dict = field(default_factory=dict)
+    lifecycle: list = field(default_factory=list)
+    tool_calls: dict = field(default_factory=dict)
     stopping: bool = False
     observation_after: int = 0
+
+    def screen_start(self):
+        if self.screen_start_tick is None:self.screen_start_tick=self.clock()
+
+    def tool_call(self,kind):
+        phase='recovery' if 'recoveryStart' in self.phase_ticks else 'cleanup' if self.stopping else 'active'
+        caps={'dtd':(320,96,64),'ssh':(160,64,48),'gateway':(640,192,128)}
+        require(kind in caps,'tool-kind')
+        key=phase+':'+kind;row=self.tool_calls.setdefault(key,{'count':0,'observedSeconds':0,'maximumSeconds':0})
+        require(row['count']<caps[kind][('active','cleanup','recovery').index(phase)],'tool-call-budget-exceeded',key)
+        row['count']+=1;return row
+
+    def resource(self, name, state, owner_file=None):
+        require(name in ('dtd:pc-a','dtd:pc-b','runtime:local','runtime:remote','clipboard:pc-b','prepared:remote'), 'lifecycle-resource')
+        require(state in ('intent','acquired','released','unknown'), 'lifecycle-state')
+        if owner_file is not None:require(Path(owner_file).name==owner_file,'lifecycle-owner-file')
+        row=dict(runId=self.run_id,seq=len(self.lifecycle)+1,resource=name,state=state,
+                 ownerFile=owner_file,tick=self.clock(),frequency=1000000000)
+        with (self.run_dir/'lifecycle.ndjson').open('ab') as f:
+            f.write(json.dumps(row).encode()+b'\n');f.flush();os.fsync(f.fileno())
+        self.lifecycle.append(row)
 
     def begin(self):
         require(self.origin is None, 'origin-already-set', exit_code=40)
         origin = self.clock()
+        require(type(origin) is int and origin>=0,'origin-clock')
         new_json(self.run_dir/'launch-once.json', {'runId': self.run_id, 'caseId': self.case_id,
                     'origin': origin, 'frequency': 1000000000,'controllerPid':os.getpid(),
                     'controllerImage':str(Path(sys.executable).resolve())})
@@ -201,7 +231,10 @@ class Context:
         return self.origin + int(seconds*1000000000)
 
     def remaining(self, deadline, cap=5):
-        remaining = min(cap, (deadline-self.clock())/1000000000)
+        now=self.clock()
+        require(type(deadline) is int and type(now) is int and (self.origin is None or now>=self.origin),'deadline-clock')
+        require(type(cap) in (int,float) and math.isfinite(cap) and cap>0,'deadline-cap')
+        remaining = min(cap, (deadline-now)/1000000000)
         require(remaining > 0, 'deadline-expired')
         return remaining
 
@@ -233,6 +266,7 @@ class Context:
 def stop_and_recover(ctx, backend):
     """Every recovery branch is attempted; first functional failure is immutable."""
     ctx.stopping=True
+    ctx.phase_ticks['cleanupStart']=ctx.clock()
     finish = ctx.run_dir/'finish.json'
     errors = []
     try:
@@ -247,6 +281,9 @@ def stop_and_recover(ctx, backend):
     for operation in ('finish-remote', 'release-owned-input', 'stop-owned-runtime',
                       'restore-case-state', 'inspect-independent', 'retire-and-close'):
         try:
+            if operation=='inspect-independent':
+                ctx.phase_ticks['cleanupEnd']=ctx.clock();ctx.phase_ticks['recoveryStart']=ctx.clock()
+                if ctx.clock()>ctx.end(540):errors.append('cleanup-phase-deadline')
             if operation == 'retire-and-close' and not ctx.recovery.get('verified'):
                 errors.append('guards-retained-unverified-recovery')
                 continue
@@ -254,7 +291,7 @@ def stop_and_recover(ctx, backend):
             phase_end=ctx.end(840 if operation in ('inspect-independent','retire-and-close') else 540)
             allowance={'stop-owned-runtime':180,'inspect-independent':60,'retire-and-close':45,
                        'restore-case-state':30,'release-owned-input':20}.get(operation,10)
-            end = max(ctx.clock()+1000000000, min(phase_end, ctx.clock()+int(allowance*1e9)))
+            end = min(ctx.end(900),max(ctx.clock()+1000000000, min(phase_end, ctx.clock()+int(allowance*1e9))))
             data = backend.recover(operation, ctx, end)
             require(data.get('status') == 'completed', 'recovery-action-failed', operation)
             if operation == 'inspect-independent':
@@ -262,9 +299,13 @@ def stop_and_recover(ctx, backend):
                 ctx.recovery = {'verified': data.get('verified') is True}
         except Exception as e:
             errors.append(operation + ':' + (e.code if isinstance(e, CaseError) else type(e).__name__))
+    if ctx.clock()>ctx.end(840):errors.append('recovery-phase-deadline')
     if errors:
         ctx.recovery['verified'] = False
+        try:backend.recover('close-owned-sessions',ctx,min(ctx.end(900),max(ctx.clock()+1000000000,min(ctx.end(840),ctx.clock()+10000000000))))
+        except Exception as e:errors.append('close-owned-sessions:'+type(e).__name__)
     ctx.recovery['errors'] = errors
+    ctx.phase_ticks['recoveryEnd']=ctx.clock()
 
 
 def execute_steps(ctx, backend, steps):
@@ -297,6 +338,7 @@ def execute_steps(ctx, backend, steps):
                              'code': e.code if isinstance(e, CaseError) else type(e).__name__}
     finally:
         if ctx.origin is not None:
+            ctx.phase_ticks['productEnd']=ctx.clock()
             stop_and_recover(ctx, backend)
     return write_result(ctx, steps)
 
@@ -317,28 +359,46 @@ def write_result(ctx, steps):
                 evidence_ok = False
         evidence_ok &= all(isinstance(h,str) and re.fullmatch('[a-f0-9]{64}',h)
                            for h in (ctx.candidate_sha256,ctx.tool_manifest_sha256))
-        evidence_ok &= ctx.screen_occupied_seconds is not None
+        evidence_ok &= (ctx.screen_start_tick is not None and ctx.screen_end_tick is not None
+                        and ctx.origin is not None and ctx.origin<=ctx.screen_start_tick<=ctx.screen_end_tick<=now)
     functional = not ctx.first_failure and len(ctx.done) == len(steps) and bool(ctx.assertions) and evidence_ok
     if not evidence_ok and not ctx.first_failure:
         ctx.first_failure={'stepId':'report','code':'evidence-integrity-or-runtime-metadata-missing'}
     within = ctx.origin is not None and now <= ctx.end(900)
     status = ('PASS' if functional and recovery_ok and within else
               'FAIL' if recovery_ok and within else 'FAIL_RECOVERY_REQUIRED')
+    resources={r['resource']:r for r in ctx.lifecycle}
     result = dict(caseId=ctx.case_id, runId=ctx.run_id, result=status,
                   executionMode=ctx.execution_mode,
                   firstFailureStep=ctx.first_failure, startTick=ctx.origin, endTick=now,
                   frequency=1000000000, actualSeconds=(now-ctx.origin)/1e9 if ctx.origin is not None else None,
                   screenOccupiedSeconds=ctx.screen_occupied_seconds,
+                  screenMeasurement='bounded' if ctx.screen_start_tick is not None and ctx.screen_end_tick is not None else 'unknown',
+                  screenBoundStartTick=ctx.screen_start_tick,screenBoundEndTick=ctx.screen_end_tick,
+                  screenOccupiedUpperBoundSeconds=(ctx.screen_end_tick-ctx.screen_start_tick)/1e9
+                    if ctx.screen_start_tick is not None and ctx.screen_end_tick is not None else None,
+                  phaseTicks=ctx.phase_ticks,
+                  toolCalls=ctx.tool_calls,
+                  productActionSeconds=(ctx.phase_ticks['productEnd']-ctx.phase_ticks['productStart'])/1e9
+                    if 'productStart' in ctx.phase_ticks and 'productEnd' in ctx.phase_ticks else None,
+                  cleanupRecoverySeconds=(ctx.phase_ticks['recoveryEnd']-ctx.phase_ticks['cleanupStart'])/1e9
+                    if 'recoveryEnd' in ctx.phase_ticks else None,
                   candidateSha256=ctx.candidate_sha256,toolManifestSha256=ctx.tool_manifest_sha256,
                   previousRun=None,assertions=ctx.assertions,evidence=ctx.evidence,
                   cleanup=ctx.cleanup, recovery=ctx.recovery,
+                  unresolvedOwnedResources=[{'resource':key,'state':r['state'],'ownerFile':r.get('ownerFile')}
+                    for key,r in resources.items() if r['state']!='released'],
                   unexecutedSteps=[s.name for s in steps if s.name not in ctx.done])
     new_json(ctx.run_dir/'result.json', result)
     return result
 
 
-def read_config(path, case_id, run_dir):
+def read_config(path, case_id, run_dir, require_evidence=True):
     c = read_json(path)
+    require(set(c)<={'caseId','runId','runDir','expectedMask','a','b','signalingOrigin','viewerUrl','staging','dtdExe',
+                    'candidateDirectory','candidateSha256','sourceEvidence','dtdConfig','tls','uiRules','uiEvidence','observations',
+                    'recovery','desktopToolDirectory','inputTargetDirectory','local','caseInputs'},'config-unknown-field',exit_code=40)
+    require(c.get('observations')=={},'config-observation-override',exit_code=40)
     require(re.fullmatch(r'C(0[1-9]|1[0-6])', case_id) is not None, 'case-id', exit_code=40)
     i = int(case_id[1:])-1
     require(c.get('caseId') == case_id and equal(c.get('expectedMask'), MASKS[i]), 'case-mask', exit_code=40)
@@ -362,10 +422,14 @@ def read_config(path, case_id, run_dir):
     require(re.fullmatch('[a-fA-F0-9]{64}', c['candidateSha256']), 'candidate-hash', exit_code=40)
     candidate = safe_path(str(Path(c['candidateDirectory'])/'candidate.json'), exists=True)
     require(digest(candidate) == c['candidateSha256'].lower(), 'candidate-changed', exit_code=10)
-    for key in ('dtdExe', 'dtdConfig', 'sourceEvidence'):
+    for key in ('dtdExe', 'dtdConfig') + (('sourceEvidence',) if require_evidence else ()):
         safe_path(c[key], exists=True)
     from e2e_case_ui import rules
     c['uiRules']=rules(c['uiRules'])
+    for side in ('a','b'):
+        require(re.fullmatch(r'S-1-5-21-\d+-\d+-\d+-\d+',str(c[side].get('sid',''))) and
+                type(c[side].get('session')) is int and c[side]['session']>0,'interactive-identity-required',exit_code=10)
+    if case_id=='C04':require(re.fullmatch('[a-fA-F0-9]{64}',str(c.get('caseInputs',{}).get('uacTriggerSha256',''))),'uac-trigger-required',exit_code=10)
     if case_id in ('C07','C08','C09'):
         filename='ra-'+case_id.lower()+'.bin'
         source=(c['staging']+'/tools/inputs/'+filename if case_id=='C08' else str(actual/'inputs'/filename))
@@ -385,21 +449,29 @@ def live_blockers(case_id):
         'C04': ['designated on-site/VM recovery operator and signed Windows UAC trigger'],
         'C05': ['designated on-site/VM recovery operator'],
         'C06': ['designated same-user login operator'],
-        'C15': ['coturn operator and run-bound allocation collector'],
+        'C15': ['EXCLUDED: TURN excluded by user on 2026-10-22'],
     }
     return common + extra.get(case_id,[])
 
 
-def freeze_inputs(config, config_path):
+def tool_inventory(config):
     """Hash actual existing inputs only, never fabricate future runtime identity."""
-    paths = [Path(config_path), Path(config['candidateDirectory'])/'candidate.json',
-             Path(config['dtdExe']), Path(config['dtdConfig']), Path(config['sourceEvidence'])]
+    paths = [Path(config['candidateDirectory'])/'candidate.json',Path(config['dtdExe']),Path(config['dtdConfig'])]
     paths += [p for p in (ROOT/'scripts').iterdir() if p.is_file() and p.name.startswith(('e2e-','e2e_case_'))]
     paths += list((ROOT/'scripts/e2e-desktop').glob('*.cs'))
+    paths += [ROOT/'tests/e2e'/name for name in ('campaign-fixture.ps1','scm-fixture.ps1','ScmFixture.cs')]
+    paths.append(ROOT/'tests/e2e/scm-fixture/ScmFixture.csproj')
     for directory in (ROOT/'.artifacts/browser/node_modules/playwright-core',ROOT/'.artifacts/python-ssh'):
         if directory.is_dir():paths += [p for p in directory.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     for key in ('desktopToolDirectory','inputTargetDirectory'):
         if key in config:paths += [p for p in Path(config[key]).rglob('*') if p.is_file()]
+    if 'desktopToolDirectory' in config:
+        build=Path(config['desktopToolDirectory']).parent/'build-result.json'
+        paths.append(build)
+        paths += [p for p in (build.parent/'scm-fixture').rglob('*') if p.is_file()]
+    if 'local' in config:
+        paths += [Path(get(config,'local.'+name)) for name in ('signaling','tlsCert','tlsKey','node','chrome','python')]
+    if 'tls' in config:paths.append(Path(get(config,'tls.certificate')))
     paths += [ROOT/'scripts'/('e2e-'+config['caseId']+'.ps1'),ROOT/'scripts/e2e-case-command.ps1']
     for name in ('e2e-run-contract.ps1','e2e-native.cs','e2e-product-client.py',
                  'e2e-ssh-command.py','e2e-local-session.ps1','e2e-product-guard.ps1'):
@@ -408,6 +480,16 @@ def freeze_inputs(config, config_path):
     for path in sorted(set(paths)):
         p=safe_path(str(path),exists=True)
         entries.append({'path':str(p),'sha256':digest(p),'bytes':p.stat().st_size})
+    return entries
+
+
+def freeze_inputs(config,config_path):
+    entries=tool_inventory(config)
+    for path in (config_path,config['sourceEvidence'],config.get('uiEvidence'),config.get('caseInputs',{}).get('clipboardEvidence')):
+        if path is None:continue
+        p=safe_path(str(path),exists=True)
+        entries.append({'path':str(p),'sha256':digest(p),'bytes':p.stat().st_size})
+    entries=sorted({r['path']:r for r in entries}.values(),key=lambda r:r['path'])
     encoded=json.dumps(entries,sort_keys=True,separators=(',',':')).encode('utf-8')
     return {'caseId':config['caseId'],'runId':config['runId'],'configPath':str(Path(config_path).resolve()),
             'configSha256':digest(config_path),'toolManifestSha256':hashlib.sha256(encoded).hexdigest(),
@@ -415,6 +497,7 @@ def freeze_inputs(config, config_path):
 
 
 def prepare_case(config, config_path, ctx, dtd):
+    require(ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
     from e2e_case_campaign import package_campaign,Campaign
     from e2e_case_readiness import readiness
     require(not ctx.run_dir.exists(),'prepare-replay',exit_code=40)
@@ -444,13 +527,18 @@ def prepare_case(config, config_path, ctx, dtd):
             blockers.append(machine+': read-only identity probe failed')
     campaign_hash=None
     if not blockers:
-        package_campaign(config,ctx)
-        campaign=Campaign(config,ctx,dtd.transport)
-        campaign.deploy(ctx.clock()+180000000000)
-        campaign_hash=campaign.sha
+        try:
+            package_campaign(config,ctx)
+            campaign=Campaign(config,ctx,dtd.transport)
+            campaign.deploy(ctx.clock()+180000000000)
+            campaign_hash=campaign.sha
+        except Exception as e:blockers.append(e.code if isinstance(e,CaseError) else type(e).__name__)
     result={'caseId':ctx.case_id,'runId':ctx.run_id,'state':'BLOCKED' if blockers else 'READY_NOT_EXECUTED',
             'configSha256':frozen['configSha256'],'toolManifestSha256':frozen['toolManifestSha256'],
             'campaignSha256':campaign_hash,'identity':statuses,'blockers':blockers,'functionalActions':0}
+    if (ctx.run_dir/'prepare-failure.json').exists():
+        result['failure']=read_json(ctx.run_dir/'prepare-failure.json')
+        if result['failure']['cleanup'].get('status')!='completed':result['state']='FAIL_RECOVERY_REQUIRED'
     new_json(ctx.run_dir/'prepared.json',result)
     return result
 
@@ -517,13 +605,14 @@ def main(argv=None):
         if a.action=='Prepare':
             from e2e_case_adapters import Dtd, OwnedGateway
             result=prepare_case(c,a.config,ctx,Dtd(c['dtdExe'],c['dtdConfig'],OwnedGateway()))
-            print(json.dumps(result));return 0 if result['state']=='READY_NOT_EXECUTED' else 10
+            print(json.dumps(result));return 0 if result['state']=='READY_NOT_EXECUTED' else 30 if result['state']=='FAIL_RECOVERY_REQUIRED' else 10
         if a.action=='Collect':
             print(json.dumps(collect_saved(ctx)));return 10
         if a.action=='Abort':
             from e2e_case_adapters import OwnedGateway
             from e2e_case_recovery import finish_existing
             result=finish_existing(c,ctx,OwnedGateway());print(json.dumps(result))
+            if result.get('state')=='PREPARATION_RETIRED_NOT_EXECUTED':return 10
             return 20 if result.get('state')=='ABORTED_RECOVERED' or result.get('recovery',{}).get('verified') else 30
         if a.action=='Run':
             from e2e_case_readiness import verify_frozen

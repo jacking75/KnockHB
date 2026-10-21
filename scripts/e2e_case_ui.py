@@ -41,10 +41,13 @@ def rules(overrides):
     require(isinstance(overrides,dict) and set(overrides)<=set(result),'ui-machine')
     for machine,entries in overrides.items():
         require(isinstance(entries,dict) and set(entries)<=set(result[machine]),'unknown-ui-target')
-        for target,entry in entries.items():result[machine][target]=deepcopy(entry)
+        for target,entry in entries.items():
+            require(entry.get('ownerRole')==result[machine][target]['ownerRole'],'ui-owner-role-override')
+            result[machine][target]=deepcopy(entry)
     for machine,entries in result.items():
         for target,entry in entries.items():
             require(set(entry)=={'ownerRole','window','element'} and entry['ownerRole'] in ('viewer','tray','fixture'),'ui-rule-schema')
             require(set(entry['window'])=={'title'} and isinstance(entry['window']['title'],str) and entry['window']['title'],'ui-window-selector')
             require(bool(entry['element']) and set(entry['element'])<={'automationId','name','controlType'},'ui-element-selector')
+            require(all(isinstance(v,str) and 0<len(v)<=256 for v in entry['element'].values()),'ui-selector-value')
     return result

@@ -10,6 +10,8 @@ public static class CaseTrace
 {
     static readonly object Gate = new();
     static readonly Lazy<(string Path,string Id)?> Destination = new(Resolve);
+    static readonly long ProcessStartUtcTicks=StartTicks();
+    static long StartTicks(){using var process=Process.GetCurrentProcess();return process.StartTime.ToUniversalTime().Ticks;}
     static long sequence;
     static (string,string)? Resolve()
     {
@@ -41,6 +43,7 @@ public static class CaseTrace
                 var (path,id)=destination.Value;
                 if(sequence>=16384)return;
                 var bytes=JsonSerializer.SerializeToUtf8Bytes(new {runId=id,sequence=++sequence,
+                    processStartUtcTicks=ProcessStartUtcTicks,
                     pid=Environment.ProcessId,tick=Stopwatch.GetTimestamp(),frequency=Stopwatch.Frequency,
                     kind,sessionId,generation,metadata});
                 if(bytes.Length>8192)return;

@@ -8,7 +8,11 @@ from e2e_case_runtime import Step, assert_fields, require, get, numeric, elapsed
 
 
 def E(**fields):
-    return lambda data: assert_fields(data, fields)
+    window=fields.pop('observedWindowMs',None)
+    def check(data):
+        assert_fields(data,fields)
+        if window is not None:require(numeric(get(data,'observedWindowMs'))>=window,'observation-window-too-short')
+    return check
 
 
 def all_of(*checks):
@@ -90,7 +94,7 @@ END = audit((1,0,1),(3,2,1))
 FILE_END = audit((1,0,1),(7,0,1),(8,3,1),(3,2,1))
 ADMIN_END = audit((1,0,1),(4,0,1),(6,2,1),(3,2,1))
 HELD = E(productHeld=0,osHeld=0,observationValid=True)
-RETURN = all_of(E(desktop='Default',session=2,osHeld=0), same('sid','baselineSid'))
+RETURN = all_of(E(desktop='Default',osHeld=0), same('sid','baselineSid'),same('session','baselineSession'))
 BOOK = all_of(E(bookId='network-summary',bookVersion=1,detail='summary',requiresAdmin=False),
               same('installedHash','catalogHash','previewHash'))
 
@@ -242,13 +246,13 @@ CASES = {
   S('SelectAndCompareInstalledBook',10,[('select-book','network-summary','summary')],'preview',BOOK,'runbook-preview.json'),
   S('RequestBookOnce',5,[click('pc-a','runbook-send')],'request',E(requestCount=1,approvalWindowPresent=True),'runbook-request.json'),
   S('ApproveBookLocally',20,[('approve-book-local',)],'consent',all_of(BOOK,same('installedHash','dialogHash'),E(approveCount=1,workerBeforeCount=0)),'runbook-consent.json','worker-before.json'),
-  S('ObserveOneWorkerCompletion',25,[],'worker',all_of(E(startCount=1,state='completed',exitCode=0,session=2,isSystem=False),same('installedHash','executedHash'),same('userSid','baselineSid'),latency('startTick','exitTick',20000)),'worker-events.ndjson','runbook-result.json'),
+  S('ObserveOneWorkerCompletion',25,[],'worker',all_of(E(startCount=1,state='completed',exitCode=0,isSystem=False),same('session','baselineSession'),same('installedHash','executedHash'),same('userSid','baselineSid'),latency('startTick','exitTick',20000)),'worker-events.ndjson','runbook-result.json'),
   S('VerifyWorkerExitAndAudit',10,[end()],'end',all_of(E(exited=True),audit((1,0,1),(9,0,1),(10,3,1),(3,2,1))),'worker-after.json','audit.ndjson')),
  'C14': (
   S('OpenControlRunbookTarget',140,[open_session(67,'input-target')],'baseline',all_of(session(67,['control','input','pointer','runbook']),BOOK,E(workerStartCount=0,inputReady=True)),'target-before.json','catalog.json'),
   S('RequestBookAndObservePending',10,[('select-book','network-summary','summary'),click('pc-a','runbook-send')],'pending',E(inputEnabled=False,approvalWindowPresent=True,workerStartCount=0),'pending-ui.json','pending-events.ndjson'),
   S('CancelPendingBookOnce',5,[click('pc-a','runbook-cancel')],'cancel',all_of(E(cancelCount=1),same('requestId','pendingId')),'cancel-action.json'),
-  S('ObserveRealDismissAck',10,[],'dismiss',all_of(same('requestId','ackId'),sequence('dismissSentTick','dialogClosedTick','dismissAckTick','resumedTick'),latency('dismissSentTick','dismissAckTick',2000),E(dialogPresent=False,machine='pc-b')),'dismiss-order.ndjson'),
+  S('ObserveRealDismissAck',10,[],'dismiss',all_of(same('requestId','ackId'),sequence('dismissSentTick','dialogClosedTick','dismissAckTick','resumedTick'),latency('dismissSentTick','dismissAckTick',2000),latency('dismissAckTick','resumedTick',2000),E(dialogPresent=False,machine='pc-b')),'dismiss-order.ndjson'),
   S('ObserveResumeAndNoWorker',5,[],'resume',all_of(E(workerStartCount=0,state='cancelled',inputReady=True),lambda d:require(get(d,'newEpoch')>get(d,'oldEpoch'),'epoch-not-advanced')),'runbook-cancelled.json','worker-events.ndjson'),
   S('ClickAfterCancelOnce',10,[('video-click','fixture-button')],'click',all_of(E(clickDelta=1),HELD),'target-final.json'),
   S('CollectCancelAudit',10,[end()],'audit',audit((1,0,1),(9,0,0),(10,2,1),(3,2,1)),'audit.ndjson')),
@@ -266,6 +270,6 @@ CASES = {
   S('SendRemoteF12Down',5,[('video-key','F12','down')],'down',all_of(E(nativeDownDelta=1),lambda d:require(get(d,'ackTick')<get(d,'nativeDownTick'),'reservation-order')),'reservation-order.ndjson','target-down.json'),
   S('ObserveVerifiedServiceCrash',5,[],'fault',all_of(E(consumedCount=1,identityMatched=True,f12HeldAtFault=True),latency('nativeDownTick','faultTick',500)),'fault-fired.json'),
   S('ObserveIndependentRecoveryUp',10,[],'recovery-order',fault_order,'recovery-order.ndjson','target-after.json'),
-  S('ReleaseToolAndVerifyNoResume',10,[('release-input','pc-a')],'return',all_of(RETURN,E(newHelperCount=0,sessionEnded=True,serviceRestarted=False)),'tool-release.json','fault-after.json'),
+  S('ReleaseToolAndVerifyNoResume',10,[('release-input','pc-a')],'return',all_of(RETURN,E(newHelperCount=0,helperCount=0,adminHelperCount=0,workerCount=0,sessionEnded=True,serviceRestarted=False)),'tool-release.json','fault-after.json'),
   S('PreserveAndRecoverFaultResources',20,[],'end',all_of(E(serviceRestarted=False),END),'audit.ndjson','final-recovery.json')),
 }

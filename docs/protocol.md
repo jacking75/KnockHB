@@ -140,7 +140,7 @@ Tray 처리 시작부터 Helper 실제 종료 관측까지의 1초 기준을 판
 
 특권 프레임 mapping은 서비스가 생성하는 고유 `Global\\RemoteAssist-<GUID N>` 이름을 인증 IPC로만 전달한다. 슬롯 두 개는 각각 header 64바이트 + payload 16MiB다. header는 little-endian commit(0), permission generation(8), topology generation(16), admin generation(24), width(32), height(36), stride(40), payload bytes(44), secure desktop flag(48), reserved 0(52), monotonic timestamp ms(56)다. commit은 프레임 순번×2이며 쓰는 동안 홀수다. 단일 SYSTEM writer가 payload를 복사한 뒤 even commit을 publish한다. reader는 승인된 세 세대와 geometry/stride/크기를 확인하고 복사 전후 commit이 같은 최신 슬롯만 소비한다. 아직 쓰는 슬롯·변조·잘린 크기·이전 세대는 송신하지 않는다. 관리자 해제 전에 SYSTEM이 두 슬롯을 지운다. 파일이나 로그로 프레임을 저장하지 않는다.
 
-복원 전용 IPC는 `recovery-bind`(sessionId, permissionGeneration, userSid, helperPid), `recovery-reserve`(동일 sessionId/permissionGeneration, revision, keys, buttons, unicode), `recovery-ack`(같은 correlation ID), `recovery-lease`를 추가한다. 예약은 실제 down 전에 ACK하며 성공한 up 뒤에만 예약 집합을 줄인다. revision은 1부터 정확히 증가한다. keys는 1~254의 VK, buttons는 left/right/middle, unicode는 1~65535의 UTF-16 code unit이다. 중복·초과·다른 세션·늦은 세대는 거부하고 종료한다. 이 메시지는 인증된 서비스↔Recovery와 서비스↔일반 Helper 사이에서만 사용하며 Viewer가 로컬 승인·복원 예약을 직접 보낼 수 없다. Recovery에는 다른 실행 명령이 없다. 복원 예약과 Unicode 값은 진단·감사 로그에 저장하지 않는다.
+복원 전용 IPC는 `recovery-bind`(sessionId, connectionId, permissionGeneration, userSid, helperPid), `recovery-reserve`(동일 sessionId/permissionGeneration, revision, keys, buttons, unicode), `recovery-ack`(같은 correlation ID), `recovery-lease`를 추가한다. 예약은 실제 down 전에 ACK하며 성공한 up 뒤에만 예약 집합을 줄인다. revision은 1부터 정확히 증가한다. keys는 1~254의 VK, buttons는 left/right/middle, unicode는 1~65535의 UTF-16 code unit이다. 중복·초과·다른 세션·늦은 세대는 거부하고 종료한다. 이 메시지는 인증된 서비스↔Recovery와 서비스↔일반 Helper 사이에서만 사용하며 Viewer가 로컬 승인·복원 예약을 직접 보낼 수 없다. Recovery에는 다른 실행 명령이 없다. 복원 예약과 Unicode 값은 진단·감사 로그에 저장하지 않는다.
 
 시그널링과 별개의 인증된 Named Pipe다. 서비스가 생성한 고유 pipe 이름·32-byte nonce·서비스 PID·자식 역할을 보호된 고정 바이너리의 시작 인자로 전달한다. 서버 ACL은 SYSTEM과 대상 SID만 허용하고 실제 client PID/Session ID/SID를 서비스가 생성한 자식과 대조한다. 클라이언트도 커널의 server PID를 전달받은 서비스 PID와 대조한다. 외부 네트워크 pipe client와 다른 PID는 거부한다. nonce는 로그에 쓰지 않으며 상호 hello에만 사용한다.
 
@@ -175,3 +175,6 @@ media-lease는 Helper→서비스 전용이며 body는 sessionId, 현재 연결 
 승인 결정과 worker 시작 사이도 같은 요청의 실행 예약 상태다. 이 구간의 취소를 기억해 worker를 시작하지 않으며, worker가 이미 준비됐으면 그 요청의 token/Job을 취소한다. 취소 callback은 서비스의 전역 세션 잠금 밖에서 실행한다.
 
 서비스의 종료 감사는 세션 잠금 밖에서 기록한다. 종료 시 먼저 권한/Job/입력을 차단하고 UI에 종료를 알리며 기록 작업은 최대32개로 제한한다. 정상 서비스 shutdown은 기록 완료를5초 기다리고 저장이 멈추면 기존 spool을 보존한다. 필수 감사는2초 안에 journal 잠금을 얻지 못하면 새 작업을 거부한다. 로컬 즉시 종료는 감사 디스크 I/O 뒤에 대기하지 않는다.
+
+
+서비스 사망 시 Recovery는 인증된 서비스 handle의 exit를 확인하고 입력 fence/up 이후에만 종료 감사를 남긴다. 정상 서비스와 동일한 AppendSessionEndedOnce(session, connection)를 사용한다. PermissionGeneration=0, Kind=SessionEnded, Result=Stopped다. 보호 디렉터리의 배타 파일 mutex(2초 대기)가 append·rotation·Reporter ACK를 직렬화하며 current와 최대 3개 회전 파일 및 pending spool의 기존 EventId/Utc를 재사용한다. pipe 단절만으로 crash audit를 만들지 않는다. 감사 실패는 복구 성공과 별도로 보고한다.

@@ -110,7 +110,7 @@ class LiveContracts(unittest.TestCase):
         self.assertNotEqual(s['dialogBookHash'],s['installedBookHash'])
     def test_scaled_video_matches_actual_monitor_identity(self):
         capture={'monitor':'device','x':0,'y':0,'width':1920,'height':1080}
-        product={'trace':[{'kind':'capture-start','metadata':capture}],'product-inventory.json':{'processes':[]}}
+        product={'trace':[{'kind':'consent-ui','metadata':{'mask':1}},{'kind':'capture-start','metadata':capture}],'product-inventory.json':{'processes':[]}}
         b={'tick':2,'frames':5,'videoWidth':960,'videoHeight':540,'markerMatched':True,'selected':[{'bytesReceived':20}]}
         messages=[{'message':{'t':'data-ready','monitor':{'identity':'device','width':1920,'height':1080}}}]
         o=self.source_observer(product,b,messages);o.fixture={'pid':5}

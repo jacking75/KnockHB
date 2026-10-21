@@ -1,16 +1,16 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
 const {installBrowserObserver}=require('../../scripts/e2e-browser-observer.cjs');
-function fixture(){
+function fixture(options={}){
  class Target { constructor(){this.listeners={};}addEventListener(k,f){(this.listeners[k]??=[]).push(f);}emit(k,value){for(const f of this.listeners[k]??[])f(value);} }
  class Channel extends Target {constructor(label){super();this.label=label;this.sent=[];}send(v){this.sent.push(v);return 17;}}
  class Peer extends Target {constructor(config){super();this.config=config;this.connectionState='connected';this.stats=new Map();}getConfiguration(){return this.config;}createDataChannel(label){return new Channel(label);}async getStats(){return this.stats;}}
  class Socket extends Target {constructor(url){super();this.url=url;this.sent=[];}send(v){this.sent.push(v);return 23;}}
  let closeCalls=0,pickerCalls=0;
- const writer={async close(){closeCalls++;return 31;}},handle={async createWritable(){return writer;}};
+ const writer={async write(){if(options.writeReject)throw Error('private-write');return 7;},async close(){closeCalls++;if(options.closeReject)throw Error('private-close');return 31;}},handle={async createWritable(){if(options.openReject)throw Error('private-open');return writer;}};
  const context=vm.createContext({RTCPeerConnection:Peer,WebSocket:Socket,performance:{now:()=>1234},
   document:{getElementById:()=>null},location:{search:''},URLSearchParams,addEventListener(){},queueMicrotask,ArrayBuffer,Uint8Array,DataView,
-  async showSaveFilePicker(){pickerCalls++;return handle;}});
+  async showSaveFilePicker(){pickerCalls++;if(options.pickerReject)throw Error('private-picker');return handle;}});
  vm.runInContext(`(${installBrowserObserver.toString()})()`,context);
  return {context,Peer,Socket,observer:context.__raE2eObservation,counts:()=>({closeCalls,pickerCalls})};
 }
@@ -45,4 +45,26 @@ test('save observer waits for real native picker and real close',async()=>{
  const f=fixture(),handle=await f.context.showSaveFilePicker({suggestedName:'ra-c08.bin'}),writer=await handle.createWritable();
  assert.equal(await writer.close(),31);assert.deepEqual(f.counts(),{pickerCalls:1,closeCalls:1});
  const kinds=f.observer.drain().map(e=>e.kind);assert.deepEqual(Array.from(kinds),['save-picker-open','save-picker-approved','save-stream-closed']);
+});
+
+test('native picker and writable rejection never record successful completion',async()=>{
+ for(const option of ['pickerReject','openReject','closeReject']){
+  const f=fixture({[option]:true});
+  await assert.rejects(async()=>{const h=await f.context.showSaveFilePicker();const w=await h.createWritable();await w.close();});
+  const events=f.observer.drain(),kinds=events.map(e=>e.kind);
+  assert(!kinds.includes('save-stream-closed'));if(option==='pickerReject')assert(!kinds.includes('save-picker-approved'));
+  assert(!JSON.stringify(events).includes('private-'));assert.equal(f.counts().pickerCalls,1);
+ }
+});
+test('reused handles and writers retain one hook per real close',async()=>{
+ const f=fixture();
+ await f.context.showSaveFilePicker();const handle=await f.context.showSaveFilePicker();
+ await handle.createWritable();const writer=await handle.createWritable();
+ await writer.close();
+ assert.equal(f.counts().closeCalls,1);assert.equal(f.observer.drain().filter(e=>e.kind==='save-stream-closed').length,1);
+});
+test('write rejection keeps native promise behavior and does not fabricate close',async()=>{
+ const f=fixture({writeReject:true}),handle=await f.context.showSaveFilePicker(),writer=await handle.createWritable();
+ await assert.rejects(writer.write('private-payload'));
+ const events=f.observer.drain();assert(!events.some(e=>e.kind==='save-stream-closed'));assert(!JSON.stringify(events).includes('private-payload'));
 });

@@ -4,7 +4,8 @@
 // original operation exactly once, preserve receiver/arguments/result, and only
 // observe it. GUI actions remain exclusively DesktopTestDriver operations.
 function installBrowserObserver() {
-  const events = [], peers = [], channels = new WeakSet(),bookSources=new Map();
+  if(globalThis.__raE2eObservation)return;
+  const events = [], peers = [], channels = new WeakSet(), handles=new WeakSet(),writers=new WeakSet(),bookSources=new Map();
   let fileOfferId=null;
   let overflow = false, serial = 0;
   const record = (kind, fields = {}) => {
@@ -85,11 +86,24 @@ function installBrowserObserver() {
   if (globalThis.showSaveFilePicker) {
     const picker = globalThis.showSaveFilePicker;
     globalThis.showSaveFilePicker = async function(...args) {
-      record('save-picker-open'); const handle = await Reflect.apply(picker,this,args);
-      record('save-picker-approved'); const open = handle.createWritable;
+      const id=fileOfferId;
+      record('save-picker-open',{id}); let handle;
+      try{handle=await Reflect.apply(picker,this,args);}catch(error){record('save-stream-error',{id,stage:'picker'});throw error;}
+      record('save-picker-approved',{id});
+      if(handles.has(handle))return handle;
+      handles.add(handle);const open = handle.createWritable;
       handle.createWritable = async function(...values) {
-        const writer = await Reflect.apply(open,this,values), close = writer.close;
-        writer.close = async function(...parameters) {const result=await Reflect.apply(close,this,parameters);record('save-stream-closed');return result;};
+        let writer;
+        try{writer=await Reflect.apply(open,this,values);}catch(error){record('save-stream-error',{id:fileOfferId,stage:'open'});throw error;}
+        const close=writer.close,write=writer.write;
+        if(writers.has(writer))return writer;writers.add(writer);const writerOfferId=fileOfferId;
+        if(write)writer.write=async function(...parameters){
+          try{return await Reflect.apply(write,this,parameters);}catch(error){record('save-stream-error',{id:writerOfferId,stage:'write'});throw error;}
+        };
+        writer.close = async function(...parameters) {
+          try{const result=await Reflect.apply(close,this,parameters);record('save-stream-closed',{id:writerOfferId});return result;}
+          catch(error){record('save-stream-error',{id:writerOfferId,stage:'close'});throw error;}
+        };
         return writer;
       };
       return handle;

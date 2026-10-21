@@ -10,6 +10,7 @@ import sys
 
 from e2e_case_steps import CASES
 from e2e_case_runtime import live_blockers
+from e2e_case_source_contracts import contract
 
 ROOT=Path(__file__).resolve().parent.parent
 START='<!-- case-implementation-20261021:start -->'
@@ -41,8 +42,12 @@ def render(case):
         evidence=', '.join('`'+s+'`' for s in step.evidence)
         rows.append(f'| {i:02d} / {step.name} | [CASES["{case}"][{i-1}]](../scripts/e2e_case_steps.py#L{lines[step.name]}) | {actions} → {observations} | {step.seconds:g}초 | {evidence} |')
     blockers='\n'.join('- '+b for b in live_blockers(case))
+    meta=contract(case,'all')
+    scope='C15는 이번 범위 EXCLUDED다. 아래 코드는 향후 재포함 시 보존 명세다.' if case=='C15' else '현재 대상은 C01~C14·C16의 15개다. C15/TURN collector는 이 사례의 외부 조건이 아니다.'
     return f'''{START}
 ## 11. 2026-10-21 코드 연결·입력 없는 검증 결과
+
+{scope}
 
 **실행 구현 연결 / 실제 E2E 미실행이다.** 진입점·고정 단계·실제 source adapter·bootstrap·정리·독립 복귀를 연결했다. 아래 코드는 4절의 파일 미생성 상태와 이전 부분 구현 기록을 갱신한다. 입력 없는 검증 통과를 기능 PASS나 현장 실행 준비 완료로 세지 않는다.
 
@@ -65,9 +70,23 @@ def render(case):
 
 {blockers}
 
-고정 조작 opcode에 남은 stub/임의 명령 콜백은 없다. C03 fixture/포커스 이탈 창, C11 STA OLE 복원 helper, C16 SYSTEM 단발 소유 프로세스 fault trigger도 구현했다. **실제 A/B 통합·UI selector·OCR·TLS 체인·종단 시간·복구 시간은 미검증이다.** C11은 완전 복제할 수 없는 OLE medium을 만나면 변경 전에 중단한다. C04~C06의 현장 담당자와 C15의 coturn allocation collector는 외부 자원이다. 소스 필드가 없거나 실제 제품이 기대 audit/복구 증거를 만들지 않으면 FAIL이며 PASS로 보정하지 않는다. 시간표는 코드 상한이고 실측 예산 증거가 없으면 Arm하지 않는다.
+고정 조작 opcode에 남은 stub/임의 명령 콜백은 없다. C03 fixture/포커스 이탈 창, C11 STA OLE 복원 helper, C16 SYSTEM 단발 소유 프로세스 fault trigger도 구현했다. **실제 A/B 통합·UI selector·OCR·TLS 체인·종단 시간·복구 시간은 미검증이다.** C11은 완전 복제할 수 없는 OLE medium을 만나면 변경 전에 중단한다. C04~C06의 현장 담당자는 외부 자원이다. C15 collector는 향후 재포함 시 조건이며 이번 범위에서 제외한다. 소스 필드가 없거나 실제 제품이 기대 audit/복구 증거를 만들지 않으면 FAIL이며 PASS로 보정하지 않는다. 시간표는 코드 상한이고 실측 예산 증거가 없으면 Arm하지 않는다.
 
 기존 heartbeat Save/Read는 공유 잠금으로 경로조회/open/replace 전체를 직렬화했다. 입력 없는 경쟁 검사에서3572회 읽기를 통과했지만 원래 C01 RuntimeException과 동일 원인이라고 단정하지 않는다. watchdog 예외는 phase/role/정리 여부/예외형 체인/HResult/파일/줄을 남기며 비밀이 들어갈 수 있는 메시지 원문을 출력하지 않는다. SYSTEM/SSH와 사용자 세션 사이 전체 통합 복구는 여전히 미검증이다.
+### 11.2 현재 source 필드·생산자·비동기 경계
+
+각 단계 source는 위 단계 표와 `derive(case, source)`의 실제 분기에 연결된다. 7.1절의 표준 관측 필드와 아래 사례별 원본 필드 집합을 함께 사용한다.
+
+| 항목 | 현재 계약 |
+|---|---|
+| 원본 필드/생산자 | `{meta['raw']}` |
+| 정상 도착을 기다리는 경계 | {meta['arrival']} |
+| 회차·세대·상관 결합 | {meta['binding']} |
+| tick 단위 | {meta['clock']} |
+| 부분 기록 | NDJSON 마지막 newline 미도착만 Pending. 완성 행의 오류·중복 key·다른 run·중복/역순 sequence는 즉시 FAIL이다 |
+| 관측 상한 | 원래 step deadline과 origin을 유지한다. 조작 재전송과 새 timeout은 없다. 허가/순서/ID/실제 SLA 위반은 즉시 FAIL이다 |
+
+추가 회귀는 [잔여 작업 검사](../scripts/test_e2e_case_remaining.py), [OLE 메모리 검사](../tests/RemoteAssist.E2e.Clipboard.Tests/Program.cs), [감사 경쟁 검사](../tests/RemoteAssist.Host.Core.Tests/AuditRegression.cs)에 연결한다. 최신 검사 수·hash·진입점은 [잔여 작업 완료 기록](e2e-remaining-work-20261022.md)에서 확인한다. B/C 실전 결과와 별개다.
 {END}'''
 
 

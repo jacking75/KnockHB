@@ -25,9 +25,24 @@ $props=Join-Path $scratch 'build.props'
 [IO.File]::WriteAllText($props,$properties,(New-Object Text.UTF8Encoding($false)))
 foreach($entry in @(
  @{project='scripts/e2e-desktop/E2eDesktop.csproj';folder='desktop-tool'},
- @{project='tools/RemoteAssist.InputTarget/RemoteAssist.InputTarget.csproj';folder='input-target'})){
+ @{project='tools/RemoteAssist.InputTarget/RemoteAssist.InputTarget.csproj';folder='input-target'},
+ @{project='tests/e2e/scm-fixture/ScmFixture.csproj';folder='scm-fixture'})){
  $target=Join-Path $destination $entry.folder
  & dotnet build (Join-Path $repo $entry.project) -c Release --nologo ('-p:DirectoryBuildPropsPath='+$props) ('-p:OutputPath='+$target+'/')
  if($LASTEXITCODE-ne0){throw ('Tool build failed: '+$entry.folder)}
 }
-Write-E2eNewJson (Join-Path $destination 'build-result.json') @{state='BUILT_NOT_EXECUTED';desktopToolDirectory=(Join-Path $destination 'desktop-tool');inputTargetDirectory=(Join-Path $destination 'input-target')}
+$files=@(foreach($entry in @(@{folder='desktop-tool';exe='E2eDesktop.exe'},@{folder='input-target';exe='RemoteAssist.InputTarget.exe'},@{folder='scm-fixture';exe='ScmFixture.exe'})){
+ $target=Join-Path $destination $entry.folder
+ if(!(Test-Path -LiteralPath (Join-Path $target $entry.exe))){throw 'Build output executable missing'}
+ foreach($file in Get-ChildItem -LiteralPath $target -Recurse -File){
+  $null=Assert-E2ePath $file.FullName
+  @{path=$file.FullName.Substring($destination.Length+1);sha256=(Get-FileHash -LiteralPath $file.FullName).Hash;bytes=$file.Length}
+ }
+})
+$sourceFiles=@((Join-Path $repo 'Directory.Build.props'),(Join-Path $repo 'Directory.Packages.props'))
+$sourceFiles+=@((Join-Path $repo 'tests/e2e/ScmFixture.cs'),(Join-Path $repo 'tests/e2e/scm-fixture/ScmFixture.csproj'))
+foreach($folder in @('scripts/e2e-desktop','tools/RemoteAssist.InputTarget')){
+ $sourceFiles+=@(Get-ChildItem -LiteralPath (Join-Path $repo $folder) -File|Where-Object {$_.Extension-in@('.cs','.csproj')}|ForEach-Object {$_.FullName})
+}
+$sources=@($sourceFiles|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash}})
+Write-E2eNewJson (Join-Path $destination 'build-result.json') @{state='BUILT_NOT_EXECUTED';desktopToolDirectory=(Join-Path $destination 'desktop-tool');inputTargetDirectory=(Join-Path $destination 'input-target');files=$files;sources=$sources}

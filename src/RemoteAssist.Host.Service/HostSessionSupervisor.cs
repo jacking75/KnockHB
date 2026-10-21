@@ -106,7 +106,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 if((caps&2)!=0)
                 {
                     var recovery=new RecoveryScope();approvedScope.Adopt(recovery);
-                    await recovery.Start(sessionId,userSid,approvedScope.Child!.Pid,currentSession,approvedScope.Token,reason=>
+                    await recovery.Start(sessionId,userSid,approvedScope.Child!.Pid,currentSession,currentConnection,approvedScope.Token,reason=>
                     {StopHelper(reason,approvedScope);});
                 }
                 approvedScope.Token.ThrowIfCancellationRequested();
@@ -390,7 +390,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         // Owned job termination bypasses a hung native call or a blocked consent/IPC actor.
         scope.Dispose();releaseLease?.Dispose();
         try{tray?.Post("state",new {status=reason,ended=true});}catch(InvalidOperationException){}
-        var recording=Task.Run(()=>{Report("helper-stopped");try{scope.FileAudits.End(n=>PersistFileAudit(n,endedConnection));}catch(Exception ex){Report("audit-file-stop-error",ex);}if(scope.AdminApproval!=null)try{audit?.Append(AuditKind.AdminRevoked,AuditResult.Stopped,endedSession,endedConnection,1);}catch(Exception ex){Report("audit-admin-stop-error",ex);}try{audit?.Append(AuditKind.SessionEnded,AuditResult.Stopped,endedSession,endedConnection,0);}catch(Exception ex){Report("audit-stop-error",ex);}});
+        var recording=Task.Run(()=>{Report("helper-stopped");try{scope.FileAudits.End(n=>PersistFileAudit(n,endedConnection));}catch(Exception ex){Report("audit-file-stop-error",ex);}if(scope.AdminApproval!=null)try{audit?.Append(AuditKind.AdminRevoked,AuditResult.Stopped,endedSession,endedConnection,1);}catch(Exception ex){Report("audit-admin-stop-error",ex);}try{audit?.AppendSessionEndedOnce(endedSession,endedConnection);}catch(Exception ex){Report("audit-stop-error",ex);}});
         TrackStopTask(recording);
     }
     void TrackStopTask(Task task)

@@ -119,7 +119,7 @@ class RuntimeTests(unittest.TestCase):
     def test_live_capability_gaps_cannot_be_configured_away(self):
         for case in CASES:self.assertGreater(len(live_blockers(case)),0)
         self.assertFalse(any('coturn' in x for x in live_blockers('C01')))
-        self.assertTrue(any('coturn' in x for x in live_blockers('C15')))
+        self.assertTrue(any('EXCLUDED' in x for x in live_blockers('C15')))
     def test_prepare_freezes_without_opening_session_or_claiming_ready(self):
         ctx=Context('C01','a'*32,self.root/'prepared',Clock())
         class ReadOnlyDtd:
@@ -189,7 +189,7 @@ class PredicateTests(unittest.TestCase):
     def test_c04_privileged_boundary_and_local_recovery_not_product_success(self):
         self.check('C04','admin-before',dict(privilegedStartCount=0,nativeInputCount=0))
         with self.assertRaises(CaseError):self.check('C04','admin-before',dict(privilegedStartCount=1,nativeInputCount=0))
-        d=dict(desktop='Default',session=2,osHeld=0,sid='s',baselineSid='s',cancelledByViewer=True,secureTick=0,returnTick=20000,frequency=1000)
+        d=dict(desktop='Default',session=2,baselineSession=2,osHeld=0,sid='s',baselineSid='s',cancelledByViewer=True,secureTick=0,returnTick=20000,frequency=1000)
         self.check('C04','return',d)
         with self.assertRaises(CaseError):self.check('C04','return',dict(d,cancelledByViewer=False))
     def test_c05_screen_kind(self):
@@ -197,7 +197,7 @@ class PredicateTests(unittest.TestCase):
         self.check('C05','screen',d)
         with self.assertRaises(CaseError):self.check('C05','screen',dict(d,kind='UAC'))
     def test_c06_wrong_sid_or_old_permission(self):
-        d=dict(desktop='Default',session=2,osHeld=0,sid='s',baselineSid='s',oldAdminGenerationValid=False,inputEnabled=False,producerRestartCount=0)
+        d=dict(desktop='Default',session=2,baselineSession=2,osHeld=0,sid='s',baselineSid='s',oldAdminGenerationValid=False,inputEnabled=False,producerRestartCount=0)
         self.check('C06','return',d)
         for change in ({'sid':'other'},{'oldAdminGenerationValid':True},{'producerRestartCount':1}):
             with self.assertRaises(CaseError):self.check('C06','return',dict(d,**change))
@@ -237,7 +237,7 @@ class PredicateTests(unittest.TestCase):
         with self.assertRaises(CaseError):self.check('C12','isolation',dict(isolation,captureStartCount=1))
         provider_ui({'failedProviders':[{'value':None,'display':'N/A'}],'sampleAgeMs':5001,'staleDisplaysDelayed':True})
     def test_c13_worker_count_privilege_and_installed_hash(self):
-        d=dict(startCount=1,state='completed',exitCode=0,session=2,isSystem=False,installedHash='h',executedHash='h',userSid='s',baselineSid='s',startTick=0,exitTick=20000,frequency=1000)
+        d=dict(startCount=1,state='completed',exitCode=0,session=2,baselineSession=2,isSystem=False,installedHash='h',executedHash='h',userSid='s',baselineSid='s',startTick=0,exitTick=20000,frequency=1000)
         self.check('C13','worker',d)
         for change in ({'startCount':2},{'isSystem':True},{'executedHash':'wrong'}):
             with self.assertRaises(CaseError):self.check('C13','worker',dict(d,**change))

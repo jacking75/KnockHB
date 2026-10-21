@@ -23,7 +23,7 @@ internal sealed class AuditReporter(ILogger<AuditReporter> log):BackgroundServic
                 foreach(var file in Directory.EnumerateFiles(spool,"*.json").Take(32))
                 {
                     stoppingToken.ThrowIfCancellationRequested();InstallationState.DemandProtected(file);if(new FileInfo(file).Length>4096)throw new InvalidDataException();var bytes=await File.ReadAllBytesAsync(file,stoppingToken);
-                    try{using var content=new ByteArrayContent(bytes);content.Headers.ContentType=new MediaTypeHeaderValue("application/json");using var response=await http.PostAsync(endpoint,content,stoppingToken);if(response.StatusCode!=System.Net.HttpStatusCode.NoContent)throw new HttpRequestException("감사 durable ACK가 아니다.");File.Delete(file);}catch(HttpRequestException){break;}catch(TaskCanceledException)when(!stoppingToken.IsCancellationRequested){break;}
+                    try{using var content=new ByteArrayContent(bytes);content.Headers.ContentType=new MediaTypeHeaderValue("application/json");using var response=await http.PostAsync(endpoint,content,stoppingToken);if(response.StatusCode!=System.Net.HttpStatusCode.NoContent)throw new HttpRequestException("감사 durable ACK가 아니다.");RemoteAssist.Host.Core.Security.AuditJournal.OpenProtected().Acknowledge(JsonSerializer.Deserialize<RemoteAssist.Host.Core.Security.AuditEvent>(bytes)??throw new InvalidDataException());}catch(HttpRequestException){break;}catch(TaskCanceledException)when(!stoppingToken.IsCancellationRequested){break;}
                 }
             }while(await timer.WaitForNextTickAsync(stoppingToken));
         }

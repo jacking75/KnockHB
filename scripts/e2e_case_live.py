@@ -25,18 +25,28 @@ class LiveObserver:
 
     def after_join(self,ctx,deadline):
         from e2e_case_sources import observation_window
-        while not any(r.get('message',{}).get('type',r.get('message',{}).get('t'))=='consent-pending' for r in self.events(ctx)):
+        while not any(r.get('message',{}).get('type',r.get('message',{}).get('t'))=='consent-pending' for r in self.await_events(ctx,deadline)):
             time.sleep(min(.05,ctx.remaining(deadline)))
         if ctx.case_id!='C01':observation_window(self,ctx,deadline,'preConsent')
 
     def after_grant(self,ctx,deadline):
         while True:
-            ready=[r['message'] for r in self.events(ctx) if r.get('message',{}).get('t')=='data-ready']
+            ready=[r['message'] for r in self.await_events(ctx,deadline) if r.get('message',{}).get('t')=='data-ready']
             if ready:break
             time.sleep(min(.05,ctx.remaining(deadline)))
-        product=self.product(ctx,deadline)
-        initialized=[r for r in product['trace'] if r['kind']=='input-backend-ready']
+        while True:
+            product=self.await_product(ctx,deadline)
+            initialized=[r for r in product['trace'] if r['kind']=='input-backend-ready' and r.get('sessionId')==ctx.session_id]
+            if initialized or not self.config['expectedMask']&2:break
+            time.sleep(min(.05,ctx.remaining(deadline)))
         if initialized:self.last['initialInputEpoch']=initialized[-1]['metadata']['epoch']
+        from e2e_case_observations import invariants
+        while True:
+            browser=self.browser(ctx);events=self.await_events(ctx,deadline)
+            product=self.await_product(ctx,deadline)
+            invariants(ctx.case_id,browser,events,product['trace'])
+            if browser.get('selected') and any(r['kind']=='selected-pair' and r.get('sessionId')==ctx.session_id for r in product['trace']):break
+            time.sleep(min(.05,ctx.remaining(deadline)))
         if self.fixture is not None:
             rule,_,owner=self.backend.binding('pc-b','fixture')
             window=self.dtd.window('pc-b',rule,owner,ctx,deadline)
@@ -45,11 +55,13 @@ class LiveObserver:
     def book_consent(self,ctx,deadline):
         import re
         from e2e_case_sources import text_field,assemble
-        from e2e_case_observations import derive
+        from e2e_case_observations import derive,Pending
         text=text_field(self,'runbook-summary-text',ctx,deadline)
         hashes=re.findall(r'SHA256 ([a-f0-9]{64})',text)
         require(len(hashes)==1 and 'detail=summary' in text,'book-dialog-summary')
-        s=assemble(self,'preview',ctx,deadline)
+        while True:
+            try:s=assemble(self,'preview',ctx,deadline);break
+            except Pending:time.sleep(min(.05,ctx.remaining(deadline)))
         data=derive(ctx.case_id,'preview',s)
         data.update(dialogHash=hashes[0],workerBeforeCount=sum(r['kind']=='runbook-start' for r in s['trace']))
         self.last['book-consent']=data
@@ -84,15 +96,22 @@ class LiveObserver:
             new_json(ctx.run_dir/('baseline-'+machine+'.json'),actual)
 
     def start_runtimes(self,ctx,deadline,relay=False):
+        require(ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
         require(not self.runtime_started and relay==(ctx.case_id=='C15'),'runtime-start-replay-or-policy')
         self.runtime_started=True
+        ctx.phase_ticks.setdefault('productStart',ctx.clock())
+        ctx.resource('runtime:local','intent')
+        ctx.screen_start()
         launch=self.campaign.start_local(deadline)
         response=self.dtd.request('pc-a','launch',launch,ctx,deadline,key='runtime:local-controller')
         new_json(ctx.run_dir/'local-controller-owner.json',get(response,'data'))
+        ctx.resource('runtime:local','acquired','local-controller-owner.json')
         self.desktop.launched['local-controller']=('pc-a',get(response,'data'))
         self.wait_local('viewer-ready.json',ctx,deadline)
         self.campaign.authorize_remote(deadline)
+        ctx.resource('runtime:remote','intent')
         self.campaign.arm(deadline)
+        ctx.resource('runtime:remote','acquired','campaign.json')
         while True:
             state=self.harness_data('status',ctx,deadline)
             if state.get('product-error.json'):raise CaseError('product-start-failed','product-error.json')
@@ -138,9 +157,11 @@ class LiveObserver:
 
     def events(self,ctx):
         p=ctx.run_dir/'browser-metadata.ndjson'
-        require(p.exists() and p.stat().st_size<=1048576,'browser-events-unavailable')
-        lines=p.read_text(encoding='utf-8').splitlines()
-        rows=[json.loads(line) for line in lines if line]
+        if not p.exists():
+            from e2e_case_observations import Pending
+            raise Pending('browser-events-unavailable')
+        from e2e_case_records import decode,sequence
+        with p.open('rb') as f:rows=sequence(decode(f.read(1048577),True),ctx.run_id)
         require(all(r.get('runId')==ctx.run_id for r in rows),'browser-events-owner')
         require([r['seq'] for r in rows]==list(range(1,len(rows)+1)),'browser-events-gap')
         self.raw['browser-events']=rows
@@ -154,6 +175,20 @@ class LiveObserver:
                     ctx.generation=m['generation']
         return rows
 
+    def await_events(self,ctx,deadline):
+        from e2e_case_observations import Pending
+        while True:
+            ctx.remaining(deadline)
+            try:return self.events(ctx)
+            except Pending:time.sleep(min(.05,ctx.remaining(deadline)))
+
+    def await_product(self,ctx,deadline):
+        from e2e_case_observations import Pending
+        while True:
+            ctx.remaining(deadline)
+            try:return self.product(ctx,deadline)
+            except Pending:time.sleep(min(.05,ctx.remaining(deadline)))
+
     def product(self,ctx,deadline):
         files=self.harness_data('evidence',ctx,deadline)
         data={}
@@ -161,21 +196,17 @@ class LiveObserver:
             require(Path(name).name==name,'product-artifact-name')
             raw=base64.b64decode(encoded,validate=True)
             require(len(raw)<=1048576,'product-evidence-bound')
-            if name.endswith('.ndjson'):
-                lines=raw.decode('utf-8-sig').splitlines()
-                # A writer may have an incomplete last line; it is unavailable,
-                # never silently treated as a complete observation.
-                if raw and not raw.endswith((b'\n',b'\r')):
-                    from e2e_case_observations import Pending
-                    raise Pending(name)
-                data[name]=[json.loads(line) for line in lines if line]
-            else:data[name]=json.loads(raw.decode('utf-8-sig'))
+            from e2e_case_records import decode,sequence
+            data[name]=decode(raw,name.endswith('.ndjson'))
         trace=[]
         for name,rows in data.items():
             if name.startswith('trace-'):
+                sequence(rows,ctx.run_id,'sequence')
+                require(len({(r.get('pid'),r.get('processStartUtcTicks')) for r in rows})<=1,'trace-producer-mixed')
                 require([r['sequence'] for r in rows]==list(range(1,len(rows)+1)),'product-trace-gap')
                 require(all(r['runId']==ctx.run_id for r in rows),'product-trace-owner')
                 trace.extend(rows)
+        require(len({r['frequency'] for r in trace if 'frequency' in r})<=1,'product-clock-domain')
         data['trace']=sorted(trace,key=lambda r:r['tick'])
         self.raw['product']=data
         return data
@@ -197,7 +228,7 @@ class LiveObserver:
                 'scopeChecked':toggles['AdminConsentScope']}
 
     def held(self,ctx,deadline):
-        product=self.product(ctx,deadline)
+        product=self.await_product(ctx,deadline)
         acks=[r for r in product['trace'] if r['kind'] in ('reservation-ack','input-backend-ready') and r['sessionId']==ctx.session_id]
         require(bool(acks),'product-held-observation-unavailable')
         actual=self.desktop.snapshot('pc-b',ctx,deadline)
@@ -232,19 +263,20 @@ class LiveObserver:
         services=[p for p in get(status['product-running.json'],'ownedProcesses')
                   if p['image'].endswith('RemoteAssist.Host.Service.exe')]
         require(len(services)==1,'fault-service-not-unique')
+        self.last['fault-service']=services[0]
         self.last['fault-armed']=self.desktop.arm_fault(services[0],self.fixture,ctx,deadline)
         return self.last['fault-armed']
 
     def video_geometry(self,ctx,deadline):
+        actual=self.desktop.await_file('pc-b','input-target.json',ctx,deadline)
+        require(self.fixture is not None and actual['pid']==self.fixture['pid'] and actual['observationValid'],'geometry-fixture-owner')
+        product=self.await_product(ctx,deadline)
+        starts=[r for r in product['trace'] if r['kind']=='capture-start' and r['sessionId']==ctx.session_id]
+        require(len(starts)==1,'capture-monitor-unavailable-or-restarted')
         rule,element_rule,owner=self.backend.binding('pc-a','screen')
         window=self.dtd.window('pc-a',rule,owner,ctx,deadline)
         element=self.dtd.element('pc-a',window,element_rule,ctx,deadline)
         capture=self.dtd.capture('pc-a',window,ctx.run_dir/('geometry-'+__import__('uuid').uuid4().hex+'.png'),ctx,deadline)
-        actual=self.desktop.await_file('pc-b','input-target.json',ctx,deadline)
-        require(self.fixture is not None and actual['pid']==self.fixture['pid'] and actual['observationValid'],'geometry-fixture-owner')
-        product=self.product(ctx,deadline)
-        starts=[r for r in product['trace'] if r['kind']=='capture-start' and r['sessionId']==ctx.session_id]
-        require(len(starts)==1,'capture-monitor-unavailable-or-restarted')
         monitor=starts[0]['metadata'];bounds=element['bounds']
         # DTD API1 PublicElement.Bounds is already window-client-relative.
         viewport={k:bounds[k] for k in ('x','y','width','height')}
@@ -253,7 +285,7 @@ class LiveObserver:
         # resolution, guessed monitor origin or preselected screen coordinates.
         start=[b['left']+(b['right']-b['left'])*.3,b['top']+(b['bottom']-b['top'])*.85]
         end=[b['left']+(b['right']-b['left'])*.7,start[1]]
-        result={'windowId':window['windowId'],'monitor':monitor,'viewport':viewport,
+        result={'windowId':window['windowId'],'monitor':monitor,'viewport':viewport,'fixtureTick':actual['tick'],
             'capture':{'valid':True,'captureId':capture['captureId']},'validUntilTick':ctx.clock()+1000000000,
             'targets':{'fixture-button':[actual['button']['x'],actual['button']['y']]},
             'wheelPoint':[actual['textBox']['x'],actual['textBox']['y']],
@@ -264,14 +296,18 @@ class LiveObserver:
 
     def uac_cancel_position(self,window,ctx,deadline):
         require(ctx.case_id=='C04','uac-target-case')
+        rule,element_rule,owner=self.backend.binding('pc-a','screen')
+        bounds=self.dtd.element('pc-a',window,element_rule,ctx,deadline)['bounds']
         path=ctx.run_dir/('uac-target-'+__import__('uuid').uuid4().hex+'.png')
         capture=self.dtd.capture('pc-a',window,path,ctx,deadline)
         result=self.desktop.launch_probe('pc-a','ocr-cancel',ctx,deadline,
             image=str(path),imageSha256=capture['sha256'])
         require(result['available'] and result['uacSceneMatched'],'uac-target-unconfirmed')
         require(result['width']==capture['width'] and result['height']==capture['height'],'uac-capture-size')
+        from e2e_case_adapters import ocr_point
+        point=ocr_point(result,capture,bounds)
         self.last['uac-ocr']=result
-        return {'x':round(result['x']),'y':round(result['y']),'captureId':capture['captureId']}
+        return point
 
     def security_scene(self,ctx,deadline):
         rule,_,owner=self.backend.binding('pc-a','screen')
@@ -337,18 +373,41 @@ class LiveObserver:
         raise CaseError('runtime-cleanup-timeout','owned runtime cleanup incomplete')
 
     def restore_case_state(self,ctx,deadline):
-        if ctx.case_id=='C11':
-            self.desktop.signal('clipboard-restore',ctx,deadline)
-            if self.desktop.clipboard is not None:self.restore_clipboard(ctx,deadline)
-        self.desktop.signal('target-finish',ctx,deadline)
-        self.desktop.signal('fault-stop',ctx,deadline)
+        errors=[];actions=[]
+        if ctx.case_id=='C11' and self.desktop.clipboard is not None:
+            actions.append(('clipboard',lambda:self.restore_clipboard(ctx,deadline)))
+        elif ctx.case_id=='C11' and any(r['resource']=='clipboard:pc-b' and r['state']=='intent' for r in ctx.lifecycle):
+            actions.append(('clipboard-unknown-owner',lambda:self.desktop.signal('clipboard-restore',ctx,deadline)))
+        if self.runtime_started:
+            actions.extend((name,lambda n=name:self.desktop.signal(n,ctx,deadline)) for name in ('target-finish','fault-stop'))
+            controller=self.desktop.launched.get('local-controller')
+            if controller is not None and not (ctx.run_dir/'local-watchdog.json').exists():
+                actions.append(('partial-local-controller',lambda:self.dtd.request('pc-a','terminate-owned',
+                    {'processIds':[controller[1]['processId']]},ctx,deadline,key='cleanup:partial-local-controller')))
         blur=ctx.run_dir/'blur-fixture-owner.json'
-        if blur.exists():self.dtd.request('pc-a','terminate-owned',{'processIds':[read_json(blur)['processId']]},ctx,deadline,key='cleanup:blur-fixture')
+        if blur.exists():actions.append(('blur',lambda:self.dtd.request('pc-a','terminate-owned',{'processIds':[read_json(blur)['processId']]},ctx,deadline,key='cleanup:blur-fixture')))
+        for name,action in actions:
+            try:action()
+            except Exception as e:errors.append(name+':'+(e.code if isinstance(e,CaseError) else type(e).__name__))
+        require(not errors,'case-state-restore-incomplete',','.join(errors))
         return {'status':'completed'}
 
     def independent_recovery(self,ctx,deadline):
+        require(set(self.baselines)>={'pc-a','pc-b'},'baseline-incomplete-recovery-unverified')
+        if not self.runtime_started:
+            for machine in ('pc-a','pc-b'):
+                actual=self.desktop.snapshot(machine,ctx,deadline);base=self.baselines[machine]
+                require(actual['desktop']=='Default' and actual['sid']==base['sid'] and actual['session']==base['session'] and
+                        actual['activeSessionId']==base['session'] and actual['heldVirtualKeys']==[],'independent-return-failed')
+            return {'status':'completed','resourcesAbsent':True,'verified':True}
         remote=self.harness_data('collect',ctx,deadline)
         require(remote.get('id')==ctx.run_id and remote.get('resourcesAbsent') is True,'remote-resources-remain')
+        if ctx.case_id=='C16':
+            trace=self.await_product(ctx,deadline)['trace']
+            require(len({r['pid'] for r in trace if r['kind']=='service-settings'})<=1,'service-restarted-during-cleanup')
+            fault=self.desktop.await_file('pc-b','fault-fired.json',ctx,deadline)
+            require(not any(r['kind'] in ('capture-start','session-runtime-start','input-backend-ready') and r['tick']>fault['faultTick'] for r in trace),
+                    'producer-resumed-after-fault')
         proof={}
         for machine in ('pc-a','pc-b'):
             if machine=='pc-b' and ctx.case_id in ('C04','C05','C06'):
@@ -373,20 +432,23 @@ class LiveObserver:
         current=self.desktop.launch_probe('pc-a','inspect-owned',ctx,deadline,owners=owners)
         require(current['resourcesAbsent'] is True,'independent-owned-processes-remain')
         self.last['recovery']=proof
-        ctx.screen_occupied_seconds=(ctx.clock()-ctx.origin)/1e9
+        ctx.resource('runtime:local','released');ctx.resource('runtime:remote','released')
+        if ctx.screen_start_tick is not None:ctx.screen_end_tick=ctx.clock()
         return {'status':'completed','resourcesAbsent':True,'verified':True}
 
     def retire(self,ctx,deadline):
         # Obtain a fresh B proof immediately before retirement; old cleanup JSON
         # is never treated as independent current desktop recovery.
         b=self.desktop.snapshot('pc-b',ctx,deadline)
-        self.desktop.bridge('retire',ctx,deadline,name=b['_sourceName'])
+        if self.runtime_started:self.desktop.bridge('retire',ctx,deadline,name=b['_sourceName'])
         proof=ctx.run_dir/'local-recovery-verified.json'
         if not proof.exists():new_json(proof,{'id':ctx.run_id,'tick':ctx.clock(),'recovery':self.last['recovery']})
         from e2e_case_process import alive
-        wd=read_json(ctx.run_dir/'local-watchdog.json')
-        identity={'pid':wd['pid'],'start':wd['start'],'image':self.campaign.start_local(deadline)['executable']}
-        while alive(identity):time.sleep(min(.05,ctx.remaining(deadline)))
+        path=ctx.run_dir/'local-watchdog.json'
+        if path.exists():
+            wd=read_json(path)
+            identity={'pid':wd['pid'],'start':wd['start'],'image':self.campaign.start_local(deadline)['executable']}
+            while alive(identity):time.sleep(min(.05,ctx.remaining(deadline)))
         self.desktop.stop_probes(ctx,deadline)
         for machine in ('pc-a','pc-b'):self.dtd.close(machine,ctx,deadline)
         return {'status':'completed'}

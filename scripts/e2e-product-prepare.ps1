@@ -20,6 +20,7 @@ if(Test-Path -LiteralPath $data){
  if($data-ne(Join-Path $env:ProgramData 'RemoteAssist')-or!$target.StartsWith($previousRoot+'\',[StringComparison]::OrdinalIgnoreCase)-or(Test-Path -LiteralPath $target)){throw 'Unsafe previous-state move'}
  $null=Assert-E2ePath $data
  foreach($item in Get-ChildItem -LiteralPath $data -Recurse -Force){if($item.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Previous state reparse refused'}}
+ Write-E2eNewJson (Join-Path $Staging 'preserved-state.intent.json') @{previousId=$previous.id;source=$data;destination=$target}
  Move-Item -LiteralPath $data -Destination $target
  Write-E2eNewJson (Join-Path $Staging 'preserved-state.json') @{previousId=$previous.id;source=$data;destination=$target}
 }

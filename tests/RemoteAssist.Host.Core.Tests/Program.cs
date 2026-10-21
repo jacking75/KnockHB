@@ -9,6 +9,14 @@ using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 
+if(args is ["--audit-only"]){await AuditRegression.Run();await AuditRegression.Terminal();Console.WriteLine("PASS audit-only: rotation, denial, terminal ordering, spool replay, competing writers, torn journal");return 0;}
+if(args is ["--audit-child",var auditPath])
+{
+    if(!Path.GetFullPath(auditPath).StartsWith(Path.Combine(Path.GetTempPath(),"RemoteAssist-audit-test-"),StringComparison.OrdinalIgnoreCase))throw new InvalidDataException();
+    var journal=new AuditJournal(auditPath,_=>{});
+    journal.AppendSessionEndedOnce("crash-session","connection");return 0;
+}
+
 var tests = new (string Name, Func<Task> Run)[]
 {
     ("capture initialization fallback stays bound to the approved monitor and stops on authority loss",RemainingFeatureRegression.CaptureSelection),

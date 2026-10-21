@@ -11,6 +11,11 @@ $expected='"'+$image+'" '+$service
 $shell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 $sc=Join-Path $env:SystemRoot 'System32/sc.exe'
 $registry='HKLM:\SYSTEM\CurrentControlSet\Services\'+$service
+foreach($file in $plan.fixtureFiles){
+ if($file.name-notmatch'^[A-Za-z0-9_./-]+$'-or$file.name.Contains('..')){throw 'SCM fixture dependency path'}
+ $path=[IO.Path]::GetFullPath((Join-Path $RunDir $file.name))
+ if(!$path.StartsWith([IO.Path]::GetFullPath($RunDir)+'\',[StringComparison]::OrdinalIgnoreCase)-or(Get-FileHash -LiteralPath $path).Hash-ne$file.sha256){throw 'SCM fixture dependency changed'}
+}
 function Save($Name,$Value){
  $path=Join-Path $RunDir $Name;$temp=$path+'.'+$PID+'.tmp'
  [IO.File]::WriteAllText($temp,($Value|ConvertTo-Json -Depth 5),$utf8)
@@ -54,7 +59,7 @@ function Cleanup {
   while((Test-Path $registry)-and[E2eOwnedCommand]::Remaining($end)-gt0){Beat;Start-Sleep -Milliseconds 50}
   $left=@(Get-Process -Name ScmFixture -ErrorAction SilentlyContinue|Where-Object {$_.Path-eq$image})
   if((Test-Path $registry)-or$left.Count){throw 'Fixture service or process remains'}
-  Save 'service-cleanup.json' @{state='PASS';tick=[E2eOwnedCommand]::Tick;by=$Role;serviceAbsent=$true;processAbsent=$true}
+  Save 'service-cleanup.json' @{campaign=$plan.id;fixtureFiles=$plan.fixtureFiles;state='PASS';startedTick=(Read 'service-start.json').tick;tick=[E2eOwnedCommand]::Tick;frequency=[Diagnostics.Stopwatch]::Frequency;by=$Role;serviceAbsent=$true;processAbsent=$true}
  }finally{$lock.Dispose()}
 }
 if($Role-eq'Watchdog'){

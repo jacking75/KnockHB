@@ -42,17 +42,17 @@ class DesktopSources:
         if machine=='pc-a':
             p=ctx.run_dir/name
             if not p.exists():return None
-            if name.endswith('.ndjson'):return [json.loads(line) for line in p.read_text(encoding='utf-8-sig').splitlines() if line]
+            if name.endswith('.ndjson'):
+                from e2e_case_records import decode
+                with p.open('rb') as f:return decode(f.read(1048577),True)
             return read_json(p)
         result=self.bridge('read',ctx,deadline,name=name)
         if not result['available']:return None
         raw=base64.b64decode(result['body'],validate=True)
         require(hashlib.sha256(raw).hexdigest()==result['sha256'].lower(),'source-hash-mismatch')
         require(len(raw)<=1048576,'source-size-bound')
-        if name.endswith('.ndjson'):
-            require(not raw or raw.endswith(b'\n'),'source-write-in-progress')
-            return [json.loads(line) for line in raw.decode('utf-8-sig').splitlines() if line]
-        return json.loads(raw.decode('utf-8-sig'))
+        from e2e_case_records import decode
+        return decode(raw,name.endswith('.ndjson'))
 
     def await_file(self,machine,name,ctx,deadline):
         while ctx.clock()<deadline:
@@ -65,6 +65,7 @@ class DesktopSources:
 
     def launch_probe(self,machine,operation,ctx,deadline,wait=True,lease_deadline=None,**fields):
         sample=self.clock(machine,ctx,deadline)
+        require(type(sample.get('tick')) is int and type(sample.get('frequency')) is int and sample['tick']>=0 and sample['frequency']>0,'desktop-clock-domain')
         receipt=ctx.clock()
         # B clock sampled before receipt; grant cannot extend A's deadline.
         end=sample['tick']+int(max(0,((lease_deadline or deadline)-receipt)/1e9)*sample['frequency'])
@@ -96,18 +97,21 @@ class DesktopSources:
     def snapshot(self,machine,ctx,deadline):
         launched=self.launch_probe(machine,'snapshot',ctx,deadline,wait=False)
         data=self.await_file(machine,launched['output'],ctx,deadline)
+        require(data.get('runId')==ctx.run_id and data.get('caseId')==ctx.case_id,'snapshot-run-owner')
         data['_sourceName']=launched['output']
         return data
 
     def toggles(self,owner,window_title,names,ctx,deadline):
         data=self.launch_probe('pc-b','uia',ctx,deadline,owner=owner,windowTitle=window_title,automationIds=names)
         require(data['available'] is True,'uia-unavailable')
+        require(data.get('ownerPid')==owner['pid'] and all(e.get('enabled') is True for e in data['elements']),'uia-owner-or-disabled')
         states={e['automationId']:e['toggle'] for e in data['elements']}
         require(set(states)==set(names) and all(type(v) is bool for v in states.values()),'toggle-unavailable')
         return states
 
     def capture_clipboard(self,ctx,deadline):
         require(ctx.case_id=='C11' and self.clipboard is None,'clipboard-owner-replay')
+        ctx.resource('clipboard:pc-b','intent')
         if self.remote_info is None:self.clock('pc-b',ctx,deadline)
         root=PureWindowsPath(self.remote_info['output'])
         # Independent restore deadline is the existing cleanup phase end, never
@@ -115,13 +119,26 @@ class DesktopSources:
         launched=self.launch_probe('pc-b','clipboard-guard',ctx,deadline,wait=False,lease_deadline=ctx.end(540),
             restoreSignal=str(root/'clipboard-restore'),restoredOutput=str(root/'clipboard-restored.json'))
         self.clipboard=launched
-        return self.await_file('pc-b',launched['output'],ctx,deadline)
+        data=self.await_file('pc-b',launched['output'],ctx,deadline)
+        require(data.get('runId')==ctx.run_id and data.get('caseId')==ctx.case_id and data.get('state')=='captured'
+                and data.get('pid')==launched['process']['pid'] and data.get('captured') is True,'clipboard-baseline-owner')
+        self.clipboard['baseline']=data
+        new_json(ctx.run_dir/'clipboard-guard-owner.json',self.clipboard)
+        ctx.resource('clipboard:pc-b','acquired','clipboard-guard-owner.json')
+        return data
 
     def restore_clipboard(self,ctx,deadline):
         if self.clipboard is None:return {'status':'completed','changed':False}
         self.bridge('signal',ctx,deadline,name='clipboard-restore')
         data=self.await_file('pc-b','clipboard-restored.json',ctx,deadline)
+        base=get(self.clipboard,'baseline')
+        require(all(data.get(k)==base.get(k) for k in ('runId','caseId','pid','createdAt','frequency')) and
+                data.get('state')=='restored' and data.get('comparisonVerified') is True and data.get('flushCompleted') is True,
+                'clipboard-restore-owner')
+        from e2e_case_runtime import elapsed
+        elapsed(data,'startedTick','tick',10000)
         require(data.get('baselineRestored') is True and data.get('withinLimit') is True,'clipboard-restore-unverified')
+        ctx.resource('clipboard:pc-b','released')
         return {'status':'completed',**data}
 
     def start_fixture(self,kind,ctx,deadline):

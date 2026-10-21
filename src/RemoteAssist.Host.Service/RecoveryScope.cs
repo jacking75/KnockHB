@@ -16,7 +16,7 @@ internal sealed class RecoveryScope:IDisposable
     IpcPeerSession? peer;
     bool disposed;
     public bool HasExited {get{lock(gate)return disposed||child?.HasExited==true||peer?.Token.IsCancellationRequested==true;}}
-    public async Task Start(uint session,string sid,int helperPid,string binding,CancellationToken ct,Action<string> failed)
+    public async Task Start(uint session,string sid,int helperPid,string binding,string connection,CancellationToken ct,Action<string> failed)
     {
         var pipe=Guid.NewGuid().ToString("N");var nonce=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         lock(gate){if(disposed)throw new OperationCanceledException(ct);server=LocalIpcEndpoint.CreateServer(pipe,sid);child=SessionProcess.Start(HostChildRole.Recovery,session,pipe,nonce);}
@@ -26,7 +26,7 @@ internal sealed class RecoveryScope:IDisposable
             if(disposed){_=channel.DisposeAsync();throw new OperationCanceledException(ct);}
             peer=new(channel,(message,_)=>{acknowledgements.Accept(message);return Task.CompletedTask;},ct,onStopped:failed);peer.Start();
         }
-        await acknowledgements.Request(peer,"recovery-bind",new {SessionId=binding,PermissionGeneration=1,UserSid=sid,HelperPid=helperPid},ct);
+        await acknowledgements.Request(peer,"recovery-bind",new {SessionId=binding,ConnectionId=connection,PermissionGeneration=1,UserSid=sid,HelperPid=helperPid},ct);
     }
     public Task Reserve(RecoveryReservation reservation,CancellationToken ct)
     {lock(gate){if(disposed||peer==null)throw new IOException("복원 감독이 없다.");return acknowledgements.Request(peer,"recovery-reserve",reservation,ct);}}

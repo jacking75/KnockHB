@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>$(WindowsTfm)</TargetFramework><OutputType>Exe</OutputType><RestorePackagesWithLockFile>false</RestorePackagesWithLockFile></PropertyGroup>
+  <ItemGroup><Compile Include="../../scripts/e2e-desktop/Clipboard*.cs" Link="%(Filename)%(Extension)" /></ItemGroup>
+  <ItemGroup><Compile Include="../../scripts/e2e-desktop/OcrPolicy.cs" Link="OcrPolicy.cs" /></ItemGroup>
+</Project>

@@ -55,7 +55,7 @@ function Cleanup {
             while($p-and!$p.HasExited-and[E2eOwnedCommand]::Remaining($wait)-gt0){Start-Sleep -Milliseconds 20;$p.Refresh()}
             if($p-and!$p.HasExited){throw 'Owned fixture child survived Job cleanup'}
         }
-        Save 'cleanup.json' @{state='FIXTURE_CLEAN';campaign=$plan.id;tick=[E2eOwnedCommand]::Tick;by=$Role} -New
+        Save 'cleanup.json' @{state='FIXTURE_CLEAN';campaign=$plan.id;tick=[E2eOwnedCommand]::Tick;frequency=[Diagnostics.Stopwatch]::Frequency;addresses=@(Get-NetIPAddress -AddressFamily IPv4|ForEach-Object {$_.IPAddress});by=$Role} -New
     }finally{$lock.Dispose()}
 }
 if($Role-eq'Controller'){

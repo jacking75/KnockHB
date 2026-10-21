@@ -363,6 +363,8 @@ cleanup/recovery는 별도 검증된 소유 lock과 원자적 ledger로 동시 �
 <!-- case-implementation-20261021:start -->
 ## 11. 2026-10-21 코드 연결·입력 없는 검증 결과
 
+현재 대상은 C01~C14·C16의 15개다. C15/TURN collector는 이 사례의 외부 조건이 아니다.
+
 **실행 구현 연결 / 실제 E2E 미실행이다.** 진입점·고정 단계·실제 source adapter·bootstrap·정리·독립 복귀를 연결했다. 아래 코드는 4절의 파일 미생성 상태와 이전 부분 구현 기록을 갱신한다. 입력 없는 검증 통과를 기능 PASS나 현장 실행 준비 완료로 세지 않는다.
 
 - 진입점: [e2e-C01.ps1](../scripts/e2e-C01.ps1). `Validate`는 로컬 설정 검사다. `Prepare`는 사전 증거 검사·파일 동결·DTD status·신규 v4 패키지 배치·비기동 준비를 수행한다. 증거/외부 조건이 부족하면 `BLOCKED/10`이다. 이번 작업에서는 Prepare와 Run을 호출하지 않았다.
@@ -374,14 +376,14 @@ cleanup/recovery는 별도 검증된 소유 lock과 원자적 ledger로 동시 �
 
 | 계획 단계/이름 | 실제 정의 | 고정 조작 → 관측/predicate | 단계 상한 | 수집할 증거 |
 |---|---|---|---|---|
-| 01 / StartRuntimes | [CASES["C01"][0]](../scripts/e2e_case_steps.py#L153) | `start-runtimes` → `runtime` | 90초 | `local-start.json` |
-| 02 / IssuePairing | [CASES["C01"][1]](../scripts/e2e_case_steps.py#L154) | `issue-pairing` → `pairing` | 20초 | `pairing-action.json` |
-| 03 / JoinViewer | [CASES["C01"][2]](../scripts/e2e_case_steps.py#L155) | `join-viewer` → `join` | 20초 | `join-action.json` |
-| 04 / ObserveBeforeConsent | [CASES["C01"][3]](../scripts/e2e_case_steps.py#L156) | 읽기 관측 → `pre-consent` | 10초 | `pre-consent.json` |
-| 05 / ApproveScreen | [CASES["C01"][4]](../scripts/e2e_case_steps.py#L157) | `grant` → `consent` | 15초 | `consent-ui.json` |
-| 06 / ObserveVideoAndIndicator | [CASES["C01"][5]](../scripts/e2e_case_steps.py#L158) | 읽기 관측 → `video` | 30초 | `video-samples.ndjson`, `indicator.png` |
-| 07 / HostStopOnce | [CASES["C01"][6]](../scripts/e2e_case_steps.py#L159) | `host-stop` → `stop` | 10초 | `stop-observation.json` |
-| 08 / ObserveExitAndAudit | [CASES["C01"][7]](../scripts/e2e_case_steps.py#L160) | 읽기 관측 → `end` | 20초 | `viewer-ended.json`, `service-status.ndjson`, `audit.ndjson` |
+| 01 / StartRuntimes | [CASES["C01"][0]](../scripts/e2e_case_steps.py#L157) | `start-runtimes` → `runtime` | 90초 | `local-start.json` |
+| 02 / IssuePairing | [CASES["C01"][1]](../scripts/e2e_case_steps.py#L158) | `issue-pairing` → `pairing` | 20초 | `pairing-action.json` |
+| 03 / JoinViewer | [CASES["C01"][2]](../scripts/e2e_case_steps.py#L159) | `join-viewer` → `join` | 20초 | `join-action.json` |
+| 04 / ObserveBeforeConsent | [CASES["C01"][3]](../scripts/e2e_case_steps.py#L160) | 읽기 관측 → `pre-consent` | 10초 | `pre-consent.json` |
+| 05 / ApproveScreen | [CASES["C01"][4]](../scripts/e2e_case_steps.py#L161) | `grant` → `consent` | 15초 | `consent-ui.json` |
+| 06 / ObserveVideoAndIndicator | [CASES["C01"][5]](../scripts/e2e_case_steps.py#L162) | 읽기 관측 → `video` | 30초 | `video-samples.ndjson`, `indicator.png` |
+| 07 / HostStopOnce | [CASES["C01"][6]](../scripts/e2e_case_steps.py#L163) | `host-stop` → `stop` | 10초 | `stop-observation.json` |
+| 08 / ObserveExitAndAudit | [CASES["C01"][7]](../scripts/e2e_case_steps.py#L164) | 읽기 관측 → `end` | 20초 | `viewer-ended.json`, `service-status.ndjson`, `audit.ndjson` |
 
 위 모든 단계의 **순서·각 단계 첫 실패 중단**은 `RuntimeTests.test_all_case_step_orders_and_first_failure_at_every_step`에서 실제 executor를 기록용 sink로 실행해 확인했다. 전체 16개 정상 순서와 103개 실패 지점, 합계119개 경로다. 이 검사는 live 관측 source나 UI의 실행 성공을 검증하지 않는다. 이 C의 주요 판정 벡터는 `PredicateTests.test_c01_stop_boundary_video_and_preconsent`로 검증했다. 각 step의 모든 live 필드를 검증한 것으로 확대하지 않는다.
 
@@ -393,7 +395,21 @@ cleanup/recovery는 별도 검증된 소유 lock과 원자적 ledger로 동시 �
 - independent watchdog, cleanup and external return require witnessed validation
 - A/B existing-chain TLS identity and desktop identity require preparation
 
-고정 조작 opcode에 남은 stub/임의 명령 콜백은 없다. C03 fixture/포커스 이탈 창, C11 STA OLE 복원 helper, C16 SYSTEM 단발 소유 프로세스 fault trigger도 구현했다. **실제 A/B 통합·UI selector·OCR·TLS 체인·종단 시간·복구 시간은 미검증이다.** C11은 완전 복제할 수 없는 OLE medium을 만나면 변경 전에 중단한다. C04~C06의 현장 담당자와 C15의 coturn allocation collector는 외부 자원이다. 소스 필드가 없거나 실제 제품이 기대 audit/복구 증거를 만들지 않으면 FAIL이며 PASS로 보정하지 않는다. 시간표는 코드 상한이고 실측 예산 증거가 없으면 Arm하지 않는다.
+고정 조작 opcode에 남은 stub/임의 명령 콜백은 없다. C03 fixture/포커스 이탈 창, C11 STA OLE 복원 helper, C16 SYSTEM 단발 소유 프로세스 fault trigger도 구현했다. **실제 A/B 통합·UI selector·OCR·TLS 체인·종단 시간·복구 시간은 미검증이다.** C11은 완전 복제할 수 없는 OLE medium을 만나면 변경 전에 중단한다. C04~C06의 현장 담당자는 외부 자원이다. C15 collector는 향후 재포함 시 조건이며 이번 범위에서 제외한다. 소스 필드가 없거나 실제 제품이 기대 audit/복구 증거를 만들지 않으면 FAIL이며 PASS로 보정하지 않는다. 시간표는 코드 상한이고 실측 예산 증거가 없으면 Arm하지 않는다.
 
 기존 heartbeat Save/Read는 공유 잠금으로 경로조회/open/replace 전체를 직렬화했다. 입력 없는 경쟁 검사에서3572회 읽기를 통과했지만 원래 C01 RuntimeException과 동일 원인이라고 단정하지 않는다. watchdog 예외는 phase/role/정리 여부/예외형 체인/HResult/파일/줄을 남기며 비밀이 들어갈 수 있는 메시지 원문을 출력하지 않는다. SYSTEM/SSH와 사용자 세션 사이 전체 통합 복구는 여전히 미검증이다.
+### 11.2 현재 source 필드·생산자·비동기 경계
+
+각 단계 source는 위 단계 표와 `derive(case, source)`의 실제 분기에 연결된다. 7.1절의 표준 관측 필드와 아래 사례별 원본 필드 집합을 함께 사용한다.
+
+| 항목 | 현재 계약 |
+|---|---|
+| 원본 필드/생산자 | `browser.frames/videoWidth/videoHeight/selected/markerMatched/joinVisible/srcObjectPresent; fixture.marker/bounds; trace.capture-start.metadata; service.local-stop-observation.observation; trace.stop-ui.metadata.requestId/frequency; last.pairing-valid/host-start-count` |
+| 정상 도착을 기다리는 경계 | browser marker/frame samples, service stop completion, terminal audit |
+| 회차·세대·상관 결합 | runId + sessionId/connectionId + permission generation; per-operation id/revision; producer pid/start |
+| tick 단위 | browser performance.now/frequency=1000; B native QPC/own frequency; A perf_counter_ns/frequency=1e9. Cross-domain ticks are not subtracted. |
+| 부분 기록 | NDJSON 마지막 newline 미도착만 Pending. 완성 행의 오류·중복 key·다른 run·중복/역순 sequence는 즉시 FAIL이다 |
+| 관측 상한 | 원래 step deadline과 origin을 유지한다. 조작 재전송과 새 timeout은 없다. 허가/순서/ID/실제 SLA 위반은 즉시 FAIL이다 |
+
+추가 회귀는 [잔여 작업 검사](../scripts/test_e2e_case_remaining.py), [OLE 메모리 검사](../tests/RemoteAssist.E2e.Clipboard.Tests/Program.cs), [감사 경쟁 검사](../tests/RemoteAssist.Host.Core.Tests/AuditRegression.cs)에 연결한다. 최신 검사 수·hash·진입점은 [잔여 작업 완료 기록](e2e-remaining-work-20261022.md)에서 확인한다. B/C 실전 결과와 별개다.
 <!-- case-implementation-20261021:end -->

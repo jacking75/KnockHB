@@ -43,6 +43,7 @@ def verify_candidate(config):
 
 
 def package_campaign(config,ctx):
+    require(ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
     verify_candidate(config)
     require(not (ctx.run_dir/'campaign.json').exists(),'campaign-replay')
     tools=[]
@@ -54,7 +55,11 @@ def package_campaign(config,ctx):
         for entry in tools:z.write(ROOT/entry['path'],entry['path'])
         for key,target in (('candidateDirectory','candidate'),('desktopToolDirectory','desktop-tool'),('inputTargetDirectory','input-target')):
             source=Path(get(config,key))
-            for entry in inventory(source):z.write(source/entry['path'],target+'/'+entry['path'])
+            if key=='candidateDirectory':
+                z.write(source/'candidate.json',target+'/candidate.json')
+                for entry in inventory(source/'payload'):z.write(source/'payload'/entry['path'],target+'/payload/'+entry['path'])
+            else:
+                for entry in inventory(source):z.write(source/entry['path'],target+'/'+entry['path'])
         certificate=safe_path(get(config,'tls.certificate'),exists=True)
         z.write(certificate,'lan-test.cer')
         if ctx.case_id in ('C07','C08','C09'):
@@ -95,6 +100,7 @@ class Campaign:
 
     def remote(self,script,deadline,uploads=(),create=False,request=None):
         ctx=self.ctx
+        ctx.tool_call('ssh')
         require(digest(self.path)==self.sha,'campaign-changed')
         output=ctx.run_dir/('ssh-'+__import__('uuid').uuid4().hex+'.json')
         seconds=ctx.remaining(deadline,180 if ctx.origin is None else 10)
@@ -110,13 +116,25 @@ class Campaign:
         return json.loads(record['stdout'])
 
     def deploy(self,deadline):
+        require(self.ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
         staging=self.config['staging']
-        deployed=self.remote('e2e-case-deploy.ps1',deadline,(
-            (self.ctx.run_dir/'prepared.zip',staging+'/prepared.zip'),
-            (self.path,staging+'/campaign.json')),create=True)
-        try:preflight=self.remote('e2e-case-preflight.ps1',deadline)
-        except Exception:
-            self.remote('e2e-case-unprepare.ps1',self.ctx.clock()+10000000000)
+        self.ctx.resource('prepared:remote','intent')
+        try:
+            deployed=self.remote('e2e-case-deploy.ps1',deadline,(
+                (self.ctx.run_dir/'prepared.zip',staging+'/prepared.zip'),
+                (self.path,staging+'/campaign.json')),create=True)
+            self.ctx.resource('prepared:remote','acquired','campaign.json')
+            preflight=self.remote('e2e-case-preflight.ps1',deadline)
+        except Exception as primary:
+            cleanup={'state':'FAIL_RECOVERY_REQUIRED','resources':['prepared:remote']}
+            try:
+                cleanup=self.remote('e2e-case-unprepare.ps1',min(deadline,self.ctx.clock()+10000000000))
+                require(cleanup.get('status')=='completed','unprepare-incomplete')
+                self.ctx.resource('prepared:remote','released')
+            except Exception as error:
+                cleanup['error']=error.code if isinstance(error,CaseError) else type(error).__name__
+            new_json(self.ctx.run_dir/'prepare-failure.json',{
+                'primary':primary.code if isinstance(primary,CaseError) else type(primary).__name__,'cleanup':cleanup})
             raise
         new_json(self.ctx.run_dir/'remote-preflight.json',preflight)
         return deployed

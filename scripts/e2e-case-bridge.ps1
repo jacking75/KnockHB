@@ -42,6 +42,7 @@ switch($r.operation){
   $entry=@($CampaignManifest.testTools.'desktop-tool'|Where-Object path -eq 'E2eDesktop.exe')
   if($entry.Count-ne1-or(Get-FileHash -LiteralPath $exe).Hash-ne$entry[0].sha256){throw 'Protected fault tool changed'}
   $action=New-ScheduledTaskAction -Execute $exe -Argument ('--request "'+$spec+'"')
+  Write-E2eNewJson (Join-Path $owner.root 'fault-task-owner.json') @{id=$owner.id;name=$taskName;executable=$exe;arguments=('--request "'+$spec+'"')}
   $principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
   $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 20) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
   Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings|Out-Null
@@ -52,7 +53,7 @@ switch($r.operation){
   if($r.name-notmatch'^probe-[a-f0-9]{32}-result\.json$'){throw 'Independent snapshot required'}
   $snapshot=Read-E2eJson (Child $r.name)
   $elapsed=([Diagnostics.Stopwatch]::GetTimestamp()-[long]$snapshot.tick)/[double]$snapshot.frequency
-  if(!$snapshot.available-or$snapshot.desktop-ne'Default'-or$snapshot.sid-ne$CampaignManifest.identity.b.sid-or
+  if($snapshot.runId-ne$owner.id-or$snapshot.caseId-ne$CampaignManifest.caseId-or!$snapshot.available-or$snapshot.desktop-ne'Default'-or$snapshot.sid-ne$CampaignManifest.identity.b.sid-or
      $snapshot.session-ne$CampaignManifest.identity.b.session-or$snapshot.activeSessionId-ne$snapshot.session-or
      @($snapshot.heldVirtualKeys).Count-or$elapsed-lt0-or$elapsed-gt10){throw 'Current independent B recovery missing'}
   if((Get-Service RemoteAssistHost -ErrorAction SilentlyContinue)-or(Test-Path "$env:ProgramFiles/RemoteAssist-Dev")){throw 'Product resources remain'}
@@ -64,8 +65,17 @@ switch($r.operation){
   foreach($name in @($owner.task,$owner.watchdog,('RemoteAssist-E2E-Fault-'+$owner.id))){
    $task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
    if(!$task){continue}
+   if($name-eq('RemoteAssist-E2E-Fault-'+$owner.id)){
+    $binding=Read-E2eJson (Join-Path $owner.root 'fault-task-owner.json')
+    if($binding.id-ne$owner.id-or$binding.name-ne$name){throw 'Fault task owner changed'}
+    $expectedExe=$binding.executable;$expectedArguments=$binding.arguments
+   }else{
+    $role=if($name-eq$owner.task){'Controller'}else{'Watchdog'}
+    $expectedExe=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $expectedArguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $owner.root 'scripts/e2e-product-guard.ps1')+'" -RunDir "'+$owner.root+'" -ManifestSha256 '+$owner.manifestSha256+' -Role '+$role
+   }
    if($task.Principal.UserId-notin@('SYSTEM','S-1-5-18')-or$task.Actions.Count-ne1-or
-      ($task.Actions[0].Arguments-notlike('*'+$owner.root+'*')-and$task.Actions[0].Execute-notlike($owner.root+'\*'))){throw 'Task owner changed'}
+      $task.Actions[0].Arguments-ne$expectedArguments-or$task.Actions[0].Execute-ne$expectedExe){throw 'Task owner changed'}
    while($task.State-eq'Running'-and[Diagnostics.Stopwatch]::GetTimestamp()-lt$end){Start-Sleep -Milliseconds 50;$task=Get-ScheduledTask -TaskName $name}
    if($task.State-eq'Running'){throw 'Guard has not exited; retained'}
    Unregister-ScheduledTask -TaskName $name -Confirm:$false

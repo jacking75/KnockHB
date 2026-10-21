@@ -12,6 +12,10 @@ def prerequisites(config):
             re.fullmatch(r'S-1-5-21-\d+-\d+-\d+-\d+',get(config,'b.sid')),'interactive-sid-required')
     for root,name in (('desktopToolDirectory','E2eDesktop.exe'),('inputTargetDirectory','RemoteAssist.InputTarget.exe')):
         safe_path(str(Path(config[root])/name),exists=True)
+    desktop=Path(config['desktopToolDirectory']);target=Path(config['inputTargetDirectory'])
+    require(desktop.name=='desktop-tool' and target.name=='input-target' and desktop.parent==target.parent,'tool-build-layout')
+    from e2e_case_artifacts import verify as verify_artifacts
+    verify_artifacts(config['candidateDirectory'],str(desktop.parent))
     for name in ('signaling','node','python','chrome','tlsCert','tlsKey'):
         safe_path(get(config,'local.'+name),exists=True)
     from e2e_case_runtime import ROOT
@@ -29,12 +33,20 @@ def prerequisites(config):
 
 def readiness(config,frozen):
     prerequisites(config)
+    from e2e_case_ui_evidence import validate as validate_ui
+    validate_ui(config,read_json(get(config,'uiEvidence')))
     proof=read_json(config['sourceEvidence'])
+    from e2e_case_evidence import validate_measurements,identity
+    checks_expected,budgets_expected=validate_measurements(config,get(proof,'measurements'))
+    require(proof.get('identity')==identity(config) and proof.get('checks')==checks_expected and
+            proof.get('measuredBudgets')==budgets_expected,'readiness-provenance',exit_code=10)
     require(proof.get('schema')=='remoteassist-e2e-readiness-v1','readiness-schema',exit_code=10)
     require(proof.get('caseId')==config['caseId'] and proof.get('candidateSha256')==config['candidateSha256'],
             'readiness-candidate',exit_code=10)
-    hashes={row['sha256'] for row in frozen['files'] if row['path'] not in
-            (str(Path(config['sourceEvidence']).resolve()),frozen['configPath'])}
+    evidence_paths={str(Path(path).resolve()) for path in (config['sourceEvidence'],config['uiEvidence'],
+                    config.get('caseInputs',{}).get('clipboardEvidence')) if path is not None}
+    evidence_paths.add(frozen['configPath'])
+    hashes={row['sha256'] for row in frozen['files'] if row['path'] not in evidence_paths}
     require(set(proof.get('toolHashes',[]))==hashes,'readiness-tools-changed',exit_code=10)
     checks=proof.get('checks',{})
     for name in ('monotonicDeadline','independentWatchdog','boundedScm','boundedUac','cleanup','externalReturn','tlsIdentity'):
@@ -49,6 +61,15 @@ def readiness(config,frozen):
             'unverified-phase-budget',exit_code=10)
     if config['caseId'] in ('C04','C05','C06'):
         safe_path(get(config,'recovery.operatorEvidence'),exists=True);get(config,'recovery.operator')
+    if config['caseId']=='C11':
+        lifetime=read_json(get(config,'caseInputs.clipboardEvidence'))
+        require(lifetime.get('schema')=='remoteassist-clipboard-lifetime-v1' and lifetime.get('caseId')=='C11' and
+                lifetime.get('candidateSha256')==config['candidateSha256'] and
+                lifetime.get('executableSha256')==digest(Path(config['desktopToolDirectory'])/'E2eDesktop.exe') and
+                lifetime.get('assemblySha256')==digest(Path(config['desktopToolDirectory'])/'E2eDesktop.dll') and
+                lifetime.get('sid')==config['b']['sid'] and lifetime.get('session')==config['b']['session'] and
+                all(lifetime.get(k) is True for k in ('available','baselineRestored','flushCompleted','helperExited','helperExitSurvived','comparisonVerified')),
+                'clipboard-lifetime-not-witnessed',exit_code=10)
     if config['caseId']=='C15':
         safe_path(get(config,'caseInputs.turnEvidence'),exists=True);get(config,'caseInputs.relayInstance')
     return proof

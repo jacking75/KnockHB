@@ -22,6 +22,7 @@ class Dtd:
         self.sessions, self.windows = {}, {}
 
     def cli(self, args, ctx, deadline):
+        ctx.tool_call('dtd')
         return self.transport(self.exe, ['--config',self.config,*args],
                               ctx.remaining(deadline), ctx)
 
@@ -33,17 +34,20 @@ class Dtd:
 
     def open(self, machine, ctx, deadline):
         require(machine in ('pc-a','pc-b') and machine not in self.sessions, 'dtd-session-replay')
+        ctx.resource('dtd:'+machine,'intent')
         result = ctx.once('session-open:'+machine, lambda _: self.cli(
             ['--session-open','--machine',machine,'--mode','control','--idle-seconds','900'],ctx,deadline))
         sid = get(result,'controlSessionId')
         # Record immediately so cleanup can close a session even if identity validation fails.
         self.sessions[machine] = sid
         new_json(ctx.run_dir/('dtd-'+machine+'.json'), {'runId':ctx.run_id,'controlSessionId':sid})
+        ctx.resource('dtd:'+machine,'acquired','dtd-'+machine+'.json')
         return result
 
     def request(self, machine, operation, arguments, ctx, deadline, mutation=True, key=None):
         require(machine in self.sessions,'dtd-session-missing')
         if mutation and not ctx.stopping:require(not (ctx.run_dir/'finish.json').exists(),'external-stop-requested')
+        if mutation and operation in ('focus','click','type-text','chord','key','drag','wheel'):ctx.screen_start()
         def send(request_id):
             envelope = {'apiVersion':1,'requestId':request_id,'controlSessionId':self.sessions[machine],
                         'operation':operation,'timeoutMilliseconds':max(1,math.floor(ctx.remaining(deadline)*1000)),
@@ -69,7 +73,15 @@ class Dtd:
                 # Request text can contain pairing or synthetic input. It is not evidence.
                 request_path.unlink(missing_ok=True)
         if mutation:
-            return ctx.once(key or ctx.active_step+':'+machine+':'+operation,send)
+            action_key=key or ctx.active_step+':'+machine+':'+operation
+            if ctx.stopping and action_key in ctx.consumed:
+                original=[r['requestId'] for r in ctx.ledger if r['operation']==action_key and r['status']=='intent']
+                require(len(original)==1,'cleanup-original-request-unknown')
+                reply=self.cli(['--request-status',self.sessions[machine],original[0]],ctx,deadline)
+                require(reply.get('requestId')==original[0] and reply.get('controlSessionId')==self.sessions[machine] and
+                        reply.get('status')=='completed','cleanup-original-request-unverified')
+                return reply
+            return ctx.once(action_key,send)
         return send(uuid.uuid4().hex)
 
     def window(self, machine, rule, owner, ctx, deadline):
@@ -129,10 +141,12 @@ class Dtd:
         return result
 
     def close(self, machine, ctx, deadline):
+        if machine not in self.sessions:return {'status':'completed'}
         result = ctx.once('cleanup:close:'+machine,lambda _:self.cli(
             ['--session-close',self.sessions[machine]],ctx,deadline))
         require(get(result,'inputReleased') is True and get(result,'data.applicationsStopped') is True,
                 'dtd-session-not-closed')
+        ctx.resource('dtd:'+machine,'released')
         return result
 
 
@@ -143,6 +157,8 @@ def map_video_point(point, monitor, viewport, capture):
                 'geometry-fields')
         require(obj['width']>0 and obj['height']>0,'geometry-size')
     require(capture.get('valid') is True and bool(capture.get('captureId')),'stale-capture')
+    require(isinstance(point,(tuple,list)) and len(point)==2 and
+            all(type(v) in (int,float) and math.isfinite(v) for v in point),'point-coordinate')
     x,y = point
     require(monitor['x'] <= x < monitor['x']+monitor['width'] and
             monitor['y'] <= y < monitor['y']+monitor['height'],'point-outside-monitor')
@@ -151,6 +167,13 @@ def map_video_point(point, monitor, viewport, capture):
     py = viewport['y']+(viewport['height']-monitor['height']*scale)/2+(y-monitor['y'])*scale
     return {'x':round(px),'y':round(py),'captureId':capture['captureId']}
 
+
+def ocr_point(result,capture,viewport):
+    x,y=result['x'],result['y']
+    require(all(type(v) in (int,float) and math.isfinite(v) for v in (x,y)),'ocr-coordinate')
+    require(0<=x<capture['width'] and 0<=y<capture['height'] and
+            viewport['x']<=x<viewport['x']+viewport['width'] and viewport['y']<=y<viewport['y']+viewport['height'],'ocr-outside-video')
+    return {'x':round(x),'y':round(y),'captureId':capture['captureId']}
 
 def inspect_file(directory, filename, owner_root):
     folder = safe_path(directory,owner_root)
@@ -214,19 +237,23 @@ class OwnedGateway:
     """All descendants are contained in existing E2eOwnedCommand's Windows Job."""
     def __call__(self, exe, arguments, seconds, ctx):
         require(0 < seconds <= (180 if ctx.origin is None else 10),'gateway-phase-budget')
+        metric=ctx.tool_call('gateway');started=ctx.clock()
+        # PowerShell startup/Add-Type/Job disposal share the caller's budget.
+        # The old seconds+2 outer wait silently extended every phase boundary.
+        child_seconds=seconds-min(2,seconds/2)
         request_id=uuid.uuid4().hex
         request=ctx.run_dir/('command-'+request_id+'.json')
         result=ctx.run_dir/('command-result-'+request_id+'.json')
         new_json(request,{'executable':str(safe_path(exe,exists=True)), 'arguments':arguments,
-                          'timeoutSeconds':seconds,'output':str(result)})
+                          'timeoutSeconds':child_seconds,'output':str(result)})
         shell=str(Path(__import__('os').environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
         try:
             # The outer process owns the Job handle; terminating it closes the Job.
             completed=subprocess.run([shell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
                 '-File',str(ROOT/'scripts/e2e-case-command.ps1'),'-Request',str(request),
-                '-Python',sys.executable,'-Milliseconds',str(max(1,math.floor(seconds*1000)))],
+                '-Python',sys.executable,'-Milliseconds',str(max(1,math.floor(child_seconds*1000)))],
                 stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                timeout=seconds+2,creationflags=subprocess.CREATE_NO_WINDOW)
+                timeout=seconds,creationflags=subprocess.CREATE_NO_WINDOW)
             require(completed.returncode==0,'owned-command-failed')
             record=read_json(result)
             response=json.loads(base64.b64decode(record['stdout']).decode('utf-8-sig'))
@@ -237,6 +264,8 @@ class OwnedGateway:
         except subprocess.TimeoutExpired as e:
             raise CaseError('completion-unknown','owned gateway timeout') from e
         finally:
+            elapsed=(ctx.clock()-started)/1e9
+            metric['observedSeconds']+=elapsed;metric['maximumSeconds']=max(metric['maximumSeconds'],elapsed)
             request.unlink(missing_ok=True)
             result.unlink(missing_ok=True)
 
@@ -344,7 +373,12 @@ class CaseBackend:
         self.ui_click('pc-b','AdminConsentApprove',ctx,deadline,ctx.active_step+':admin-approve')
 
     def action(self,action,ctx,deadline):
+        require(ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
         op,*args=action
+        if ctx.case_id=='C11' and op not in ('capture-clipboard-baseline','restore-clipboard-baseline'):
+            baseline=self.observer.last.get('clipboard-baseline',{})
+            require(baseline.get('captured') is True and baseline.get('restorable') is True and
+                    baseline.get('runId')==ctx.run_id,'clipboard-baseline-not-ready')
         key=ctx.active_step+':'+op+':'+':'.join(str(x) for x in args[:2])
         if op in ('start-runtimes','start-relay-runtimes'):
             return self.observer.start_runtimes(ctx,deadline,relay=op=='start-relay-runtimes')
@@ -391,13 +425,13 @@ class CaseBackend:
         if op in ('video-key','video-key-pair'):
             window=self.video_window(ctx,deadline,key)
             require(args[0] in ('F12','ESC'),'case-key')
-            transitions=('down','up') if op=='video-key-pair' else (args[1],)
-            # Up must complete within the tool's 1500ms lease; no fixed sleep.
-            key_end=min(deadline,ctx.clock()+1500000000)
+            # One Agent key press owns both native transitions. CLI/PowerShell
+            # startup is not the native 1500ms held-key lease/SLA clock.
+            transitions=('press',) if op=='video-key-pair' else (args[1],)
             for transition in transitions:
                 require(transition in ('press','down','up'),'key-transition')
                 self.dtd.request('pc-a','key',{'windowId':window['windowId'],'key':args[0],
-                                 'action':transition},ctx,key_end,key=key+':'+transition)
+                                 'action':transition},ctx,deadline,key=key+':'+transition)
             if args[0]=='ESC':self.observer.last['viewer-cancel-count']=self.observer.last.get('viewer-cancel-count',0)+1
             return
         if op in ('video-click','video-wheel','video-drag'):
@@ -421,7 +455,7 @@ class CaseBackend:
                 operation='wheel';arguments={'windowId':window['windowId'],'position':point(get(geometry,'wheelPoint')),'delta':120}
             else:
                 drag=get(geometry,'drag')
-                self.observer.last['drag-start-tick']=self.observer.desktop.await_file('pc-b','input-target.json',ctx,deadline)['tick']
+                self.observer.last['drag-start-tick']=get(geometry,'fixtureTick')
                 a,b=point(get(drag,'start')),point(get(drag,'end'))
                 operation='drag';arguments={'windowId':window['windowId'],'captureId':capture['captureId'],
                     'start':{'x':a['x'],'y':a['y']},'end':{'x':b['x'],'y':b['y']},'button':'left','steps':get(drag,'steps')}
@@ -484,6 +518,14 @@ class CaseBackend:
             collect_artifact(str(ctx.run_dir/name),ctx,'case-observer')
 
     def recover(self,operation,ctx,deadline):
+        if operation=='close-owned-sessions':
+            errors=[]
+            for machine in tuple(self.dtd.sessions):
+                if 'cleanup:close:'+machine in ctx.consumed:continue
+                try:self.dtd.close(machine,ctx,deadline)
+                except Exception:errors.append(machine)
+            require(not errors,'session-close-incomplete')
+            return {'status':'completed'}
         if operation=='finish-remote':
             self.harness.call('finish',ctx,deadline)
             return {'status':'completed'}
