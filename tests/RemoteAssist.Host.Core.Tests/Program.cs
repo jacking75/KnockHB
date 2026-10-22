@@ -9,6 +9,8 @@ using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 
+if(args is ["--tls-only"]){await SignalingTrustRegression.Run();return 0;}
+
 if(args is ["--audit-only"]){await AuditRegression.Run();await AuditRegression.Terminal();Console.WriteLine("PASS audit-only: rotation, denial, terminal ordering, spool replay, competing writers, torn journal");return 0;}
 if(args is ["--audit-child",var auditPath])
 {

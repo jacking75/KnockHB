@@ -36,6 +36,9 @@ def readiness(config,frozen):
     from e2e_case_ui_evidence import validate as validate_ui
     validate_ui(config,read_json(get(config,'uiEvidence')))
     proof=read_json(config['sourceEvidence'])
+    if proof.get('schema')=='remoteassist-c01-dtd-readiness-v1':
+        from e2e_case_c01_readiness import validate
+        return validate(config,proof)
     from e2e_case_evidence import validate_measurements,identity
     checks_expected,budgets_expected=validate_measurements(config,get(proof,'measurements'))
     require(proof.get('identity')==identity(config) and proof.get('checks')==checks_expected and

@@ -13,7 +13,7 @@ def generate(template,output,cases=ACTIVE):
     require(bool(cases) and all(case in ACTIVE for case in cases),'turn-excluded-20261022',exit_code=10)
     require(set(template)<=FIELDS,'unknown-template-field')
     allowed={'a':{'machine','address','sid','session'},'b':{'machine','address','sid','session','sshUser'},
-             'tls':{'certificate','thumbprint'},'local':{'signaling','node','python','chrome','tlsCert','tlsKey'},'recovery':{'operator'}}
+             'tls':{'certificate','thumbprint','mode'},'local':{'signaling','node','python','chrome','tlsCert','tlsKey'},'recovery':{'operator'}}
     for key,fields in allowed.items():require(isinstance(template.get(key,{}),dict) and set(template.get(key,{}))<=fields,'unknown-template-nested-field')
     root=safe_path(output,ROOT/'.artifacts');require(not root.exists(),'config-output-replay');root.mkdir(parents=True)
     candidate=safe_path(str(Path(template['candidateDirectory'])/'candidate.json'),exists=True)

@@ -11,7 +11,16 @@ const events=[];let previous='';let joined=false;let browser;
 const start=performance.now();
 (async()=>{
  try{
-  browser=await chromium.launch({executablePath:manifest.local.chrome??'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:false,args:['--force-renderer-accessibility','--window-size=1280,900','--window-position=100,100']});
+  const launchArgs=['--force-renderer-accessibility','--window-size=1280,900','--window-position=100,100'];
+  if(manifest.tls.mode==='pinned-leaf'){
+   const check=require('node:child_process').spawnSync(manifest.tls.probeTool,['--tls-check',path.join(run,'lan-test.cer'),manifest.tls.sha256,'192.168.0.61','--probe'],{encoding:'utf8',timeout:10000,windowsHide:true});
+   if(check.status!==0)throw Error('Pinned TLS endpoint preflight failed');
+   const proof=JSON.parse(check.stdout);
+   if(!proof.peerCertificateMatched||!proof.hostnameValid||!proof.chainValid||proof.storeMutated||!/^[-A-Za-z0-9+/]{43}=$/.test(proof.spkiSha256))throw Error('Pinned TLS identity missing');
+   launchArgs.push('--ignore-certificate-errors-spki-list='+proof.spkiSha256);
+   save('viewer-tls-proof.json',proof);
+  }
+  browser=await chromium.launch({executablePath:manifest.local.chrome??'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:false,args:launchArgs});
   const system=await browser.newBrowserCDPSession();
   const processes=await system.send('SystemInfo.getProcessInfo');
   const browserProcesses=processes.processInfo.filter(p=>p.type==='browser');

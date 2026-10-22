@@ -18,6 +18,7 @@ internal static class Program
     {
         // Import/build/self-check never touches UI, clipboard, processes or services.
         if (args is ["--self-check"]) return 0;
+        if (args.Length > 0 && args[0] == "--tls-check") return TlsProbe.Run(args);
         if (args is not ["--request", var filename]) return 40;
         string? output = null;
         try

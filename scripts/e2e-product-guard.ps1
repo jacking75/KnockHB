@@ -154,7 +154,9 @@ try{
  $wd=Read 'product-watchdog.json';$script:watcher=Get-Process -Id $wd.pid
  if($watcher.StartTime.ToUniversalTime().Ticks-ne$wd.start-or$watcher.Path-ne$shell){throw 'Watchdog identity changed'}
  if($manifest.version-eq4){
-  if((Owned $shell @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'e2e-tls-identity.ps1'),'-Certificate',$cert,'-Sha256',$manifest.tls.sha256) 10000)-ne0){throw 'Existing TLS chain validation failed'}
+  $tlsArgs=@('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'e2e-tls-identity.ps1'),'-Certificate',$cert,'-Sha256',$manifest.tls.sha256)
+  if($manifest.tls.mode-eq'pinned-leaf'){$tlsArgs+=@('-PinnedTool',(Join-Path $RunDir 'desktop-tool/E2eDesktop.exe'),'-ProbeEndpoint')}
+  if((Owned $shell $tlsArgs 10000)-ne0){throw 'TLS identity validation failed'}
  }else{Certificate 'Add'}
  Installer 'Install'
  if((Owned $sc @('start','RemoteAssistHost') 10000)-ne0){throw 'Product service start failed'}

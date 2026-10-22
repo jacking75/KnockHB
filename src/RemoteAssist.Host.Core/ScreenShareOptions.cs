@@ -7,6 +7,7 @@ public sealed record ScreenShareOptions
     public const int ConsentDecisionSeconds = 120;
     public Uri SignalingUri { get; init; } = new("http://localhost:25001");
     public bool AllowLoopbackHttp { get; init; }
+    public string? SignalingCertificateBase64 { get; init; }
     public int MonitorIndex { get; init; }
     public int TargetFps { get; init; } = 30;
     public int BitrateKbps { get; init; } = 4000;
@@ -19,6 +20,8 @@ public sealed record ScreenShareOptions
     public void Validate(int monitorCount)
     {
         ValidateEndpoint(SignalingUri,AllowLoopbackHttp);
+        using var certificate = Signaling.SignalingTrust.Load(SignalingCertificateBase64);
+        if (certificate is not null && SignalingUri.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
         if(MaxOutputShortEdge is < 2 or > 2160 || MaxOutputLongEdge < MaxOutputShortEdge || MaxOutputLongEdge > 3840)
             throw new ArgumentOutOfRangeException(nameof(MaxOutputLongEdge), "출력 크기 상한이 지원 범위를 벗어났다.");
         if (TargetFps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(TargetFps), "FPS는 1~60이어야 한다.");

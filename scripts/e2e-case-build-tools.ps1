@@ -40,6 +40,7 @@ $files=@(foreach($entry in @(@{folder='desktop-tool';exe='E2eDesktop.exe'},@{fol
  }
 })
 $sourceFiles=@((Join-Path $repo 'Directory.Build.props'),(Join-Path $repo 'Directory.Packages.props'))
+$sourceFiles+=Join-Path $repo 'src/RemoteAssist.Host.Core/Signaling/SignalingTrust.cs'
 $sourceFiles+=@((Join-Path $repo 'tests/e2e/ScmFixture.cs'),(Join-Path $repo 'tests/e2e/scm-fixture/ScmFixture.csproj'))
 foreach($folder in @('scripts/e2e-desktop','tools/RemoteAssist.InputTarget')){
  $sourceFiles+=@(Get-ChildItem -LiteralPath (Join-Path $repo $folder) -File|Where-Object {$_.Extension-in@('.cs','.csproj')}|ForEach-Object {$_.FullName})

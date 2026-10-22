@@ -1,6 +1,8 @@
 $ErrorActionPreference='Stop'
 $owner=Get-E2eOwner
-$tls=& (Join-Path $owner.root 'scripts/e2e-tls-identity.ps1') -Certificate (Join-Path $owner.root 'lan-test.cer') -Sha256 $CampaignManifest.tls.sha256
+$tlsArgs=@{Certificate=(Join-Path $owner.root 'lan-test.cer');Sha256=$CampaignManifest.tls.sha256}
+if($CampaignManifest.tls.mode-eq'pinned-leaf'){$tlsArgs.PinnedTool=Join-Path $owner.root 'desktop-tool/E2eDesktop.exe'}
+$tls=& (Join-Path $owner.root 'scripts/e2e-tls-identity.ps1') @tlsArgs
 $verified=$tls|ConvertFrom-Json
 if(!$verified.chainValid-or$verified.storeMutated){throw 'Read-only TLS verification failed'}
 $uac=$null

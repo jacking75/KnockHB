@@ -1,5 +1,20 @@
-param([Parameter(Mandatory=$true)][string]$Certificate,[Parameter(Mandatory=$true)][string]$Sha256,[switch]$ProbeEndpoint)
+param([Parameter(Mandatory=$true)][string]$Certificate,[Parameter(Mandatory=$true)][string]$Sha256,[switch]$ProbeEndpoint,[string]$PinnedTool)
 $ErrorActionPreference='Stop'
+if($PinnedTool){
+ $probeArgs=@('--tls-check',$Certificate,$Sha256,'192.168.0.61');if($ProbeEndpoint){$probeArgs+='--probe'}
+ if($Certificate.Contains('"')-or$Sha256-notmatch'^[a-fA-F0-9]{64}$'){throw 'Invalid TLS arguments'}
+ $info=New-Object Diagnostics.ProcessStartInfo
+ $info.FileName=[IO.Path]::GetFullPath($PinnedTool);$info.Arguments=($probeArgs|ForEach-Object {'"'+$_+'"'})-join' '
+ $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+ $process=[Diagnostics.Process]::Start($info)
+ try{
+  $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+  if(!$process.WaitForExit(10000)){$process.Kill();throw 'Pinned TLS probe deadline'}
+  if($process.ExitCode-ne0){throw 'Pinned TLS identity validation failed'}
+  $stdout.GetAwaiter().GetResult()
+ }finally{$process.Dispose()}
+ return
+}
 # Read-only trust validation. Never add a root, accept a custom validation
 # callback, ignore hostname errors, or launch a browser with TLS checks disabled.
 if($Sha256-notmatch'^[a-fA-F0-9]{64}$'-or(Get-FileHash -LiteralPath $Certificate).Hash-ne$Sha256){throw 'TLS certificate changed'}

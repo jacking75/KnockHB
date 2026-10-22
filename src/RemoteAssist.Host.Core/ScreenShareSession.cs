@@ -144,9 +144,9 @@ public sealed class ScreenShareSession : IAsyncDisposable
             _callerCancellation=ct.Register(() => EndSession("호출자 취소", false));
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token,_options.AllowLoopbackHttp);
+            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token,_options.AllowLoopbackHttp,_options.SignalingCertificateBase64);
             _log.LogInformation("세션 생성: {SessionId}", Credentials.SessionId);
-            _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>(),_options.AllowLoopbackHttp);
+            _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>(),_options.AllowLoopbackHttp,_options.SignalingCertificateBase64);
             await _signaling.ConnectAsync(Credentials, deadline.Token);
             _lifetime.Token.ThrowIfCancellationRequested();
             _eventTask = ProcessEventsAsync();

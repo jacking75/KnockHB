@@ -82,7 +82,8 @@ def package_campaign(config,ctx):
         'identity':{'a':config['a'],'b':config['b']},
         'testTools':{'desktop-tool':inventory(config['desktopToolDirectory']),
                      'input-target':inventory(config['inputTargetDirectory'])},
-        'tls':{'mode':'existing-chain','sha256':digest(certificate),'thumbprint':get(config,'tls.thumbprint')},
+        'tls':{'mode':config['tls'].get('mode','existing-chain'),'sha256':digest(certificate),'thumbprint':get(config,'tls.thumbprint'),
+               'probeTool':str(Path(config['desktopToolDirectory'])/'E2eDesktop.exe')},
         'budget':{'totalSeconds':900,'targetSeconds':600,'activeSeconds':300,'cleanupSeconds':240,'recoverySeconds':300,'reportSeconds':60}}
     if ctx.case_id=='C04':manifest['uacTriggerSha256']=get(config,'caseInputs.uacTriggerSha256')
     new_json(ctx.run_dir/'campaign.json',manifest)

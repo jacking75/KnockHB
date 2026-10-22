@@ -31,19 +31,35 @@ public sealed class SignalingClient : IAsyncDisposable
     private int _disposed;
     public SignalMsg? JoinedAck {get;private set;}
 
-    public SignalingClient(Uri httpBase, ILogger<SignalingClient>? log = null,bool allowLoopbackHttp=false)
+    public SignalingClient(Uri httpBase, ILogger<SignalingClient>? log = null,bool allowLoopbackHttp=false,string? certificateBase64=null)
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         _httpBase = httpBase;
         _log = (ILogger?)log ?? NullLogger.Instance;
+        using var trusted = SignalingTrust.Load(certificateBase64);
+        if (trusted is not null)
+        {
+            if (httpBase.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
+            // Capture immutable public bytes, not a disposed certificate handle.
+            var bytes = Convert.ToBase64String(trusted.RawData);
+            _socket.Options.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+            {
+                using var root = SignalingTrust.Load(bytes)!;
+                return SignalingTrust.Validate(certificate, errors, root);
+            };
+        }
     }
 
     /// <summary>서버에서 세션 코드·PIN·host 토큰을 발급받는다.</summary>
-    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default,bool allowLoopbackHttp=false)
+    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default,bool allowLoopbackHttp=false,string? certificateBase64=null)
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));ct=deadline.Token;
-        using var http = new HttpClient(new HttpClientHandler {AllowAutoRedirect=false});
+        using var trusted = SignalingTrust.Load(certificateBase64);
+        if (trusted is not null && httpBase.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
+        using var handler = new HttpClientHandler {AllowAutoRedirect=false};
+        if (trusted is not null) handler.ServerCertificateCustomValidationCallback = (_, certificate, _, errors) => SignalingTrust.Validate(certificate, errors, trusted);
+        using var http = new HttpClient(handler);
         using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(httpBase,"/session"));
         using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
         response.EnsureSuccessStatusCode();

@@ -7,4 +7,5 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
+  <ItemGroup><Compile Include="../../src/RemoteAssist.Host.Core/Signaling/SignalingTrust.cs" Link="SignalingTrust.cs" /></ItemGroup>
 </Project>

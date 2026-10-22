@@ -67,7 +67,7 @@ function Read-E2eManifest([string]$Path,[string]$ExpectedSha256) {
     if($m.version-notin@(3,4)-or$m.id-notmatch'^[a-f0-9]{32}$'-or$m.id-eq'6a2f55ebaee74a4099177a271ea0b88c'-or$m.state-ne'PREPARED_NOT_AUTHORIZED') {throw 'Invalid selected campaign manifest'}
     if($m.version-eq3){if($m.profile-ne'lan-view-consent-stop'){throw 'Invalid legacy profile'}}
     else{
-        if($m.caseId-notmatch'^C(0[1-9]|1[0-6])$'-or$m.profile-ne('e2e-'+$m.caseId)-or$m.tls.mode-ne'existing-chain'){throw 'Invalid case profile/TLS mode'}
+        if($m.caseId-notmatch'^C(0[1-9]|1[0-6])$'-or$m.profile-ne('e2e-'+$m.caseId)-or$m.tls.mode-notin@('existing-chain','pinned-leaf')){throw 'Invalid case profile/TLS mode'}
         $masks=@(1,0,3,7,7,7,8,8,8,128,16,32,64,67,1,3)
         if($m.expectedMask-ne$masks[[int]$m.caseId.Substring(1)-1]){throw 'Case permission mask changed'}
     }

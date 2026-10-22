@@ -141,7 +141,9 @@ try{
  $ready=[E2eOwnedCommand]::Deadline(5000)
  while(!(Test-Path (Join-Path $RunDir 'local-watchdog.json'))){if($watcher.HasExited-or[E2eOwnedCommand]::Remaining($ready)-eq0){throw 'Independent local watchdog not ready'};Beat;Start-Sleep -Milliseconds 50}
  if($manifest.version-eq4){
-  Owned $shell @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'e2e-tls-identity.ps1'),'-Certificate',(Join-Path $RunDir 'lan-test.cer'),'-Sha256',$manifest.tls.sha256) 10000
+  $tlsArgs=@('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'e2e-tls-identity.ps1'),'-Certificate',(Join-Path $RunDir 'lan-test.cer'),'-Sha256',$manifest.tls.sha256)
+  if($manifest.tls.mode-eq'pinned-leaf'){$tlsArgs+=@('-PinnedTool',$manifest.tls.probeTool)}
+  Owned $shell $tlsArgs 10000
  }else{Certificate 'Add'}
  $secret=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($secret);$rng.Dispose()
  [IO.File]::WriteAllText((Join-Path $RunDir 'operator-secret'),[Convert]::ToBase64String($secret).Replace('+','-').Replace('/','_').TrimEnd('='))

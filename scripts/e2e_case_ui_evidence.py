@@ -28,6 +28,13 @@ def targets(case):
     return {'pc-a':a|x,'pc-b':b|y}
 
 def validate(config,proof,hashes=None):
+    if proof.get('schema')=='remoteassist-c01-runtime-ui-v1':
+        require(config['caseId']=='C01' and config['expectedMask']==1 and proof.get('caseId')=='C01','runtime-ui-scope')
+        require(proof.get('candidateSha256')==config['candidateSha256'] and equal(proof.get('identity'),identity(config)) and
+                proof.get('toolHashes')==(tool_hashes(config) if hashes is None else hashes) and proof.get('rules')==rules(config.get('uiRules',{})),
+                'runtime-ui-binding')
+        require(proof.get('mode')=='bind-actual-owner-and-unique-element-before-each-action','runtime-ui-mode')
+        return proof
     require(proof.get('schema')=='remoteassist-e2e-ui-v1' and proof.get('mode')=='witnessed','ui-evidence-schema')
     require(proof.get('caseId')==config['caseId'] and proof.get('candidateSha256')==config['candidateSha256'] and
             equal(proof.get('identity'),identity(config)) and proof.get('toolHashes')==(tool_hashes(config) if hashes is None else hashes),'ui-evidence-binding')
