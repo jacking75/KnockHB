@@ -1,7 +1,6 @@
 package room
 
 import (
-	"bytes"
 	"errors"
 	"sync"
 	"testing"
@@ -11,14 +10,14 @@ import (
 func reserve(t *testing.T, m *Manager, r *Room, role string) *Peer {
 	t.Helper()
 	p := &Peer{Role: role}
-	if _, err := m.Reserve(r.Code, role, r.PIN, r.HostToken, p); err != nil {
+	if _, err := m.Reserve(r.Code, role, r.HostToken, p); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 func TestReservedPeerIsInvisibleUntilACK(t *testing.T) {
 	m := NewManager(time.Minute)
-	r, _ := m.Create()
+	r, _ := m.Create("")
 	h := reserve(t, m, r, RoleHost)
 	v := reserve(t, m, r, RoleViewer)
 	if r.Other(h) != nil || r.Other(v) != nil {
@@ -33,14 +32,14 @@ func TestReservedPeerIsInvisibleUntilACK(t *testing.T) {
 }
 func TestLeaveInvalidatesPendingACKAndReplacement(t *testing.T) {
 	m := NewManager(time.Minute)
-	r, _ := m.Create()
+	r, _ := m.Create("")
 	h := reserve(t, m, r, RoleHost)
 	v := reserve(t, m, r, RoleViewer)
 	m.Leave(r, v)
 	if _, err := m.Activate(r, h); !errors.Is(err, ErrConsumed) {
 		t.Fatal("late ACK succeeded after departure")
 	}
-	if _, err := m.Reserve(r.Code, RoleViewer, r.PIN, "", &Peer{Role: RoleViewer}); !errors.Is(err, ErrConsumed) {
+	if _, err := m.Reserve(r.Code, RoleViewer, "", &Peer{Role: RoleViewer}); !errors.Is(err, ErrConsumed) {
 		t.Fatal("replacement inherited approval")
 	}
 	m.Leave(r, h)
@@ -48,46 +47,62 @@ func TestLeaveInvalidatesPendingACKAndReplacement(t *testing.T) {
 		t.Fatal("room leak")
 	}
 }
-func TestZeroEntropyWrongPINAndLockout(t *testing.T) {
-	m := NewManagerWithEntropy(time.Minute, bytes.NewReader(make([]byte, 4096)))
-	r, err := m.Create()
-	if err != nil {
+func TestFixedDeviceCodeIsReusedAfterHostRestart(t *testing.T) {
+	m := NewManager(time.Minute)
+	r, err := m.Create("123456789")
+	if err != nil || r.Code != "123456789" {
 		t.Fatal(err)
 	}
-	if r.PIN != "0000" {
-		t.Fatal("fixture is not deterministic")
+	h := reserve(t, m, r, RoleHost)
+	if _, err := m.Create("123456789"); !errors.Is(err, ErrSlotTaken) {
+		t.Fatal("live host room was replaced")
 	}
-	for i := 0; i < 5; i++ {
-		if _, err := m.Reserve(r.Code, RoleViewer, "0001", "", &Peer{Role: RoleViewer}); !errors.Is(err, ErrBadPIN) {
-			t.Fatal(err)
-		}
-	}
-	if _, err := m.Reserve(r.Code, RoleViewer, r.PIN, "", &Peer{Role: RoleViewer}); !errors.Is(err, ErrLocked) {
-		t.Fatal("valid PIN bypassed lockout")
+	m.Leave(r, h)
+	again, err := m.Create("123456789")
+	if err != nil || again == r || again.Code != "123456789" {
+		t.Fatalf("restarted host cannot reuse device code: %v", err)
 	}
 }
-func TestActiveExpiredRoomRemainsMapped(t *testing.T) {
+func TestViewerJoinsWithoutPIN(t *testing.T) {
+	m := NewManager(time.Minute)
+	r, _ := m.Create("")
+	reserve(t, m, r, RoleHost)
+	if _, err := m.Reserve(r.Code, RoleViewer, "", &Peer{Role: RoleViewer}); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestConnectedHostRoomDoesNotExpire(t *testing.T) {
 	m := NewManager(time.Minute)
 	now := time.Unix(1000, 0)
 	m.SetClock(func() time.Time { return now })
-	r, _ := m.Create()
+	r, _ := m.Create("")
 	h := reserve(t, m, r, RoleHost)
-	m.SetClock(func() time.Time { return now.Add(time.Minute) })
-	if _, err := m.Get(r.Code); !errors.Is(err, ErrExpired) {
-		t.Fatal("expiry boundary")
-	}
-	if m.Count() != 1 || m.Sweep() != 0 {
-		t.Fatal("active expired room deleted")
+	m.SetClock(func() time.Time { return now.Add(24 * time.Hour) })
+	if _, err := m.Get(r.Code); err != nil {
+		t.Fatal("connected host room expired", err)
 	}
 	m.Leave(r, h)
 	if m.Count() != 0 {
 		t.Fatal("leak")
 	}
 }
+func TestUnjoinedRoomExpires(t *testing.T) {
+	m := NewManager(time.Minute)
+	now := time.Unix(1000, 0)
+	m.SetClock(func() time.Time { return now })
+	r, _ := m.Create("")
+	m.SetClock(func() time.Time { return now.Add(time.Minute) })
+	if _, err := m.Get(r.Code); !errors.Is(err, ErrExpired) {
+		t.Fatal("expiry boundary")
+	}
+	if m.Count() != 0 {
+		t.Fatal("expired empty room kept")
+	}
+}
 func TestJoinLeaveSweepRaceCannotJoinUnmappedRoom(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		m := NewManager(time.Minute)
-		r, _ := m.Create()
+		r, _ := m.Create("")
 		h := reserve(t, m, r, RoleHost)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
@@ -95,7 +110,7 @@ func TestJoinLeaveSweepRaceCannotJoinUnmappedRoom(t *testing.T) {
 		var joined *Room
 		var err error
 		v := &Peer{Role: RoleViewer}
-		go func() { defer wg.Done(); <-start; joined, err = m.Reserve(r.Code, RoleViewer, r.PIN, "", v) }()
+		go func() { defer wg.Done(); <-start; joined, err = m.Reserve(r.Code, RoleViewer, "", v) }()
 		go func() { defer wg.Done(); <-start; m.Leave(r, h); m.Sweep() }()
 		close(start)
 		wg.Wait()

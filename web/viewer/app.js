@@ -3,7 +3,7 @@ import { ViewerInput } from './input.js';
 import { validText } from './features.js';
 import { downloadHandle, maxDownloadBytes } from './files.js';
 
-const el = Object.fromEntries(['join', 'session', 'join-form', 'code', 'pin', 'name', 'status', 'screen', 'stats', 'hangup','remote-text','send-text','input-status','admin-request','admin-sas','admin-revoke','session-status','chat-panel','chat-history','chat-text','chat-send','clipboard-panel','clipboard-text','clipboard-send','clipboard-get','clipboard-copy','feature-status','diagnostics-panel','diagnostics-content','diagnostics-status']
+const el = Object.fromEntries(['join', 'session', 'join-form', 'code', 'name', 'status', 'screen', 'stats', 'hangup','remote-text','send-text','input-status','admin-request','admin-sas','admin-revoke','session-status','chat-panel','chat-history','chat-text','chat-send','clipboard-panel','clipboard-text','clipboard-send','clipboard-get','clipboard-copy','feature-status','diagnostics-panel','diagnostics-content','diagnostics-status']
   .map(id => [id, document.getElementById(id)]));
 let current = null;
 let input = null;
@@ -53,18 +53,24 @@ function updateFeatures(connection,message) {
   if(message.t==='telemetry')showDiagnostics(message.snapshot);
   if(message.t==='feature-status')el['feature-status'].textContent=message.text;
 }
+let autoRetry = false, retryTimer = null;
+function remember(code, name) { try { localStorage.setItem('ra-target', JSON.stringify({ code, name })); } catch {} }
+try { const saved = JSON.parse(localStorage.getItem('ra-target') || 'null'); if (saved) { el.code.value = saved.code || ''; el.name.value = saved.name || ''; } } catch {}
 el['join-form'].addEventListener('submit', event => {
   event.preventDefault();
-  const code = el.code.value.replace(/\D/g, ''); const pin = el.pin.value;
+  const code = el.code.value.replace(/\D/g, '');
   const name = el.name.value.trim();
-  if (!/^\d{9}$/.test(code) || !/^\d{4}$/.test(pin) || name.length < 1 || name.length > 80) {
-    status('세션 코드 9자리, PIN 4자리, 지원자 이름을 입력해야 한다.', true); return;
+  if (!/^\d{9}$/.test(code) || name.length < 1 || name.length > 80) {
+    status('지원 ID 9자리와 지원자 이름을 입력해야 한다.', true); return;
   }
+  remember(code, name); autoRetry = true; clearTimeout(retryTimer);
+  connect(code, name);
+});
+function connect(code, name) {
   current?.end(); reset();resetFeatures();
   if (!/^https?:$/.test(location.protocol)) { status('시그널링 서버에서 제공하는 Viewer 주소를 열어야 한다.', true); return; }
   let connection;
-  connection = new ViewerConnection({ base: location.origin, code, pin, displayName: name,
-    forceRelay: new URLSearchParams(location.search).get('relay') === '1',
+  connection = new ViewerConnection({ base: location.origin, code, displayName: name,
     isCurrent: () => current === connection,
     onState: status,
     onTrack: event => {
@@ -89,11 +95,15 @@ el['join-form'].addEventListener('submit', event => {
       }
       else if(connection.permissions?.includes('control'))el['input-status'].textContent='입력 일시 중단';
     },
-    onEnd: (reason, error) => { if (current !== connection) return; reset();resetFeatures(); status(reason, error); }
+    onEnd: (reason, error) => {
+      if (current !== connection) return; reset();resetFeatures(); status(reason, error);
+      // The target restarts its support session after every disconnect; keep knocking until it is back.
+      if (autoRetry) { status(reason + ' 다시 접속하는 중이다.', false); retryTimer = setTimeout(() => { if (autoRetry && current === connection) connect(code, name); }, 2000); }
+    }
   });
-  current = connection; el.pin.value = '';
-});
-el.hangup.addEventListener('click', () => current?.end());
+  current = connection;
+}
+el.hangup.addEventListener('click', () => { autoRetry = false; clearTimeout(retryTimer); current?.end(); });
 const command=(t,fields={})=>current?.controlCommand(t,fields,crypto.randomUUID().replaceAll('-',''));
 el['runbook-choice'].addEventListener('change',previewRunbook);
 el['runbook-send'].addEventListener('click',()=>{if(current?.runbooks.request(el['runbook-choice'].value,el['runbook-detail'].value)){el['runbook-result'].textContent='대상 PC에서 작업을 준비 중이다.';el['runbook-send'].disabled=true;el['runbook-cancel'].disabled=false;}});
@@ -116,4 +126,4 @@ for(const [id,run] of [['admin-request',()=>current?.requestAdmin()],['admin-sas
   el[id].addEventListener('pointerdown',event=>{event.preventDefault();if(!el[id].disabled)run();});
   el[id].addEventListener('click',event=>{if(event.detail===0&&!el[id].disabled)run();});
 }
-addEventListener('pagehide', () => current?.end());
+addEventListener('pagehide', () => { autoRetry = false; current?.end(); });

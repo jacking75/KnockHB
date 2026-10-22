@@ -19,15 +19,19 @@ type ICEServer struct {
 }
 
 func (s *Server) iceServers(sessionID, connectionID string, now time.Time) []ICEServer {
+	var result []ICEServer
+	if len(s.cfg.STUNURLs) > 0 {
+		result = append(result, ICEServer{URLs: s.cfg.STUNURLs})
+	}
 	secret := s.turnSecret()
 	if len(s.cfg.TURNURLs) == 0 || len(secret) < 32 {
-		return nil
+		return result
 	}
 	username := fmt.Sprintf("%d:%s:%s", now.Add(10*time.Minute).Unix(), sessionID, connectionID)
 	// coturn REST credentials mandate HMAC-SHA1; this is not password hashing.
 	mac := hmac.New(sha1.New, []byte(secret))
 	_, _ = mac.Write([]byte(username))
-	return []ICEServer{{URLs: s.cfg.TURNURLs, Username: username, Credential: base64.StdEncoding.EncodeToString(mac.Sum(nil))}}
+	return append(result, ICEServer{URLs: s.cfg.TURNURLs, Username: username, Credential: base64.StdEncoding.EncodeToString(mac.Sum(nil))})
 }
 func (s *Server) turnSecret() string {
 	if s.cfg.TURNSecretFile == "" {

@@ -13,7 +13,8 @@ public sealed record ScreenShareOptions
     public int BitrateKbps { get; init; } = 4000;
     public string? PreferredEncoder { get; init; }
     public string[] StunServers { get; init; } = [];
-    public bool ForceRelay { get; init; }
+    /// <summary>Stable 9-digit support ID the supporter types. Null asks the server for a random one.</summary>
+    public string? DeviceCode { get; init; }
     public int MaxOutputLongEdge { get; init; } = 1920;
     public int MaxOutputShortEdge { get; init; } = 1080;
 
@@ -29,6 +30,7 @@ public sealed record ScreenShareOptions
         if (MonitorIndex < 0 || MonitorIndex >= monitorCount) throw new ArgumentOutOfRangeException(nameof(MonitorIndex));
         if (PreferredEncoder is not null && !FFmpegH264Encoder.AllowedEncoders.Contains(PreferredEncoder))
             throw new ArgumentException("허용하지 않는 인코더다.", nameof(PreferredEncoder));
+        if (DeviceCode is not null && (DeviceCode.Length != 9 || !DeviceCode.All(char.IsAsciiDigit))) throw new ArgumentException("지원 ID는 숫자 9자리다.");
         foreach (var url in StunServers)
             if (!url.StartsWith("stun:", StringComparison.Ordinal) && !url.StartsWith("stuns:", StringComparison.Ordinal))
                 throw new ArgumentException("잘못된 STUN 주소다.");

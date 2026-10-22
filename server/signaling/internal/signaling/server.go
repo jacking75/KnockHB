@@ -1,7 +1,7 @@
 // Package signaling 은 시그널링 HTTP/WebSocket 엔드포인트를 제공한다.
 //
 // 서버가 하는 일은 두 가지뿐이다.
-//  1. 세션 코드·PIN 발급 (POST /session)
+//  1. 세션 코드 발급 (POST /session). Host가 고정 device code를 지정할 수 있다
 //  2. 같은 룸의 두 피어 사이에서 SDP/ICE를 그대로 옮겨 주기 (GET /ws)
 //
 // 미디어는 여기를 거치지 않는다. 협상이 끝나면 Host와 Viewer가 직접(또는 TURN 경유로)
@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -60,7 +61,6 @@ type Msg struct {
 	Role                 string      `json:"role,omitempty"`
 
 	// 참가 인증용. 절대 반대편으로 릴레이하지 않는다.
-	PIN   string `json:"pin,omitempty"`
 	Token string `json:"token,omitempty"`
 
 	SDP string        `json:"sdp,omitempty"`
@@ -86,8 +86,9 @@ type Config struct {
 	SessionTTL time.Duration
 	// OriginPatterns 는 브라우저 뷰어의 허용 Origin이다. 비우면 동일 호스트만 허용된다.
 	OriginPatterns     []string
+	STUNURLs           []string
 	TURNURLs           []string
-	TURNSecret         string
+	TURNSecret        string
 	TURNSecretFile     string
 	OperatorSecretFile string
 	AuditDirectory     string
@@ -127,7 +128,7 @@ func New(cfg Config, log *slog.Logger) *Server {
 		cfg:               cfg,
 		log:               log,
 		connections:       make(map[*websocket.Conn]struct{}),
-		issuance:          newLimiter(10, time.Minute, 4096),
+		issuance:          newLimiter(60, time.Minute, 4096),
 		readLease:         15 * time.Second,
 		heartbeatInterval: 5 * time.Second,
 	}
@@ -161,9 +162,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 type createSessionResponse struct {
 	SessionID string `json:"sessionId"`
 	Code      string `json:"code"`
-	PIN       string `json:"pin"`
 	HostToken string `json:"hostToken"`
 	ExpiresIn int    `json:"expiresIn"`
+}
+
+// readFixedCode returns the Host's optional stable device code ("" for a random one).
+func readFixedCode(r *http.Request) (string, error) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return "", nil
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.Code != "" && !decimalField(body.Code, 9) {
+		return "", errors.New("bad code")
+	}
+	return body.Code, nil
 }
 
 // handleCreateSession 은 Host 앱이 "세션 시작"을 눌렀을 때 호출한다.
@@ -178,12 +195,20 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "발급 요청 상한", http.StatusTooManyRequests)
 		return
 	}
-	rm, err := s.rooms.Create()
+	fixedCode, err := readFixedCode(r)
+	if err != nil {
+		http.Error(w, "device code 오류", http.StatusBadRequest)
+		return
+	}
+	rm, err := s.rooms.Create(fixedCode)
 	if err != nil {
 		s.log.Error("세션 생성 실패", "kind", "room-create")
 		status := http.StatusInternalServerError
 		if errors.Is(err, room.ErrCapacity) {
 			status = http.StatusServiceUnavailable
+		}
+		if errors.Is(err, room.ErrSlotTaken) {
+			status = http.StatusConflict
 		}
 		http.Error(w, "세션 생성 실패", status)
 		return
@@ -196,7 +221,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(createSessionResponse{
 		SessionID: rm.SessionID,
 		Code:      rm.Code,
-		PIN:       rm.PIN,
 		HostToken: rm.HostToken,
 		ExpiresIn: int(s.cfg.SessionTTL.Seconds()),
 	})
@@ -284,12 +308,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2) 룸 확인과 참가 인증.
-	if !decimalField(first.Room, 9) || (first.Role == room.RoleViewer && (!decimalField(first.PIN, 4) || !validDisplayName(first.DisplayName))) {
+	if !decimalField(first.Room, 9) || (first.Role == room.RoleViewer && !validDisplayName(first.DisplayName)) {
 		s.reject(ctx, conn, c, "bad-request", "참가 필드 오류")
 		return
 	}
 	peer := &room.Peer{ID: peerID(r), Role: first.Role, DisplayName: first.DisplayName, Conn: conn}
-	rm, err := s.rooms.Reserve(first.Room, first.Role, first.PIN, first.Token, peer)
+	rm, err := s.rooms.Reserve(first.Room, first.Role, first.Token, peer)
 	if err != nil {
 		s.reject(ctx, conn, c, errCode(err), err.Error())
 		return
@@ -496,8 +520,6 @@ func errCode(err error) string {
 		return "not-found"
 	case errors.Is(err, room.ErrExpired):
 		return "expired"
-	case errors.Is(err, room.ErrBadPIN):
-		return "bad-pin"
 	case errors.Is(err, room.ErrBadToken):
 		return "bad-token"
 	case errors.Is(err, room.ErrBadRole):
@@ -506,8 +528,6 @@ func errCode(err error) string {
 		return "slot-taken"
 	case errors.Is(err, room.ErrConsumed):
 		return "consumed"
-	case errors.Is(err, room.ErrLocked):
-		return "locked"
 	case errors.Is(err, room.ErrCapacity):
 		return "capacity"
 	default:

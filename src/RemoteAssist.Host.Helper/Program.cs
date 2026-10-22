@@ -82,7 +82,7 @@ sealed class HelperRuntime : IAsyncDisposable
                     try{return await consent.Task.WaitAsync(token);}finally{pending=null;consent=null;}
                 };
                 var credentials=await owned.StartAsync(ct);
-                Peer.Post("credentials",new {sessionId=credentials.SessionId,code=credentials.DisplayCode,pin=credentials.Pin});
+                Peer.Post("credentials",new {sessionId=credentials.SessionId,code=credentials.DisplayCode});
                 owned.FrameSent+=(_,_)=>Interlocked.Exchange(ref lastMediaFrame,Environment.TickCount64);
                 mediaLease=ReportMedia(owned);completion=ObserveSession(owned);break;
             case "consent":

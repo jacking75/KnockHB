@@ -127,6 +127,16 @@ func loadSettings() (settings, error) {
 			return out, errors.New("Origin wildcard는 허용하지 않는다")
 		}
 	}
+	// NAT traversal is direct P2P. STUN is the default and needs no credentials.
+	out.cfg.STUNURLs = []string{"stun:stun.l.google.com:19302"}
+	if _, set := os.LookupEnv("RA_STUN_URLS"); set {
+		out.cfg.STUNURLs = envList("RA_STUN_URLS")
+	}
+	for _, url := range out.cfg.STUNURLs {
+		if !strings.HasPrefix(url, "stun:") && !strings.HasPrefix(url, "stuns:") {
+			return out, errors.New("STUN URL scheme 오류")
+		}
+	}
 	out.cfg.TURNURLs = envList("RA_TURN_URLS")
 	out.cfg.OperatorSecretFile = os.Getenv("RA_OPERATOR_SECRET_FILE")
 	out.cfg.AuditDirectory = os.Getenv("RA_AUDIT_DIR")
@@ -161,9 +171,6 @@ func loadSettings() (settings, error) {
 		}
 		if _, err := tls.LoadX509KeyPair(out.cert, out.key); err != nil {
 			return out, errors.New("운영 TLS 인증서/키 검사 실패")
-		}
-		if out.mode == "production" && (len(out.cfg.TURNURLs) == 0 || len(out.cfg.TURNSecret) < 32) {
-			return out, errors.New("운영 TURN URL과 보호된 secret이 필요하다")
 		}
 		if out.mode == "lan-test" && (len(out.cfg.TURNURLs) == 0) != (len(out.cfg.TURNSecret) == 0) {
 			return out, errors.New("LAN TURN 설정은 URL과 secret을 함께 지정해야 한다")

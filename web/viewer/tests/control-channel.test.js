@@ -4,7 +4,7 @@ import { ViewerConnection, parseData } from '../connection.js';
 
 function session() {
   const messages = [], ends = [], socket = { readyState: 0, close() { this.readyState = 3; }, send() {} };
-  const viewer = new ViewerConnection({ base: 'http://localhost:25001', code: '123', pin: '1234', displayName: 'test',
+  const viewer = new ViewerConnection({ base: 'http://localhost:25001', code: '123', displayName: 'test',
     createSocket: () => socket, setTimer: () => 1, clearTimer() {}, onData: m => messages.push(m), onEnd: reason => ends.push(reason) });
   viewer.sessionId = 'sid'; viewer.permissionGeneration = 1; viewer.permissions = ['screen'];
   const sent = [], channel = { label: 'control', ordered: true, maxRetransmits: null, maxPacketLifeTime: null, readyState: 'open', bufferedAmount: 0,

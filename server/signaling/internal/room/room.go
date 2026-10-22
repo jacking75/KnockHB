@@ -23,12 +23,10 @@ const (
 var (
 	ErrNotFound  = errors.New("세션 코드를 찾을 수 없습니다")
 	ErrExpired   = errors.New("세션이 만료되었습니다")
-	ErrBadPIN    = errors.New("PIN이 올바르지 않습니다")
 	ErrBadToken  = errors.New("host 토큰이 올바르지 않습니다")
 	ErrBadRole   = errors.New("role은 host 또는 viewer여야 합니다")
 	ErrSlotTaken = errors.New("해당 역할이 이미 사용 중입니다")
 	ErrConsumed  = errors.New("이미 사용한 세션 코드입니다")
-	ErrLocked    = errors.New("PIN 시도 횟수를 초과했습니다")
 	ErrCapacity  = errors.New("서버 세션 상한에 도달했습니다")
 )
 
@@ -41,12 +39,11 @@ type Peer struct {
 	ready                 bool
 }
 type Room struct {
-	Code, PIN, HostToken, SessionID string
+	Code, HostToken, SessionID string
 	CreatedAt, ExpiresAt            time.Time
 	mu                              sync.Mutex
 	host, viewer                    *Peer
 	consumed, hostUsed, ended       bool
-	pinFailures                     int
 	negotiation                     int
 	lastRefresh                     time.Time
 }
@@ -118,15 +115,13 @@ func NewManagerWithEntropy(ttl time.Duration, entropy io.Reader) *Manager {
 func (m *Manager) SetClock(now func() time.Time) { m.mu.Lock(); defer m.mu.Unlock(); m.now = now }
 func (m *Manager) SetLimit(limit int)            { m.mu.Lock(); defer m.mu.Unlock(); m.maxRooms = limit }
 func (m *Manager) TTL() time.Duration            { return m.ttl }
-func (m *Manager) Create() (*Room, error) {
+// Create makes a room. A non-empty fixedCode is the Host's stable device ID: it is
+// reused across restarts, and a room whose pairing already ended is replaced.
+func (m *Manager) Create(fixedCode string) (*Room, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.rooms) >= m.maxRooms {
 		return nil, ErrCapacity
-	}
-	pin, err := randomDigits(m.random, 4)
-	if err != nil {
-		return nil, err
 	}
 	token, err := randomToken(m.random)
 	if err != nil {
@@ -137,15 +132,26 @@ func (m *Manager) Create() (*Room, error) {
 		return nil, err
 	}
 	for i := 0; i < 10; i++ {
-		code, err := randomDigits(m.random, 9)
-		if err != nil {
-			return nil, err
+		code := fixedCode
+		if code == "" {
+			var err error
+			if code, err = randomDigits(m.random, 9); err != nil {
+				return nil, err
+			}
 		}
-		if _, exists := m.rooms[code]; exists {
-			continue
+		if old, exists := m.rooms[code]; exists {
+			old.mu.Lock()
+			replace := fixedCode != "" && (old.ended || old.host == nil)
+			old.mu.Unlock()
+			if !replace {
+				if fixedCode != "" {
+					return nil, ErrSlotTaken
+				}
+				continue
+			}
 		}
 		now := m.now()
-		r := &Room{Code: code, PIN: pin, HostToken: token, SessionID: sid, CreatedAt: now, ExpiresAt: now.Add(m.ttl)}
+		r := &Room{Code: code, HostToken: token, SessionID: sid, CreatedAt: now, ExpiresAt: now.Add(m.ttl)}
 		m.rooms[code] = r
 		return r, nil
 	}
@@ -174,7 +180,7 @@ func (m *Manager) Get(code string) (*Room, error) {
 
 // Reserve performs lookup, expiry, authentication and reservation atomically.
 // Reserved peers cannot receive relay messages before their ACK succeeds.
-func (m *Manager) Reserve(code, role, pin, token string, p *Peer) (*Room, error) {
+func (m *Manager) Reserve(code, role, token string, p *Peer) (*Room, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.rooms[code]
@@ -205,14 +211,9 @@ func (m *Manager) Reserve(code, role, pin, token string, p *Peer) (*Room, error)
 		}
 		r.host = p
 		r.hostUsed = true
+		// A connected Host keeps its stable device room alive until it leaves.
+		r.ExpiresAt = m.now().Add(100 * 365 * 24 * time.Hour)
 	case RoleViewer:
-		if r.pinFailures >= 5 {
-			return nil, ErrLocked
-		}
-		if subtle.ConstantTimeCompare([]byte(pin), []byte(r.PIN)) != 1 {
-			r.pinFailures++
-			return nil, ErrBadPIN
-		}
 		if r.viewer != nil {
 			return nil, ErrSlotTaken
 		}

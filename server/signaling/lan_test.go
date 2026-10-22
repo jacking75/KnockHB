@@ -55,7 +55,7 @@ func TestLANRequiresTLSOriginCredentialsAndPrivateAddress(t *testing.T) {
 	if _, err := loadSettings(); err != nil {
 		t.Fatal("valid encrypted LAN configuration rejected", err)
 	}
-	for _, bad := range []struct{ key, value string }{{"RA_LISTEN", "0.0.0.0:25001"}, {"RA_LISTEN", "8.8.8.8:25001"}, {"RA_ALLOWED_ORIGINS", ""}, {"RA_ALLOWED_ORIGINS", "other:25001"}, {"RA_TLS_CERT", ""}, {"RA_TLS_KEY", ""}, {"RA_OPERATOR_SECRET_FILE", ""}, {"RA_AUDIT_DIR", ""}, {"RA_MODE", "production"}, {"RA_TURN_URLS", "turn:192.168.0.61:25002?transport=tcp"}} {
+	for _, bad := range []struct{ key, value string }{{"RA_LISTEN", "0.0.0.0:25001"}, {"RA_LISTEN", "8.8.8.8:25001"}, {"RA_ALLOWED_ORIGINS", ""}, {"RA_ALLOWED_ORIGINS", "other:25001"}, {"RA_TLS_CERT", ""}, {"RA_TLS_KEY", ""}, {"RA_OPERATOR_SECRET_FILE", ""}, {"RA_AUDIT_DIR", ""}, {"RA_TURN_URLS", "turn:192.168.0.61:25002?transport=tcp"}} {
 		t.Run(bad.key+bad.value, func(t *testing.T) {
 			t.Setenv(bad.key, bad.value)
 			if _, err := loadSettings(); err == nil {

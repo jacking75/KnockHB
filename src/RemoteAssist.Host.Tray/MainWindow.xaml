@@ -12,10 +12,9 @@
             <TextBlock Text="RemoteAssist" FontSize="26" FontWeight="Bold" Foreground="#0F172A"/>
             <TextBlock Text="내가 승인한 지원자에게만 화면을 공유한다." Margin="0,8,0,16"/>
             <TextBlock x:Name="Status" Text="서비스 연결 확인 중이다." TextWrapping="Wrap" Height="48" AutomationProperties.AutomationId="HostStatus"/>
-            <TextBlock Text="일회성 지원 코드 / PIN" FontWeight="SemiBold"/>
+            <TextBlock Text="지원 ID" FontWeight="SemiBold"/>
             <TextBlock x:Name="Code" Text="—" FontSize="28" Margin="0,8,0,0" AutomationProperties.AutomationId="PairingCode"/>
-            <TextBlock x:Name="Pin" Text="PIN —" FontSize="20" Margin="0,0,0,10" AutomationProperties.AutomationId="PairingPin"/>
-            <TextBlock x:Name="PermissionNotice" Text="신뢰하는 지원자에게 별도 연락으로 전달한다. 수동 지원은 연결할 때 권한을 선택한다." TextWrapping="Wrap" Margin="0,0,0,16"/>
+            <TextBlock x:Name="PermissionNotice" Text="지원자가 이 지원 ID로 접속한다. 수동 지원은 연결할 때 권한을 선택한다." TextWrapping="Wrap" Margin="0,0,0,16"/>
             <Button x:Name="StartButton" Content="새 지원 코드 만들기" Click="StartClicked" Height="38" IsEnabled="False" AutomationProperties.AutomationId="HostStart"/>
             <Button x:Name="StopButton" Content="즉시 종료" Click="StopClicked" Height="42" Margin="0,8,0,0" Background="#B91C1C" Foreground="White" FontWeight="Bold" AutomationProperties.AutomationId="HostStop"/>
             <TextBlock Text="승인한 세션의 채팅" Margin="0,12,0,4" FontWeight="SemiBold"/>

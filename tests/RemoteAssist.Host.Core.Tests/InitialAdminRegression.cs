@@ -11,7 +11,7 @@ internal static class InitialAdminRegression
         var configuration=new AdminConfiguration(approval,1,"user",new("display",1,0,0,1920,1080),"mapping",30,1920,1080,InitialSupport:true);
         configuration.ValidateLifetime(clock.Now);
         Reject(()=>(configuration with {InitialSupport=false}).ValidateLifetime(clock.Now));
-        Reject(()=>(configuration with {Approval=approval with {ExpiresAt=clock.Now.AddHours(2).AddTicks(1)}}).ValidateLifetime(clock.Now));
+        Reject(()=>(configuration with {Approval=approval with {ExpiresAt=clock.Now.AddHours(8).AddTicks(1)}}).ValidateLifetime(clock.Now));
         Reject(()=>(configuration with {Approval=approval with {ExpiresAt=clock.Now}}).ValidateLifetime(clock.Now));
         Reject(()=>(configuration with {Approval=approval with {ExpiresAt=clock.Now.AddSeconds(-1)}}).ValidateLifetime(clock.Now));
         (configuration with {InitialSupport=false,Approval=approval with {ExpiresAt=clock.Now.AddMinutes(2)}}).ValidateLifetime(clock.Now);

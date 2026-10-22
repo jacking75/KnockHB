@@ -70,13 +70,13 @@ static class RemainingFeatureRegression
     }
     public static Task StrictCredentials()
     {
-        var json="{\"sessionId\":\""+new string('a',32)+"\",\"hostToken\":\""+new string('b',32)+"\",\"code\":\"012345678\",\"pin\":\"0123\",\"expiresIn\":600}";
-        var credentials=SessionCredentials.Parse(Encoding.UTF8.GetBytes(json));Check(credentials.Pin=="0123"&&credentials.Code=="012345678","leading zero lost");
-        foreach(var value in new[]{json.Replace("600}","600,\"expiresIn\":700}"),json.Replace("600}","600,\"unknown\":0}"),json.Replace("\"0123\"","null"),json.Replace("expiresIn","ExpiresIn"),json.Replace(new string('a',32),new string('!',32)),"{}"})
+        var json="{\"sessionId\":\""+new string('a',32)+"\",\"hostToken\":\""+new string('b',32)+"\",\"code\":\"012345678\",\"expiresIn\":600}";
+        var credentials=SessionCredentials.Parse(Encoding.UTF8.GetBytes(json));Check(credentials.Code=="012345678","leading zero lost");
+        foreach(var value in new[]{json.Replace("600}","600,\"expiresIn\":700}"),json.Replace("600}","600,\"unknown\":0}"),json.Replace("\"012345678\"","null"),json.Replace("600}","600,\"pin\":\"0123\"}"),json.Replace("expiresIn","ExpiresIn"),json.Replace(new string('a',32),new string('!',32)),"{}"})
             Reject(()=>SessionCredentials.Parse(Encoding.UTF8.GetBytes(value)));
         foreach(var value in new[]{"{\"v\":1,\"type\":\"ice\",\"ice\":{\"candidate\":\"candidate:1\",\"extra\":1}}","{\"v\":1,\"type\":\"joined\",\"iceServers\":[{\"urls\":[\"turn:host\"],\"extra\":1}]}"})
             Reject(()=>SignalingFraming.Parse(Encoding.UTF8.GetBytes(value)));
-        Check(!credentials.ToString()!.Contains(credentials.Pin),"credential ToString exposed PIN");
+        Check(RemoteAssist.Host.Core.Deployment.DeviceId.Valid("012345678")&&!RemoteAssist.Host.Core.Deployment.DeviceId.Valid("12345678")&&!RemoteAssist.Host.Core.Deployment.DeviceId.Valid("12345678a"),"device id validation");
         return Task.CompletedTask;
     }
     sealed class FakeCapture(MonitorInfo monitor):IScreenCapture

@@ -26,7 +26,7 @@ function parseEnvelope(text, maxBytes, typeField) {
 }
 export function parseSignal(text){
   const message=parseEnvelope(text,128*1024,'type');
-  const fields=['v','type','sessionId','connectionId','generation','permissionGeneration','permissions','displayName','iceServers','room','role','pin','token','sdp','ice','peerPresent','code','reason'];
+  const fields=['v','type','sessionId','connectionId','generation','permissionGeneration','permissions','displayName','iceServers','room','role','token','sdp','ice','peerPresent','code','reason'];
   if(Object.keys(message).some(k=>!fields.includes(k)))throw Error('미등록 시그널링 필드다.');
   if(message.ice!==undefined){const ice=message.ice;if(!ice||Object.keys(ice).some(k=>!['candidate','sdpMid','sdpMLineIndex'].includes(k))||typeof ice.candidate!=='string'||ice.candidate.length>8192||ice.sdpMid!=null&&(typeof ice.sdpMid!=='string'||ice.sdpMid.length>256)||ice.sdpMLineIndex!=null&&(!Number.isInteger(ice.sdpMLineIndex)||ice.sdpMLineIndex<0||ice.sdpMLineIndex>65535))throw Error('ICE 필드 오류다.');}
   if(message.iceServers!==undefined)validateIceServers(message.iceServers);
@@ -40,18 +40,18 @@ function validateIceServers(servers){
 
 export function describeError(message) {
   return ({ 'not-found': '없는 세션 코드다.', 'expired': '세션이 만료됐다. 새 코드를 요청해야 한다.',
-    'bad-pin': 'PIN이 올바르지 않다.', 'slot-taken': '이미 다른 지원자가 접속했다.',
-    'consumed': '이미 사용한 세션 코드다. 새 코드를 요청해야 한다.', 'locked': 'PIN 시도 횟수를 초과했다.',
+    'slot-taken': '이미 다른 지원자가 접속했다.',
+    'consumed': '대상 PC가 연결을 다시 준비하는 중이다.',
     'capacity': '서버 접속 상한에 도달했다.' })[message.code] || '접속 요청이 거부됐다.';
 }
 
 export class ViewerConnection {
-  constructor({ base, code, pin, displayName, createSocket = url => new WebSocket(url),
+  constructor({ base, code, displayName, createSocket = url => new WebSocket(url),
     createPeer = config => new RTCPeerConnection(config), isCurrent = () => true,
     onState = () => {}, onTrack = () => {}, onStats = () => {}, onEnd = () => {}, onData = () => {},
     setTimer = (callback, interval) => globalThis.setInterval(callback, interval),
-    clearTimer = timer => globalThis.clearInterval(timer), now = () => performance.now(), forceRelay = false }) {
-    this.base = base; this.code = code; this.pin = pin; this.displayName = displayName;
+    clearTimer = timer => globalThis.clearInterval(timer), now = () => performance.now() }) {
+    this.base = base; this.code = code; this.displayName = displayName;
     this.createPeer = createPeer; this.isCurrent = isCurrent; this.onState = onState;
     this.onTrack = onTrack; this.onStats = onStats; this.onEnd = onEnd;
     this.onData = onData; this.channels = new Map(); this.dataReceived = 0; this.dataSent = 0;
@@ -61,15 +61,14 @@ export class ViewerConnection {
     this.supersededResets=new Map();
     this.setTimer = setTimer; this.clearTimer = clearTimer; this.now = now;
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
-    this.forceRelay = forceRelay; this.iceServers = [];
+    this.iceServers = [];
     this.messageChain = Promise.resolve(); this.timers = []; this.granted = false; this.queuedMessages = 0;
     this.lastSeen = now(); this.startedAt = now(); this.prePeerDeadline = this.startedAt + 60000; this.consentPendingAt = null; this.remoteReady = false;
     this.ws = createSocket(base.replace(/^http/, 'ws') + '/ws');
     const socket = this.ws;
     socket.onopen = () => {
       if (!this.live()) return;
-      this.send({ type: 'join', room: code, role: 'viewer', pin: this.pin, displayName });
-      this.pin = ''; // never persist pairing secrets
+      this.send({ type: 'join', room: code, role: 'viewer', displayName });
     };
     socket.onerror = () => { if (this.live()) this.end('시그널링 서버에 연결할 수 없다.', true); };
     socket.onclose = () => { if (this.live()) this.end('시그널링 연결이 끊어졌다.', true); };
@@ -146,8 +145,7 @@ export class ViewerConnection {
     if(this.pc&&generation===this.generation+1){this.generation=generation;this.clearTransport();}
     else if(generation!==this.generation)throw Error('협상 세대 오류다.');
     if (this.pc || !this.granted || typeof sdp !== 'string' || sdp.length > 96 * 1024) throw Error('승인 없는/중복 offer다.');
-    if (this.forceRelay && !this.iceServers.some(server => server.urls.some(url => /^turns?:/.test(url)))) throw Error('TURN 설정이 없다.');
-    const pc = this.createPeer({ iceServers: this.iceServers, iceTransportPolicy: this.forceRelay ? 'relay' : 'all' }); this.pc = pc; this.negotiatedAt = this.now();
+    const pc = this.createPeer({ iceServers: this.iceServers, iceTransportPolicy: 'all' }); this.pc = pc; this.negotiatedAt = this.now();
     // SDP promises can themselves stall. This deadline must exist before awaiting them.
     this.timers.push(this.setTimer(() => {
       if (this.live() && this.pc===pc && this.now() - this.negotiatedAt >= 30000 && pc.connectionState !== 'connected')
@@ -373,7 +371,7 @@ export class ViewerConnection {
   end(reason = '세션을 종료했다.', error = false) {
     if (this.closed || this.ending) return; this.ending = true;
     this.resetInput();
-    this.reason ??= reason; this.closed = true; this.pin = '';
+    this.reason ??= reason; this.closed = true;
     for (const timer of this.timers.splice(0)) this.clearTimer(timer);
     this.pendingIce.length = 0;
     this.features.clear();

@@ -43,14 +43,14 @@ public partial class MainWindow
                 var initial=message.Body??throw new InvalidDataException("최초 지원 권한 정보 누락이다.");
                 initialSupportExpires=initial.GetProperty("expiresAt").GetDateTimeOffset();
                 if(initialSupportExpires<=DateTimeOffset.UtcNow)throw new InvalidDataException("최초 지원 권한이 만료됐다.");
-                PermissionNotice.Text="최초 관리자 실행으로 이번 지원의 화면·제어·관리자·파일 권한을 부여했다. 신뢰하는 지원자에게만 코드/PIN을 전달한다. 즉시 종료로 모든 지원을 끝낸다.";
+                PermissionNotice.Text="최초 관리자 실행으로 이번 지원의 화면·제어·관리자·파일 권한을 부여했다. 지원자가 끊어도 자동으로 다시 접속할 수 있다. 즉시 종료로 모든 지원을 끝낸다.";
                 Status.Text="이번 지원을 준비 중이다. 추가 승인 없이 연결한다.";
                 StartButton.IsEnabled=false;
                 break;
             case "credentials":
                 var body=message.Body??throw new InvalidDataException("코드 표시 누락");
                 currentSession=body.GetProperty("sessionId").GetString();
-                Code.Text=body.GetProperty("code").GetString();Pin.Text="PIN "+body.GetProperty("pin").GetString();StartButton.IsEnabled=false;
+                Code.Text=body.GetProperty("code").GetString();StartButton.IsEnabled=false;
                 break;
             case "update-status":UpdateStatus.Text=message.Body?.GetProperty("Status").GetString()??"";break;
             case "state":
@@ -206,7 +206,7 @@ public partial class MainWindow
     void EndLocal()
     {
         initialSupportExpires=null;
-        PermissionNotice.Text="신뢰하는 지원자에게 별도 연락으로 전달한다. 수동 지원은 연결할 때 권한을 선택한다.";
+        PermissionNotice.Text="지원자가 이 지원 ID로 접속한다. 수동 지원은 연결할 때 권한을 선택한다.";
         pendingId=null;currentSession=null;
         capabilities=0;ChatText.IsEnabled=ChatSend.IsEnabled=false;ChatText.Clear();ChatHistory.Clear();
         FileSend.IsEnabled=FileCancel.IsEnabled=false;fileId=null;var localFile=fileDialog;fileDialog=null;localFile?.Close();FileStatus.Text="파일 전송 대기";
@@ -214,7 +214,7 @@ public partial class MainWindow
         adminPending=null;var adminDialog=adminConsent;adminConsent=null;adminDialog?.Close();
         var dialog=consent;consent=null;dialog?.Close();
         indicator?.Dispose();indicator=null;
-        Code.Text="—";Pin.Text="PIN —";Topmost=false;SessionBorder.BorderBrush=Brushes.SlateGray;
+        Code.Text="—";Topmost=false;SessionBorder.BorderBrush=Brushes.SlateGray;
         try{icon?.SetActive(false);}catch{ /* The stop was already sent, or the authenticated service lease is lost. */ }
     }
     static string InitialSupportDownloadFolder()

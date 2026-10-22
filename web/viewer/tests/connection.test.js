@@ -15,7 +15,7 @@ function fixture(overrides = {}) {
   const socket = new Socket(); const end = []; const timers = [];
   const peer = { connectionState: 'connected', candidates: [], async setRemoteDescription() {}, async createAnswer() { return { sdp: 'answer' }; },
     async setLocalDescription() {}, async addIceCandidate(value) { this.candidates.push(value); }, close() { this.closed = true; }, async getStats() { return new Map(); } };
-  const connection = new ViewerConnection({ base: 'http://localhost:25001', code: '123456789', pin: '1234', displayName: 'tester',
+  const connection = new ViewerConnection({ base: 'http://localhost:25001', code: '123456789', displayName: 'tester',
     createSocket: () => socket, createPeer: () => peer, onEnd: (...args) => end.push(args),
     setTimer: fn => { timers.push(fn); return fn; }, clearTimer: () => {}, ...overrides });
   socket.open(); socket.message(joined);
@@ -42,9 +42,9 @@ test('browser ICE extensions never reach the strict signaling wire contract', as
   f.peer.onicecandidate({ candidate: null });
   assert.equal(f.socket.sent.length, count); f.connection.end();
 });
-test('PIN failure survives socket close', async () => {
-  const f = fixture(); f.socket.message({ type: 'error', code: 'bad-pin' }); f.socket.onclose();
-  assert.deepEqual(f.end, [['PIN이 올바르지 않다.', true]]);
+test('not-found failure survives socket close', async () => {
+  const f = fixture(); f.socket.message({ type: 'error', code: 'not-found' }); f.socket.onclose();
+  assert.deepEqual(f.end, [['없는 세션 코드다.', true]]);
 });
 test('cancel during remote SDP prevents answer and late track', async () => {
   let release; let entered; const started = new Promise(resolve => { entered = resolve; }); let tracks = 0;

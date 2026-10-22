@@ -3,7 +3,6 @@ param(
     [Parameter(Mandatory=$true)][uri]$SignalingUri,
     [Parameter(Mandatory=$true)][string]$SdkDirectory,
     [Parameter(Mandatory=$true)][string]$Output,
-    [switch]$ForceRelay,
     [string]$SignalingCertificate
 )
 $ErrorActionPreference='Stop'
@@ -54,7 +53,7 @@ try{
     Copy-Item -LiteralPath (Join-Path $repo 'deploy/runbooks') -Destination $payload -Recurse
     Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-host.ps1') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-sas.ps1') -Destination $payload
-    $hostSettings=@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false;ForceRelay=[bool]$ForceRelay}
+    $hostSettings=@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false}
     if($SignalingCertificate){$hostSettings.SignalingCertificateBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($SignalingCertificate)))}
     [IO.File]::WriteAllText((Join-Path $payload 'host.settings.json'),($hostSettings|ConvertTo-Json),$utf8)
     $files=@(Get-ChildItem -LiteralPath $payload -Recurse -File|ForEach-Object {

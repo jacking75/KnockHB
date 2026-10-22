@@ -11,16 +11,13 @@
 
   <main id="join">
     <h1>RemoteAssist</h1>
-    <p class="lead">대상자에게 받은 세션 코드와 PIN을 입력하세요.</p>
+    <p class="lead">대상 PC의 지원 ID(9자리)를 입력하세요. 연결이 끊기면 자동으로 다시 접속합니다.</p>
 
     <form id="join-form" autocomplete="off">
-      <label for="name">지원자 이름 (자기 신고이며 별도 확인이 필요하다)</label>
+      <label for="name">지원자 이름</label>
       <input id="name" maxlength="80" required>
-      <label for="code">세션 코드</label>
+      <label for="code">지원 ID</label>
       <input id="code" inputmode="numeric" placeholder="418-207-935" maxlength="11">
-
-      <label for="pin">PIN</label>
-      <input id="pin" type="password" inputmode="numeric" placeholder="6042" maxlength="4" autocomplete="off">
 
       <button type="submit">접속</button>
     </form>

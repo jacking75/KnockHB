@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -50,8 +51,8 @@ public sealed class SignalingClient : IAsyncDisposable
         }
     }
 
-    /// <summary>서버에서 세션 코드·PIN·host 토큰을 발급받는다.</summary>
-    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default,bool allowLoopbackHttp=false,string? certificateBase64=null)
+    /// <summary>서버에서 세션 코드·host 토큰을 발급받는다.</summary>
+    public static async Task<SessionCredentials> CreateSessionAsync(Uri httpBase, CancellationToken ct = default,bool allowLoopbackHttp=false,string? certificateBase64=null,string? deviceCode=null)
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));ct=deadline.Token;
@@ -61,6 +62,7 @@ public sealed class SignalingClient : IAsyncDisposable
         if (trusted is not null) handler.ServerCertificateCustomValidationCallback = (_, certificate, _, errors) => SignalingTrust.Validate(certificate, errors, trusted);
         using var http = new HttpClient(handler);
         using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(httpBase,"/session"));
+        if(deviceCode is not null)request.Content=JsonContent.Create(new {code=deviceCode});
         using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
         response.EnsureSuccessStatusCode();
         await response.Content.LoadIntoBufferAsync(SignalingFraming.MaxBytes,ct);
@@ -175,7 +177,6 @@ public sealed class SessionCredentials
 {
     [System.Text.Json.Serialization.JsonPropertyName("sessionId")] public string SessionId { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("code")] public string Code { get; init; } = "";
-    [System.Text.Json.Serialization.JsonPropertyName("pin")] public string Pin { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("hostToken")] public string HostToken { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("expiresIn")] public int ExpiresIn { get; init; }
 
@@ -183,7 +184,7 @@ public sealed class SessionCredentials
     {
         using var document=ProtocolJson.ParseObject(bytes,SignalingFraming.MaxBytes);
         var credentials=JsonSerializer.Deserialize<SessionCredentials>(bytes.Span)??throw new InvalidDataException("세션 발급 본문 누락이다.");
-        if(!Digits(credentials.Code,9)||!Digits(credentials.Pin,4)||!Id(credentials.HostToken)||!Id(credentials.SessionId)||credentials.ExpiresIn is <30 or >1800)
+        if(!Digits(credentials.Code,9)||!Id(credentials.HostToken)||!Id(credentials.SessionId)||credentials.ExpiresIn is <30 or >1800)
             throw new InvalidDataException("세션 발급 계약과 다른 응답이다.");
         return credentials;
         static bool Digits(string? value,int length)=>value?.Length==length&&value.All(c=>c is >= '0' and <= '9');

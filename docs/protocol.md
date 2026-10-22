@@ -34,7 +34,7 @@ runbook 권한에는 reliable ordered `runbook` 채널을 추가한다. Host의 
 
 시그널링의 모든 메시지는 정수 `v:1`이 필요하다. 누락·다른 버전·중복 JSON 필드·잘못된 타입·128KiB 초과·binary는 거부하고 종료한다. 연결 첫 메시지는 join이며 joined ACK가 항상 첫 서버 메시지다. 룸 예약은 ACK 성공 뒤 ready가 되며 먼저 예약한 미준비 peer로 릴레이하지 않는다. 일회성 Viewer 소비는 인증/예약과 함께 원자화한다. 인증 실패는 PIN 5회 뒤 잠근다. 인증 실패와 거절 후에는 새 세션을 발급한다. Host와 Viewer 재참가로 기존 승인을 복구하지 않는다.
 
-`POST /session` 응답은 기존 필드와 `sessionId`(비밀이 아닌 난수 감사 ID)를 포함한다. `joined`는 `sessionId`, 서버가 부여한 `connectionId`, `generation:1`을 포함한다. 클라이언트는 다른 세션/세대 메시지가 섞이면 실패로 종료하며 종료한 연결은 재활용하지 않는다. `join.displayName`은 앞뒤 공백과 제어 문자가 없는 1~80 UTF-16 code unit의 자기 신고 이름이다. Host의 `peer-joined`에는 이 이름과 connectionId가 전달되며 신원 검증으로 표현하지 않는다.
+`POST /session`은 선택적 본문 `{"code":"<9자리>"}`로 Host의 고정 지원 ID(device code)를 요청한다. 같은 코드의 방에 Host가 연결 중이면 409, 이전 방이 종료됐으면 교체한다. 코드가 없으면 서버가 난수를 발급한다. Host가 연결된 방은 만료되지 않으며 Host 이탈로 종료한다. Viewer는 PIN 없이 코드만으로 참가한다. 응답은 기존 필드와 `sessionId`(비밀이 아닌 난수 감사 ID)를 포함한다. `joined`는 `sessionId`, 서버가 부여한 `connectionId`, `generation:1`을 포함한다. 클라이언트는 다른 세션/세대 메시지가 섞이면 실패로 종료하며 종료한 연결은 재활용하지 않는다. `join.displayName`은 앞뒤 공백과 제어 문자가 없는 1~80 UTF-16 code unit의 자기 신고 이름이다. Host의 `peer-joined`에는 이 이름과 connectionId가 전달되며 신원 검증으로 표현하지 않는다.
 
 `ping`/`pong`은 5초마다 교환하고 15초 무응답이면 종료한다. `consent`/`consent-pending`/`consent-denied`는 Host에서 Viewer로만 중계한다. `consent`에는 `permissions`, 증가하는 `permissionGeneration`을 넣는다. Viewer는 이를 통지로만 쓰고 Host의 실제 권한 객체는 로컬 승인으로만 변경한다. `offer`는 Host 전용, `answer`는 Viewer 전용이다. 잘못된 역할의 보안 명령은 종료한다. SDP 96KiB, ICE 문자열 8KiB, 후보 대기 256개가 상한이다. 시그널링 상실·peer-left는 기존 승인 폐기와 전체 세션 종료다.
 
@@ -90,7 +90,7 @@ ICE의 candidate 문자열은 브라우저 RTCIceCandidate 형식인 `candidate:
 
 ```json
 {"v":1,"type":"join","room":"418207935","role":"host","token":"Host 전용 토큰"}
-{"v":1,"type":"join","room":"418207935","role":"viewer","pin":"6042","displayName":"지원자 이름"}
+{"v":1,"type":"join","room":"418207935","role":"viewer","displayName":"지원자 이름"}
 {"v":1,"type":"joined","sessionId":"sid","connectionId":"cid","generation":1,"role":"viewer","peerPresent":true}
 {"v":1,"type":"consent","sessionId":"sid","generation":1,"permissions":["screen"],"permissionGeneration":1}
 ```
@@ -110,9 +110,9 @@ joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 
 | peer-joined/peer-left | 서버 | 상대 참가·이탈 |
 | error | 서버 | 참가·프로토콜 오류 |
 
-서버는 PIN/token을 제거하고 자신의 sessionId/generation을 찍어 중계한다. Host는 offer를 먼저 큐에 넣고 로컬 ICE를 그 뒤 보낸다. 양쪽은 원격 SDP 적용 전 ICE를 보관한다. 직렬 처리 큐 상한은 각각 128개다. 종료와 heartbeat 응답은 지연된 SDP 작업 뒤에 대기하지 않는다. 일시 ICE disconnected는 위 세대 갱신 계약을 따르고 시그널링/승인 상실은 종료한다.
+서버는 token을 제거하고 자신의 sessionId/generation을 찍어 중계한다. Host는 offer를 먼저 큐에 넣고 로컬 ICE를 그 뒤 보낸다. 양쪽은 원격 SDP 적용 전 ICE를 보관한다. 직렬 처리 큐 상한은 각각 128개다. 종료와 heartbeat 응답은 지연된 SDP 작업 뒤에 대기하지 않는다. 일시 ICE disconnected는 위 세대 갱신 계약을 따르고 시그널링/승인 상실은 종료한다.
 
-오류 코드는 bad-request/not-found/expired/bad-pin/bad-token/bad-role/slot-taken/consumed/locked/capacity다. 일반 close가 기존 참가 오류 표시를 덮지 않는다. 코드·PIN은 숫자 문자열이며 선행 0을 보존한다. sessionId와 hostToken은 각각 난수 24바이트의 padding 없는 URL-safe Base64다.
+오류 코드는 bad-request/not-found/expired/bad-token/bad-role/slot-taken/consumed/capacity다. PIN은 없다(2026-10-23 상호 신뢰 결정). 일반 close가 기존 참가 오류 표시를 덮지 않는다. 지원 ID(code)는 숫자 9자리 문자열이며 선행 0을 보존한다. sessionId와 hostToken은 각각 난수 24바이트의 padding 없는 URL-safe Base64다.
 
 ## 보조 기능 확장 원칙
 

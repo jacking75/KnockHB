@@ -90,7 +90,7 @@ func joinHost(t *testing.T, c *websocket.Conn, s createSessionResponse) Msg {
 
 func joinViewer(t *testing.T, c *websocket.Conn, s createSessionResponse) Msg {
 	t.Helper()
-	write(t, c, Msg{Type: "join", Room: s.Code, Role: "viewer", PIN: s.PIN})
+	write(t, c, Msg{Type: "join", Room: s.Code, Role: "viewer"})
 	return read(t, c)
 }
 
@@ -103,9 +103,6 @@ func TestCreateSession(t *testing.T) {
 
 	if len(s.Code) != 9 {
 		t.Errorf("code 길이 = %d, want 9 (%q)", len(s.Code), s.Code)
-	}
-	if len(s.PIN) != 4 {
-		t.Errorf("pin 길이 = %d, want 4 (%q)", len(s.PIN), s.PIN)
 	}
 	if s.HostToken == "" {
 		t.Error("hostToken이 비어 있다")
@@ -178,12 +175,9 @@ func TestRelayStripsCredentials(t *testing.T) {
 	read(t, host) // peer-joined
 
 	// viewer가 악의적으로(혹은 실수로) 인증 필드를 실어 보낸다.
-	write(t, viewer, Msg{Type: "answer", SDP: "sdp", PIN: sess.PIN, Token: sess.HostToken})
+	write(t, viewer, Msg{Type: "answer", SDP: "sdp", Token: sess.HostToken})
 
 	got := read(t, host)
-	if got.PIN != "" {
-		t.Errorf("pin이 릴레이됐다: %q", got.PIN)
-	}
 	if got.Token != "" {
 		t.Errorf("token이 릴레이됐다: %q", got.Token)
 	}
@@ -236,10 +230,9 @@ func TestJoinRejections(t *testing.T) {
 		msg      Msg
 		wantCode string
 	}{
-		{"없는 코드", Msg{Type: "join", Room: "000000000", Role: "viewer", PIN: sess.PIN}, "not-found"},
-		{"틀린 PIN", Msg{Type: "join", Room: sess.Code, Role: "viewer", PIN: wrongPIN(sess.PIN)}, "bad-pin"},
+		{"없는 코드", Msg{Type: "join", Room: "000000000", Role: "viewer"}, "not-found"},
 		{"틀린 토큰", Msg{Type: "join", Room: sess.Code, Role: "host", Token: "nope"}, "bad-token"},
-		{"이상한 role", Msg{Type: "join", Room: sess.Code, Role: "admin", PIN: sess.PIN}, "bad-role"},
+		{"이상한 role", Msg{Type: "join", Room: sess.Code, Role: "admin"}, "bad-role"},
 		{"첫 메시지가 join이 아님", Msg{Type: "offer", SDP: "x"}, "bad-request"},
 	}
 
@@ -279,7 +272,7 @@ func TestExpiredSession(t *testing.T) {
 	s.Rooms().SetClock(func() time.Time { return time.Now().Add(2 * time.Minute) })
 
 	c := dial(t, ts)
-	write(t, c, Msg{Type: "join", Room: sess.Code, Role: "viewer", PIN: sess.PIN})
+	write(t, c, Msg{Type: "join", Room: sess.Code, Role: "viewer"})
 	if m := read(t, c); m.Type != "error" || m.Code != "expired" {
 		t.Fatalf("응답 = %+v, want error/expired", m)
 	}

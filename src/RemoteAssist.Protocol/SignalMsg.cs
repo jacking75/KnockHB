@@ -28,9 +28,6 @@ public sealed record SignalMsg
     /// <summary>host | viewer</summary>
     [JsonPropertyName("role")] public string? Role { get; init; }
 
-    /// <summary>Viewer 참가용 PIN. 서버는 이 필드를 반대편으로 릴레이하지 않는다.</summary>
-    [JsonPropertyName("pin")] public string? Pin { get; init; }
-
     /// <summary>Host 슬롯 점유용 토큰. 서버는 이 필드를 반대편으로 릴레이하지 않는다.</summary>
     [JsonPropertyName("token")] public string? Token { get; init; }
 
@@ -41,7 +38,7 @@ public sealed record SignalMsg
     /// <summary>joined 응답에서, 반대편이 이미 붙어 있는지.</summary>
     [JsonPropertyName("peerPresent")] public bool? PeerPresent { get; init; }
 
-    /// <summary>error 전용. bad-request | not-found | expired | bad-pin | bad-token | bad-role | slot-taken</summary>
+    /// <summary>error 전용. bad-request | not-found | expired | bad-token | bad-role | slot-taken</summary>
     [JsonPropertyName("code")] public string? Code { get; init; }
 
     /// <summary>error 전용. 사람이 읽는 설명.</summary>

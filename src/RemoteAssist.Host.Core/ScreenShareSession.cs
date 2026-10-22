@@ -153,14 +153,15 @@ public sealed class ScreenShareSession : IAsyncDisposable
             _callerCancellation=ct.Register(() => EndSession("호출자 취소", false));
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token,_options.AllowLoopbackHttp,_options.SignalingCertificateBase64);
+            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token,_options.AllowLoopbackHttp,_options.SignalingCertificateBase64,_options.DeviceCode);
             _log.LogInformation("세션 생성: {SessionId}", Credentials.SessionId);
             _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>(),_options.AllowLoopbackHttp,_options.SignalingCertificateBase64);
             await _signaling.ConnectAsync(Credentials, deadline.Token);
             _lifetime.Token.ThrowIfCancellationRequested();
             _eventTask = ProcessEventsAsync();
             _receiveTask = ReceiveLoopAsync();
-            _pairingTask=WatchPairingAsync(Credentials.ExpiresIn);
+            // A fixed support ID waits for its supporter indefinitely; only a random one-time code expires.
+            if(_options.DeviceCode is null)_pairingTask=WatchPairingAsync(Credentials.ExpiresIn);
             NotifyState("지원자 참가 대기");
             return Credentials;
         }
@@ -249,11 +250,12 @@ public sealed class ScreenShareSession : IAsyncDisposable
         if (_lifetime.IsCancellationRequested || capability == Capability.None) { EndSession("대상자가 승인을 거절했다", false); return; }
         // Only implemented capabilities can be granted. Future features stay denied.
         if (capability.HasFlag(Capability.Runbook)&&RunbookOperation==null||capability.HasFlag(Capability.File)&&(RequestFileApproval==null||AuditFile==null)||capability.HasFlag(Capability.Control)&&CreateInputBackend==null||capability.HasFlag(Capability.Admin)&&(!capability.HasFlag(Capability.Control)||AdminCommand==null)||capability.HasFlag(Capability.Clipboard)&&ClipboardOperation==null||capability.HasFlag(Capability.Chat)&&ChatReceived==null) throw new InvalidOperationException("아직 연결하지 않은 기능 권한이다.");
-        var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, TimeSpan.FromHours(2));
+        var grant = _permissions.Grant(Credentials!.SessionId, peer.ConnectionId, capability, InitialSupport ? TimeSpan.FromHours(8) : TimeSpan.FromHours(2));
         CaseTrace.Write("consent-granted",grant.SessionId,grant.Generation,new {mask=(int)capability,connectionId=grant.ConnectionId});
         await _signaling.SendAsync(new SignalMsg { Type = "consent", Permissions = FeatureContract.Permissions((int)capability), PermissionGeneration = (int)grant.Generation }, _lifetime.Token);
         await CreateTransport(grant);
-        _refreshTask=RefreshLoop();
+        // Only TURN credentials expire. Direct P2P needs no periodic transport rebuild.
+        if(HasTurn())_refreshTask=RefreshLoop();
     }
     private async Task CreateTransport(PermissionSnapshot grant)
     {
@@ -265,11 +267,10 @@ public sealed class ScreenShareSession : IAsyncDisposable
         if(supplied.Length>8||supplied.Any(s=>s is null||s.Urls is not {Length:>0 and <=8}||s.Urls.Any(u=>u is null||u.Length>1024||!System.Text.RegularExpressions.Regex.IsMatch(u,@"^(stun|stuns|turn|turns):[^\s]+$"))||s.Username?.Length>256||s.Credential?.Length>256))throw new InvalidDataException("ICE server 계약 오류다.");
         foreach(var server in supplied)
             foreach(var url in server.Urls)iceServers.Add(new RTCIceServer{urls=url,username=server.Username,credential=server.Credential});
-        if(_options.ForceRelay&&!iceServers.Any(server=>server.urls.StartsWith("turn:",StringComparison.Ordinal)||server.urls.StartsWith("turns:",StringComparison.Ordinal)))throw new InvalidOperationException("relay 강제 모드에 TURN 설정이 없다.");
         _pc = new RTCPeerConnection(new RTCConfiguration
-        { iceServers = iceServers, iceTransportPolicy = _options.ForceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all }, 0, new PortRange(27002, 27099));
+        { iceServers = iceServers, iceTransportPolicy = RTCIceTransportPolicy.all }, 0, new PortRange(27002, 27099));
         var pc = _pc;
-        CaseTrace.Write("transport-created",grant.SessionId,grant.Generation,new {connectionGeneration=generation,policy=_options.ForceRelay?"relay":"all"});
+        CaseTrace.Write("transport-created",grant.SessionId,grant.Generation,new {connectionGeneration=generation,policy="all"});
         var controlChannel=await pc.createDataChannel("control",new RTCDataChannelInit {ordered=true});
         var control=new ControlDataSession(controlChannel,_permissions,grant,_monitor,fail,InputLeaseObserved,message=>
         {
@@ -339,7 +340,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         {
             if(state==RTCPeerConnectionState.connected&&pc.GetRtpChannel() is RtpIceChannel ice&&ice.NominatedEntry is {} pair)
                 CaseTrace.Write("selected-pair",grant.SessionId,grant.Generation,new {connectionGeneration=generation,
-                    policy=_options.ForceRelay?"relay":"all",selected=pair.Nominated,
+                    policy="all",selected=pair.Nominated,
                     localType=pair.LocalCandidate.type.ToString(),remoteType=pair.RemoteCandidate.type.ToString(),
                     localAddress=pair.LocalCandidate.address,localPort=pair.LocalCandidate.port,
                     remoteAddress=pair.RemoteCandidate.address,remotePort=pair.RemoteCandidate.port});
@@ -369,6 +370,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         catch(OperationCanceledException)when(token.IsCancellationRequested){}
         catch(Exception){if(ConnectionGeneration==generation)EndSession("진단 수집이 실패하거나 기한을 넘었다.",true);}
     }
+    private bool HasTurn()=>(_turnServers??_signaling!.JoinedAck?.IceServers??[]).Any(s=>s.Urls.Any(u=>u.StartsWith("turn",StringComparison.Ordinal)));
     private async Task RefreshLoop()
     {
         try{using var timer=new PeriodicTimer(TimeSpan.FromMinutes(8));while(await timer.WaitForNextTickAsync(_lifetime.Token))Enqueue(RequestRefresh);}

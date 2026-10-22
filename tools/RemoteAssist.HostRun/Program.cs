@@ -19,7 +19,6 @@ try
     {
         SignalingUri = new Uri(parsed.GetValueOrDefault("--signaling") ?? "http://localhost:25001"),
         AllowLoopbackHttp = parsed.ContainsKey("--dev-loopback"),
-        ForceRelay = parsed.ContainsKey("--relay"),
         TargetFps = Number(parsed,"--fps",30), MonitorIndex = Number(parsed,"--monitor",0),
         BitrateKbps = Number(parsed,"--bitrate",4000), PreferredEncoder = parsed.GetValueOrDefault("--encoder")
     };
@@ -45,7 +44,7 @@ try
     {
         var credentials = await session.StartAsync();
         // Pairing secrets are local presentation only; never send them to ILogger.
-        Console.WriteLine($"세션 코드: {credentials.DisplayCode}\nPIN: {credentials.Pin}\nCtrl+C로 즉시 종료한다.");
+        Console.WriteLine($"지원 ID: {credentials.DisplayCode}\nCtrl+C로 즉시 종료한다.");
         var last = Stopwatch.StartNew();
         session.FrameSent += (count, size) => { if(last.ElapsedMilliseconds>=1000){Console.WriteLine($"전송 {count}프레임, 최근 {size}바이트, {session.EncoderName}");last.Restart();} };
         await Task.WhenAny(stop.Task,session.Completion);

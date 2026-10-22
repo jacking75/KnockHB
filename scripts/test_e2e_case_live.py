@@ -64,7 +64,7 @@ class LiveContracts(unittest.TestCase):
     def test_candidate_windows_paths_and_uppercase_hash(self):
         payload=self.root/'payload';(payload/'child').mkdir(parents=True)
         (payload/'child/f').write_bytes(b'x')
-        new_json(payload/'host.settings.json',{'SignalingUri':'https://192.168.0.61:25001/','ForceRelay':False})
+        new_json(payload/'host.settings.json',{'SignalingUri':'https://192.168.0.61:25001/'})
         entries=[{'path':str(p.relative_to(payload)).replace('/','\\'),'size':p.stat().st_size,'sha256':digest(p).upper()} for p in payload.rglob('*') if p.is_file()]
         new_json(self.root/'candidate.json',{'kind':'UNSIGNED_DEVELOPMENT_NOT_RELEASE','files':entries})
         verify_candidate({'candidateDirectory':str(self.root),'caseId':'C01'})
