@@ -127,8 +127,7 @@ func loadSettings() (settings, error) {
 			return out, errors.New("Origin wildcard는 허용하지 않는다")
 		}
 	}
-	// NAT traversal is direct P2P. STUN is the default and needs no credentials.
-	out.cfg.STUNURLs = []string{"stun:stun.l.google.com:19302"}
+	// Peers reach each other directly by their designated IPs, so no STUN/TURN is needed by default.
 	if _, set := os.LookupEnv("RA_STUN_URLS"); set {
 		out.cfg.STUNURLs = envList("RA_STUN_URLS")
 	}
