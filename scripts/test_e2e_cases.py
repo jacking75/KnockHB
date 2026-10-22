@@ -1,5 +1,6 @@
 """Offline tests: never construct OwnedGateway or connect to DTD/product/SSH."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -130,10 +131,13 @@ class RuntimeTests(unittest.TestCase):
                     'interactiveSessionId':1 if machine=='pc-a' else 2,
                     'supportedOperations':['windows','controls','focus','click','type-text','release-input']}}
         dtd=ReadOnlyDtd()
-        with patch('e2e_case_runtime.freeze_inputs',return_value={'configSha256':'a'*64,'toolManifestSha256':'b'*64}):
-            result=prepare_case({'a':{'session':1},'b':{'session':2}},'unused',ctx,dtd)
+        config={'a':{'session':1},'b':{'session':2}}
+        recovery_hash=hashlib.sha256(json.dumps(config,ensure_ascii=False,allow_nan=False,indent=2).encode()).hexdigest()
+        with patch('e2e_case_runtime.freeze_inputs',return_value={'configSha256':'a'*64,'toolManifestSha256':'b'*64,'recoveryConfigSha256':recovery_hash}):
+            result=prepare_case(config,'unused',ctx,dtd)
         self.assertEqual('BLOCKED',result['state']);self.assertEqual(0,result['functionalActions'])
         self.assertEqual(['pc-a','pc-b'],dtd.calls)
+        self.assertEqual(config,read_json(ctx.run_dir/'recovery-config.json'))
         self.assertIsNone(result['campaignSha256']);self.assertFalse((ctx.run_dir/'launch-once.json').exists())
     def test_collect_rehashes_and_never_confirms_current_recovery(self):
         ctx=self.ctx();p=ctx.run_dir/'evidence.json';new_json(p,{'runId':ctx.run_id})

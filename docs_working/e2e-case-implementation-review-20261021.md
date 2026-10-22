@@ -1,5 +1,114 @@
 # C01~C16 실행 스크립트 구현·검토 기록 — 2026-10-21
 
+- [x] RV01. C09 파일 거절과 세션 종료 대기를 분리하고 정상 거절 흐름을 검사했다.
+- [x] RV02. 고정 권한에 따른 영상·캡처·입력 금지를 모든 사례에 적용했다.
+- [x] RV03. C03/C11 종료 감사 판정과 원본 증거를 연결했다.
+- [x] RV04. 준비 증거 손상과 독립된 소유 회차 Abort를 구현했다.
+- [x] RV05. 기한 초과 뒤에도 유한 안전 복구를 수행하고 시간 위반을 유지했다.
+- [x] RV06. 범위·상세 절차·도구 매핑·환경 준비 자료를 맞추고 입력 없는 전체 회귀를 완료했다.
+
+## 2026-10-22 리뷰 지적 보완
+
+RV01~RV05의 코드 수정과 입력 없는 회귀를 반영했다. 아래 최초 리뷰는 결함 발견 당시 기록으로 보존한다. 현재 상태도 실제 DTD/A/B/TLS/UI·시간·복귀 실증이 없어 NOT READY이며 C15는 EXCLUDED다. 실제 E2E·제품·서비스·UAC·잠금·입력·clipboard·SSH·CI는 실행하지 않는다.
+
+| 보완 | 현재 동작·검증 연결 |
+|---|---|
+| RV01 | C09의 declined는 세션 종료를 기다리지 않는다. C02의 접속 거절과 audit/end/final/revoked만 Viewer 복귀를 기다린다. 정상 거절→다음 단계 HostStop 흐름을 합성 source로 검사했다. |
+| RV02 | ID별 예외 목록을 고정 mask로 바꿨다. screen이 없으면 track/frame/srcObject/capture, control이 없으면 inputEnabled/native-input을 즉시 실패로 판정한다. 미디어·입력 위반을 각각 주입하고 허용된 screen/control 경로도 검사했다. |
+| RV03 | C03은 held 확인 뒤 HostStop·감사 단계, C11은 원본 복원 뒤 종료 감사 단계를 추가했다. 현재 session/connection/permission generation의 동의·종료 감사 각 1회가 필요하다. 빈/누락/중복/다른 연결·세대·결과를 거부하고 audit 미도착은 원 deadline까지만 기다린다. |
+| RV04 | Prepare가 recovery-config 사본을 frozen hash에 묶고 Run도 무결성을 검사한다. Abort는 실행 전제 파일들을 다시 검사하지 않고 소유 campaign/run/launch 확인 뒤 로컬 stop을 먼저 기록한다. 사본 또는 이전의 hash 동일 원 config만 사용한다. 원래 실행기 생존 중 동시 복구 금지와 기존 request ID 재조회 규칙을 유지한다. |
+| RV05 | 원 origin/시간 위반은 유지하고, 지난 phase deadline에는 호출별 최대 10초의 안전 복구 상한을 적용한다. 하위 product client의 recovery-only도 stop/읽기 4종으로 한정했다. 원격 collect의 과거 deadline 차단을 제거했다. 기한을 넘긴 결과는 FAIL_RECOVERY_REQUIRED다. |
+| 추가로 확인한 복구 누락 | Prepare→Run에서 lifecycle 순번이 1로 재시작되어 Abort 파싱을 깨던 문제를 수정했다. 기존 owner ledger를 읽어 연속 순번을 사용한다. 제품 기동 전 실패도 독립 복귀 자료를 보존한 뒤 준비 task를 unprepare하고 DTD 세션을 닫는다. |
+
+관련 검사는 [리뷰 회귀](../scripts/test_e2e_case_review.py)에 있다. 실제 transport/OS 경계는 대체했다. 원격 PowerShell collect 변경은 실행하지 않고 코드 리뷰·Parser.ParseFile로 확인하며 실제 상한과 복귀의 입증은 B02에 남긴다. 수정된 스크립트의 hash가 포함되므로 이전 readiness/UI/도구 증거로 새 회차를 Arm할 수 없다.
+
+Run은 finish marker 또는 launch-once가 이미 있는 준비를 재사용하지 않는다. Abort로 준비 task를 회수한 뒤 같은 회차가 다시 DTD 세션을 여는 경로도 차단했다. C15의 기존 회차 정리 경로는 유지하지만 Validate/Prepare/Run 제외는 그대로다.
+
+### 현재 보완 검증과 인수인계
+
+2026-10-22 11:43 KST의 소스 확인 뒤 아래 결과를 연결했다. C#/Go/브라우저 제품 코드는 변경하지 않았으며 빌드·publish·실제 준비/실행을 다시 수행하지 않았다. 기존 C# 후보·도구는 파일 검사만 수행했다.
+
+| 현재 검사 | 결과 |
+|---|---|
+| Python 기존 4개 검사군 + 새 리뷰 회귀 | 37 + 13 + 3 + 30 + 18 = **101개 통과**. 정상 16개·단계별 실패 105개, 합계 121개 executor 경로를 포함한 합성 검사 |
+| Node 브라우저 관측기 | 8개 통과. 실제 브라우저·네트워크·파일 창을 열지 않는 가짜 객체 검사 |
+| 구문 | PowerShell 54개 / Python 29개 / Node 2개, 오류 0. PowerShell script 실행 없음 |
+| 문서 매핑 / 태스크 개요 | 16개 생성 구역 / 116개 태스크 일치. C03 9단계·C11 8단계 및 감사 원본 연결 |
+| 기존 로컬 후보·도구 | source/파일 hash 일치, payload 497개·도구 26개·FFmpeg DLL 7개. 기존 manifest hash는 최초 리뷰 기록과 같음 |
+| 신규 config 생성 / inspect | 서로 다른 새 UUID 15개, run 디렉터리 생성 0. C15 없음. DTD exe·설정/신원/TLS/UI/현장 담당자·C11 lifetime 누락을 표기하며 DRAFT_NOT_READY/exit10, 실측 7종 누락과 functionalActions=0 유지 |
+| 코드/문서 자체 검토 | RV01~RV05, lifecycle 연속 순번, 기동 전 task 회수, 중단/소비된 회차 재실행 차단을 관련 회귀와 대조. 실제 환경 증거로 확대하지 않음 |
+
+검증 요약은 `.artifacts/e2e-rv-20261022-114030/validation.json`, 새 설정·중단 명령 인수인계는 같은 디렉터리의 `configs/draft-report.json`, 준비 검사 결과는 `inspect.json`이다. 이 파일들은 Git에 포함하지 않는 현재 개발 머신의 산출물이며 실행 허가가 아니다.
+
+남은 항목은 실제 DTD 실행본·설정, A/B SID/session·기존 신뢰 TLS endpoint, UI/locale/owner/capture, 후보·현재 도구에 결합한 7종 실측, C11의 실제 OLE 원본 복원·helper 종료 뒤 유지, C04~C06 현장/VM 복귀 담당자다. C16 실제 fault 인과와 각 사례의 기능 PASS도 미실행이다. 이 값들을 추정하거나 verified=true로 채우지 않았다. 실행 금지 범위에서 보완 가능한 코드·문서·검사·신규 draft는 완료했으며 **활성 15개의 실전 준비 상태는 NOT READY**로 유지한다.
+
+## 2026-10-22 실행 준비 재검토 — NOT READY
+
+검토 시각은 시스템 `Get-Date`로 확인한 2026-10-22 10:37 KST다. 검토 기준은 `b4b306cc1b68b4482b220db43634121a26c90ab4`이며 착수 시 작업 트리는 깨끗했다. C01~C16 상세 절차, 통합 색인, 최신 잔여 작업/인수인계, 실행·관측·준비 증거·중단·복구 스크립트와 기존 로컬 산출물을 대조했다.
+
+**준비 완료 0개, 준비 미완료 15개, 범위 제외 1개(C15)다.** 아래의 기존 구현 완료 체크와 과거 검사 통과는 이번 재검토에서 발견한 결함의 해소나 실제 실행 준비 완료를 뜻하지 않는다. C15는 현재 색인과 코드의 제외 결정을 유지하며, 이번 사용자의 16개 검토 요청을 TURN 재포함 지시로 해석하지 않았다.
+
+이번에는 E2E, Prepare/Run/Abort의 실제 실행, DTD/SSH 연결, 제품/Viewer 기동, 서비스 설치·조작, UAC/SAS/잠금, 실제 입력·사용자 clipboard, CI를 수행하지 않았다. 아래 재현은 외부 호출을 대체한 메모리 데이터·가짜 clock·임시 파일만 사용했다. **실제 제품의 권한 누출이나 복구 실패를 실증한 결과가 아니라 시험 도구의 판정·복구 결함을 확인한 결과다.** 제품·시험 스크립트는 수정하지 않고 이 리뷰 문서만 갱신했다.
+
+### 새로 확인한 스크립트 결함
+
+| ID / 우선순위 | 영향 | 확인한 문제와 코드 근거 | 실행 전에 필요한 조치 |
+|---|---|---|---|
+| RV01 / P1 | C09 | [await_completion](../scripts/e2e_case_observations.py) 63~64행이 `source=denied`에 `joinVisible=true`를 요구한다. C09는 4단계에서 파일 거절만 확인하고 HostStop은 [CASES](../scripts/e2e_case_steps.py) 221행의 5단계에서 수행한다. 정상적인 파일 거절로 세션이 유지되면 앞 단계가 `Pending(viewer-end)`로 대기해 다음 종료 단계에 도달하지 못한다. | C02의 접속 거절과 C09의 파일 거절 완료 조건을 분리한다. 세션을 유지한 정상 declined 응답이 4단계를 완료하고 5단계에서 종료되는 관측 흐름을 입력 없이 검사한다. |
+| RV02 / P1 | C07~C11, C13 | [invariants](../scripts/e2e_case_observations.py) 34~35행의 무영상·무캡처·무입력 검사가 C02/C12에만 적용된다. 해당 6개는 screen/control 권한이 없지만 승인 뒤 `frames=3`, `capture-start`, `native-input(count=1)`이 함께 있는 합성 기록도 invariant를 통과했다. 채널 whitelist와 승인 전 검사만으로 승인 후 미허용 미디어/입력 동작을 판정하지 못한다. | 고정 권한 mask에 따라 승인 후에도 video track/frame/capture/native-input 금지를 계속 검사한다. 실제로 도착한 위반은 Pending으로 숨기지 않고 첫 실패로 끝내며 각 해당 사례에 음성 벡터를 추가한다. |
+| RV03 / P1 | C03, C11 | 각 상세 계획 7.2절은 ConsentGranted/Allowed와 SessionEnded/Stopped를 각 1회 요구한다. 그러나 [C03 최종 단계](../scripts/e2e_case_steps.py) 179행은 HELD만 검사하고 감사 파일도 요구하지 않는다. C11의 236행은 복원 boolean만 판정하고 audit.ndjson은 수집 대상으로만 둔다. [derive](../scripts/e2e_case_observations.py)의 C03 held/C11 restored는 빈 audit에서도 최종 predicate를 통과했다. C11은 빈 감사 파일이 존재하기만 해도 이 누락을 가려낼 판정이 없다. | 세션 종료 뒤 현재 session/connection/permission generation의 필수 감사 개수·종류·결과를 공통 최종 판정에 연결한다. C03도 원본 감사 증거를 보존하고, 누락·중복·다른 세션/세대의 감사는 PASS를 거부한다. |
+| RV04 / P1 | 모든 활성 사례의 명시적 Abort | [runtime.main](../scripts/e2e_case_runtime.py) 600행에서 공통 `read_config`를 먼저 실행하고 611행에서 Abort로 분기한다. 이 검사는 현재 candidate hash와 DTD/config/sourceEvidence 파일 존재를 요구한다. 이 중 하나라도 사라지거나 바뀌면 stop marker 생성·`finish_existing` 진입 이전에 종료한다. `missing-file(sourceEvidence)`를 주입한 재현에서 exit10, 복구 함수 호출 0회, finish.json 생성 0개였다. | 실행 허용용 준비 검사와 기존 회차의 중단·복구에 필요한 최소 소유권 검사를 분리한다. 검증된 원 회차에 stop을 먼저 기록하고 원 origin/owner/세션으로만 복구한다. 변경된 후보를 새로 실행하는 우회 경로는 만들지 않는다. |
+| RV05 / P1 | 모든 활성 사례의 기한 초과 복구 | [stop_and_recover](../scripts/e2e_case_runtime.py) 294행과 305행은 복구 deadline을 항상 `origin+900초` 이하로 자른다. 이미 900초가 지났으면 deadline이 과거가 되어 gateway/transport 직전의 `remaining()`에서 실패한다. origin 이후 901초 가짜 clock에서 finish/release/stop/restore/inspect/close에 전달된 deadline 모두 과거였고 외부 호출 전달은 0회였다. 문서의 “900초 초과도 안전 복구 계속, 결과는 FAIL_RECOVERY_REQUIRED” 계약과 다르다. | 기존 origin과 시간 위반 판정은 유지하되 기한 후 안전 복구 호출에는 별도의 짧은 유한 호출 상한을 준다. 기능 실행·재시도는 허용하지 않고 입력 해제·소유 정리·독립 복귀만 가능해야 한다. 이는 Python 복구 경로의 결함이며 별도 watchdog 전체의 실제 실패를 뜻하지 않는다. |
+
+RV01~RV05는 코드 수정과 관련 입력 없는 회귀·재리뷰가 먼저 필요한 항목이다. 기존 83개 Python 검사의 통과로 이 항목을 닫지 않는다. 각 검사군은 가짜 payload/transport와 개별 predicate를 사용하므로 실제 source 조합 전체를 검증했다는 뜻이 아니다.
+
+### 공통 준비 차단과 사례별 판정
+
+로컬에서 지정 DTD 저장소 `F:/github/DesktopTestDriver`, `bin/live_Release/Controller/Controller.exe`, 기존 `.artifacts/dtd-e2e-20261020/Controller.json`은 모두 존재하지 않았다. 원격 A/B에는 접근하지 않았으므로 원격 부재로 확대하지 않는다.
+
+`.artifacts/e2e-remaining-configs-20261022-v3/draft-report.json`의 활성 15개는 모두 `DRAFT_NOT_READY`다. 공통으로 DTD 설정, TLS/local 설정, 실제 A/B SID/session, sourceEvidence, uiEvidence가 빠져 있다. C04는 UAC trigger hash와 recovery.operator, C05/C06은 recovery.operator도 미확보다. 필수 실측 7종은 monotonicDeadline, independentWatchdog, boundedScm, boundedUac, cleanup, externalReturn, tlsIdentity다. 현재 inspect는 이 7종 누락과 config-field-required를 출력하며 기능 동작 0개로 차단한다.
+
+아래 표의 “공통”은 현재 A/B 신원·DTD·TLS·UI/locale/owner/capture, 후보/도구에 결합한 7종 실측과 시간 예산, 독립 정리·복귀 증거 및 RV04/RV05를 뜻한다. 기능 실행 이력과 준비 상태는 별개다. C01의 과거 도구 실패는 기능 PASS가 아니며 새 회차를 실행하지 않았다.
+
+| 사례 | 현재 준비 상태 | 공통 이외 실행 전 확인할 핵심 사항 |
+|---|---|---|
+| C01 화면·종료 | NOT READY | 실제 marker/monitor/frame 증가, 표시·HostStop 1초·종료 감사, 과거 RuntimeException의 후속 통합 확인 |
+| C02 동의 거절 | NOT READY | 승인 전부터 누적 영상·입력·채널 0, 실제 거부·종료·재개 없음 |
+| C03 일반 입력·해제 | NOT READY | RV03, 실제 fixture 포커스/좌표/drag/wheel/F12/reset ACK와 OS held |
+| C04 관리자·UAC·해제 | NOT READY | 현장/VM 복귀 담당자·수단, 서명 trigger hash, 실제 OCR/secure desktop/권한 회수 |
+| C05 SAS·복귀 | NOT READY | 담당자·독립 복귀, 실제 Windows 보안 화면 분류와 Viewer 취소 |
+| C06 잠금·복귀 | NOT READY | 동일 사용자 로그인 담당자·콘솔, WTS 잠금·권한 폐기·무동의 재개 없음 |
+| C07 A→B 파일 | NOT READY | RV02, 실제 저장 승인·offer ID·최종 NTFS 길이/hash·partial 부재 |
+| C08 B→A 파일 | NOT READY | RV02, 실제 native picker·writer.close·receipt·최종 파일·감사 |
+| C09 파일 거절 | NOT READY | RV01/RV02, 실제 declined와 본문/저장 0, 세션 종료는 다음 단계 |
+| C10 양방향 채팅 | NOT READY | RV02, 양쪽 실제 UI의 Unicode 텍스트·정확히 1회 표시 |
+| C11 명시적 clipboard | NOT READY | RV02/RV03, 실제 OLE baseline 전체 지원·독립 복원·helper 종료 뒤 유지 증거 |
+| C12 진단 전용 | NOT READY | 실제 무캡처/무입력과 OS 대조, provider N/A/stale 표시 |
+| C13 Runbook 승인 | NOT READY | RV02, 설치/catalog/dialog/실행 hash, 일반 권한 worker 정확히 1회·종료·감사 |
+| C14 승인 대기 취소 | NOT READY | worker 0, 실제 창 닫기 ACK→새 epoch/입력 재개 순서와 취소 후 클릭 |
+| C15 TURN | EXCLUDED | 기존 제외 결정 유지. 검토 대상에는 포함했으나 이번 준비 실패/PASS 집계에 넣지 않음 |
+| C16 서비스 장애 | NOT READY | 실제 ACK→down→소유 fault→fence/up 인과, DTD 자동 up 배제, 재시작 없음·정상 복귀 |
+
+### 절차 문서 정합성
+
+P2 문서 문제도 남는다. [통합 색인](e2e-acceptance-plan-20261021.md) 선두는 15개/C15 제외지만 1절과 종료 조건에는 여전히 “실행할 시험 16개”, “C01~C16 모두 PASS”가 있다. 현재 15개 종료 조건으로 본문을 맞추고 기존 16개 명세를 보존한 범위를 구분해야 한다. 여러 상세 문서 7행의 “bootstrap/source/독립 복구 미완료”는 이후 코드 연결 기록보다 오래됐으며, 미구현과 구현 후 미실증을 다시 구분해야 한다. 이 재검토는 범위를 늘리거나 기존 실전 게이트를 승격하지 않는다.
+
+### 이번에 직접 수행한 입력 없는 확인
+
+| 확인 | 현재 결과 |
+|---|---|
+| 기존 Python 검사 4개 파일 | 37 + 13 + 3 + 30 = 83개 통과. 프로세스/네트워크 경계를 대체한 검사 |
+| `node --test tests/e2e/browser-observer.test.cjs` | 가짜 DOM/WebSocket/Peer/native picker를 사용하는 8개 통과. 브라우저 기동 없음 |
+| PowerShell Parser.ParseFile | scripts/e2e*.ps1 54개, 구문 오류 0. dot-source·실행 없음 |
+| Python ast.parse | scripts의 e2e-/e2e_case_/test_e2e_case 계열 28개, 구문 오류 0 |
+| `e2e_case_artifacts.py` | 현재 source/payload/도구 hash 일치. 후보 497개, 도구 26개, FFmpeg DLL 7개. LOCAL_ARTIFACTS_VERIFIED_NOT_READY |
+| `update-e2e-case-mappings.py --check` | 16개 생성 구역 일치. 문서-코드 링크 일치이며 동작 검증 아님 |
+| `update-task-overview.py --check` | 116개 태스크 일치. E/V/F/R30 수용 체크 변경 없음 |
+| 현재 C01 draft evidence inspect | NOT_READY/config-field-required, 필수 실측 7종 누락, functionalActions=0 |
+| RV01~RV05 합성 재현 | 정상 파일 거절 대기 오류, 미허용 캡처/입력 invariant 누락, 빈 감사 최종 predicate 통과, Abort 이전 차단, 900초 이후 과거 복구 deadline을 확인 |
+
+후보 manifest SHA-256은 `94457430cfa22827be65047613b8a3139cf9ee8c075b9f0fed5c2ccac0504929`, 도구 build-result SHA-256은 `4318be8e53d96b9dc6a2a12b26b43a52b771bde5e2d8af62aa0e456709a62c66`으로 기존 기록과 일치했다. 빌드·게시를 다시 수행하지 않았다. 다음 순서는 **RV01~RV05 수정·입력 없는 회귀·재검토 → 문서 정합성 보완 → 별도 허용 범위의 B01~B04 준비/실증 → 사례별 Prepare/READY 검토**다. 이번 검토에서 B/C 실행을 시작하지 않는다.
+
 ## 2026-10-22 후속 구현·검증
 
 [잔여 작업 완료 기록](e2e-remaining-work-20261022.md)의 A01~A12에 OLE 독립 복제/복원, 부분 기동 회수, 비동기 관측, 단일 deadline, 실측 증거 생성, UI/파일 관측, C16 crash audit와 인수인계를 반영했다. 아래 기존 기록은 당시 상태다. 최신 검사 개수·산출물 hash·제한·고정 절차는 완료 기록 9~11절을 따른다. 실제 DTD/SSH/제품/서비스/UI/사용자 clipboard는 실행하지 않았다. C01~C14·C16은 외부 실측 증거가 없어 NOT READY이며 C15는 EXCLUDED다.

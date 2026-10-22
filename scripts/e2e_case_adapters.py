@@ -229,8 +229,9 @@ class Harness:
         require(Path(get(self.manifest,'localRun')).resolve()==ctx.run_dir.resolve(),'manifest-directory')
         if action=='finish' and not (ctx.run_dir/'finish.json').exists():
             new_json(ctx.run_dir/'finish.json',{'id':ctx.run_id,'reason':'case-stop'})
-        return self.transport(sys.executable,[str(ROOT/'scripts/e2e-product-client.py'),action,
-                              '--campaign',str(self.path)],ctx.remaining(deadline,10),ctx)
+        args=[str(ROOT/'scripts/e2e-product-client.py'),action,'--campaign',str(self.path)]
+        if ctx.stopping:args.append('--recovery-only')
+        return self.transport(sys.executable,args,ctx.remaining(deadline,10),ctx)
 
 
 class OwnedGateway:
@@ -373,6 +374,7 @@ class CaseBackend:
         self.ui_click('pc-b','AdminConsentApprove',ctx,deadline,ctx.active_step+':admin-approve')
 
     def action(self,action,ctx,deadline):
+        require(not ctx.stopping,'feature-action-during-recovery',exit_code=40)
         require(ctx.case_id!='C15','turn-excluded-20261022',exit_code=10)
         op,*args=action
         if ctx.case_id=='C11' and op not in ('capture-clipboard-baseline','restore-clipboard-baseline'):

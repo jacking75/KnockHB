@@ -1,7 +1,74 @@
 """Resume only cleanup when a run's original controller has exited."""
 import time
-from e2e_case_runtime import read_json,new_json,get,require,stop_and_recover
+import re
+from e2e_case_runtime import (ROOT,Context,CaseError,read_json,new_json,get,require,
+                             stop_and_recover,safe_path,digest,equal)
 from e2e_case_process import exists
+
+
+def abort_existing(case_id,run_dir,_config_path,transport):
+    """Stop a bound run without requiring its mutable execution prerequisites.
+
+    A missing/changed caller config, candidate, TLS or readiness file must not
+    prevent the local stop. Remote cleanup still uses the prepared identity and
+    manifest, never arbitrary caller-supplied endpoints, commands or PIDs.
+    """
+    root=safe_path(run_dir,ROOT/'.artifacts')
+    match=re.fullmatch(r'e2e-(C(?:0[1-9]|1[0-6]))-([a-f0-9]{32})',root.name)
+    require(root.is_dir() and match is not None and match[1]==case_id,'abort-run-directory',exit_code=40)
+    rid=match[2]
+    require(root==(ROOT/'.artifacts'/root.name).resolve(),'abort-run-directory',exit_code=40)
+    campaign=read_json(root/'campaign.json')
+    require(campaign.get('version')==4 and campaign.get('id')==rid and campaign.get('caseId')==case_id and
+            safe_path(get(campaign,'localRun'))==root,'abort-campaign-owner',exit_code=40)
+    require(re.fullmatch(r'C:/Users/jacking75NoteBook/RemoteAssist-E2E-[0-9]+',get(campaign,'staging')),
+            'abort-staging-owner',exit_code=40)
+    ctx=Context(case_id,rid,root)
+    ctx.stopping=True
+    launch_path=root/'launch-once.json'
+    if launch_path.exists():
+        launch=read_json(launch_path)
+        require(launch.get('runId')==rid and launch.get('caseId')==case_id and
+                type(launch.get('origin')) is int and 0<=launch['origin']<=ctx.clock() and
+                launch.get('frequency')==1_000_000_000,'abort-launch-owner',exit_code=40)
+        ctx.origin=launch['origin']
+    marker=root/'finish.json'
+    try:new_json(marker,{'id':rid,'reason':'explicit-abort','tick':ctx.clock()})
+    except FileExistsError:pass
+    require(read_json(marker).get('id')==rid,'abort-stop-owner',exit_code=40)
+    try:
+        frozen=read_json(root/'frozen-inputs.json')
+        require(frozen.get('caseId')==case_id and frozen.get('runId')==rid,'abort-frozen-owner')
+        saved=root/'recovery-config.json'
+        if saved.exists():
+            require(digest(saved)==get(frozen,'recoveryConfigSha256'),'abort-recovery-config-changed')
+            config=read_json(saved)
+        else:
+            # Older preparations can recover only from their unchanged original
+            # config. No candidate/tool/evidence existence check is made here.
+            original=safe_path(get(frozen,'configPath'),exists=True)
+            require(digest(original)==get(frozen,'configSha256'),'abort-original-config-changed')
+            config=read_json(original)
+        require(config.get('caseId')==case_id and config.get('runId')==rid and
+                safe_path(get(config,'runDir'))==root and config.get('staging')==campaign['staging'] and
+                config.get('candidateSha256')==campaign.get('candidateSha256') and
+                equal({'a':get(config,'a'),'b':get(config,'b')},get(campaign,'identity')),'abort-config-owner')
+        require(config.get('dtdExe')=='F:/github/DesktopTestDriver/bin/live_Release/Controller/Controller.exe',
+                'abort-dtd-path')
+        safe_path(get(config,'dtdConfig'))  # May be missing; remote finish still runs.
+        from e2e_case_ui import rules
+        config['uiRules']=rules(config.get('uiRules',{}))
+        prepared_path=root/'prepared.json'
+        if prepared_path.exists():
+            prepared=read_json(prepared_path)
+            require(prepared.get('runId')==rid and prepared.get('caseId')==case_id,'abort-prepared-owner')
+            if prepared.get('campaignSha256'):
+                require(digest(root/'campaign.json')==prepared['campaignSha256'],'abort-campaign-changed')
+        return finish_existing(config,ctx,transport)
+    except (CaseError,OSError,KeyError,TypeError,ValueError) as error:
+        return {'caseId':case_id,'runId':rid,'state':'FAIL_RECOVERY_REQUIRED','stopRequested':True,
+                'code':getattr(error,'code',type(error).__name__),'origin':ctx.origin,
+                'recovery':{'verified':False},'functionalActions':0}
 
 
 def finish_existing(config,ctx,transport):
@@ -19,9 +86,9 @@ def finish_existing(config,ctx,transport):
     ctx.origin=launch['origin'];ctx.stopping=True
     if not (ctx.run_dir/'finish.json').exists():new_json(ctx.run_dir/'finish.json',{'id':ctx.run_id,'reason':'explicit-abort','tick':ctx.clock()})
     harness=Harness(str(ctx.run_dir/'campaign.json'),transport)
-    try:harness.call('finish',ctx,min(ctx.end(900),ctx.clock()+10000000000))
+    try:harness.call('finish',ctx,ctx.recovery_deadline(900,10))
     except Exception:pass # Preserve the stop marker and still attempt recovery.
-    wait_end=min(ctx.end(900),ctx.clock()+60000000000)
+    wait_end=ctx.recovery_deadline(900,60)
     def saved_result():
         previous=read_json(ctx.run_dir/'result.json')
         require(previous.get('runId')==ctx.run_id and previous.get('caseId')==ctx.case_id,'abort-result-owner')
@@ -74,7 +141,7 @@ def finish_existing(config,ctx,transport):
         load(ctx.run_dir/'clipboard-guard-owner.json',lambda value:setattr(observer.desktop,'clipboard',value))
         # Even a capture reply lost before owner persistence must get its
         # restore signal. Never start a replacement baseline guard.
-        try:observer.desktop.signal('clipboard-restore',ctx,min(ctx.end(840),ctx.clock()+10000000000))
+        try:observer.desktop.signal('clipboard-restore',ctx,ctx.recovery_deadline(840,10))
         except Exception as e:load_errors.append('clipboard-signal:'+getattr(e,'code',type(e).__name__))
     stop_and_recover(ctx,backend)
     if load_errors:ctx.recovery.update(verified=False,loadErrors=load_errors)

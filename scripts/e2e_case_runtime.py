@@ -211,9 +211,13 @@ class Context:
         require(name in ('dtd:pc-a','dtd:pc-b','runtime:local','runtime:remote','clipboard:pc-b','prepared:remote'), 'lifecycle-resource')
         require(state in ('intent','acquired','released','unknown'), 'lifecycle-state')
         if owner_file is not None:require(Path(owner_file).name==owner_file,'lifecycle-owner-file')
+        path=self.run_dir/'lifecycle.ndjson'
+        if not self.lifecycle and path.exists():
+            from e2e_case_records import decode,sequence
+            with path.open('rb') as stream:self.lifecycle=sequence(decode(stream.read(LIMIT+1),True),self.run_id)
         row=dict(runId=self.run_id,seq=len(self.lifecycle)+1,resource=name,state=state,
                  ownerFile=owner_file,tick=self.clock(),frequency=1000000000)
-        with (self.run_dir/'lifecycle.ndjson').open('ab') as f:
+        with path.open('ab') as f:
             f.write(json.dumps(row).encode()+b'\n');f.flush();os.fsync(f.fileno())
         self.lifecycle.append(row)
 
@@ -237,6 +241,16 @@ class Context:
         remaining = min(cap, (deadline-now)/1000000000)
         require(remaining > 0, 'deadline-expired')
         return remaining
+
+    def recovery_deadline(self, phase_seconds, allowance):
+        """Keep the original SLA; overdue safety work gets at most 10 seconds.
+
+        This is a call budget, never a new run origin or feature-action grant.
+        """
+        require(self.stopping and 0 < allowance <= 180, 'recovery-budget-only')
+        now=self.clock()
+        deadline=min(self.end(900),self.end(phase_seconds),now+int(allowance*1e9))
+        return deadline if deadline>now else now+int(min(allowance,10)*1e9)
 
     def log(self, operation, status, request_id=None):
         require(len(self.ledger) < 4096, 'ledger-bound')
@@ -288,10 +302,9 @@ def stop_and_recover(ctx, backend):
                 errors.append('guards-retained-unverified-recovery')
                 continue
             # Expired runs still attempt finite safety recovery; do not reset origin.
-            phase_end=ctx.end(840 if operation in ('inspect-independent','retire-and-close') else 540)
             allowance={'stop-owned-runtime':180,'inspect-independent':60,'retire-and-close':45,
                        'restore-case-state':30,'release-owned-input':20}.get(operation,10)
-            end = min(ctx.end(900),max(ctx.clock()+1000000000, min(phase_end, ctx.clock()+int(allowance*1e9))))
+            end = ctx.recovery_deadline(840 if operation in ('inspect-independent','retire-and-close') else 540,allowance)
             data = backend.recover(operation, ctx, end)
             require(data.get('status') == 'completed', 'recovery-action-failed', operation)
             if operation == 'inspect-independent':
@@ -302,7 +315,7 @@ def stop_and_recover(ctx, backend):
     if ctx.clock()>ctx.end(840):errors.append('recovery-phase-deadline')
     if errors:
         ctx.recovery['verified'] = False
-        try:backend.recover('close-owned-sessions',ctx,min(ctx.end(900),max(ctx.clock()+1000000000,min(ctx.end(840),ctx.clock()+10000000000))))
+        try:backend.recover('close-owned-sessions',ctx,ctx.recovery_deadline(840,10))
         except Exception as e:errors.append('close-owned-sessions:'+type(e).__name__)
     ctx.recovery['errors'] = errors
     ctx.phase_ticks['recoveryEnd']=ctx.clock()
@@ -491,8 +504,10 @@ def freeze_inputs(config,config_path):
         entries.append({'path':str(p),'sha256':digest(p),'bytes':p.stat().st_size})
     entries=sorted({r['path']:r for r in entries}.values(),key=lambda r:r['path'])
     encoded=json.dumps(entries,sort_keys=True,separators=(',',':')).encode('utf-8')
+    recovery_bytes=json.dumps(config,ensure_ascii=False,allow_nan=False,indent=2).encode('utf-8')
     return {'caseId':config['caseId'],'runId':config['runId'],'configPath':str(Path(config_path).resolve()),
             'configSha256':digest(config_path),'toolManifestSha256':hashlib.sha256(encoded).hexdigest(),
+            'recoveryConfigSha256':hashlib.sha256(recovery_bytes).hexdigest(),
             'files':entries}
 
 
@@ -503,6 +518,8 @@ def prepare_case(config, config_path, ctx, dtd):
     require(not ctx.run_dir.exists(),'prepare-replay',exit_code=40)
     ctx.run_dir.mkdir(parents=True)
     frozen=freeze_inputs(config,config_path)
+    new_json(ctx.run_dir/'recovery-config.json',config)
+    require(digest(ctx.run_dir/'recovery-config.json')==frozen['recoveryConfigSha256'],'recovery-config-write')
     new_json(ctx.run_dir/'frozen-inputs.json',frozen)
     blockers=[]
     try:readiness(config,frozen)
@@ -597,6 +614,12 @@ def main(argv=None):
                               'state': 'EXCLUDED', 'reason': 'TURN excluded by user on 2026-10-22; direct NAT connectivity assumed',
                               'functionalActions': 0}))
             return 10
+        if a.action=='Abort':
+            from e2e_case_adapters import OwnedGateway
+            from e2e_case_recovery import abort_existing
+            result=abort_existing(a.case,a.run_dir,a.config,OwnedGateway());print(json.dumps(result))
+            if result.get('state')=='PREPARATION_RETIRED_NOT_EXECUTED':return 10
+            return 20 if result.get('state')=='ABORTED_RECOVERED' else 30
         c = read_config(a.config, a.case, a.run_dir)
         from e2e_case_steps import CASES
         require(a.case in CASES, 'case-not-implemented', exit_code=10)
@@ -608,12 +631,6 @@ def main(argv=None):
             print(json.dumps(result));return 0 if result['state']=='READY_NOT_EXECUTED' else 30 if result['state']=='FAIL_RECOVERY_REQUIRED' else 10
         if a.action=='Collect':
             print(json.dumps(collect_saved(ctx)));return 10
-        if a.action=='Abort':
-            from e2e_case_adapters import OwnedGateway
-            from e2e_case_recovery import finish_existing
-            result=finish_existing(c,ctx,OwnedGateway());print(json.dumps(result))
-            if result.get('state')=='PREPARATION_RETIRED_NOT_EXECUTED':return 10
-            return 20 if result.get('state')=='ABORTED_RECOVERED' or result.get('recovery',{}).get('verified') else 30
         if a.action=='Run':
             from e2e_case_readiness import verify_frozen
             from e2e_case_adapters import OwnedGateway,Dtd,Harness,CaseBackend

@@ -42,10 +42,12 @@ def render(case):
         evidence=', '.join('`'+s+'`' for s in step.evidence)
         rows.append(f'| {i:02d} / {step.name} | [CASES["{case}"][{i-1}]](../scripts/e2e_case_steps.py#L{lines[step.name]}) | {actions} → {observations} | {step.seconds:g}초 | {evidence} |')
     blockers='\n'.join('- '+b for b in live_blockers(case))
+    normal_count=len(CASES);failure_count=sum(len(steps) for steps in CASES.values())
+    path_count=normal_count+failure_count
     meta=contract(case,'all')
     scope='C15는 이번 범위 EXCLUDED다. 아래 코드는 향후 재포함 시 보존 명세다.' if case=='C15' else '현재 대상은 C01~C14·C16의 15개다. C15/TURN collector는 이 사례의 외부 조건이 아니다.'
     return f'''{START}
-## 11. 2026-10-21 코드 연결·입력 없는 검증 결과
+## 11. 2026-10-22 코드 연결·입력 없는 검증 결과
 
 {scope}
 
@@ -56,17 +58,19 @@ def render(case):
 - 실제 호출: [e2e_case_adapters.py](../scripts/e2e_case_adapters.py)의 `Dtd`, `CaseBackend.action`, `Harness.call`, `OwnedGateway`. 기존 `e2e-native.cs`의 Job과 `e2e-product-client.py`의 소유 manifest transport를 재사용한다. selector 0/복수개·owner 불일치·미확정 요청은 실패하며 임의 명령 입력 경로는 없다.
 - 실제 관측: [e2e_case_live.py](../scripts/e2e_case_live.py)의 `LiveObserver`, [e2e_case_sources.py](../scripts/e2e_case_sources.py)의 `assemble/read`, [e2e_case_observations.py](../scripts/e2e_case_observations.py)의 `derive`. 브라우저 메타데이터, 현재 제품 trace/audit, DTD 소유 창, OS/fixture 증거를 조합한다. 누락을 기대값으로 대체하지 않는다.
 - `Run -Execute`는 `verify_frozen`과 `readiness`를 통과한 회차만 `execute_steps`에 연결한다. `Abort`는 먼저 stop을 기록하고 기존 실행기의 복구를 기다리며, 실행기 종료가 확인된 경우에만 `finish_existing`이 동일 origin/소유 session으로 복구한다. `Collect`는 저장 증거 재검사이며 현재 데스크톱 복귀 증명이 아니다.
+- `Abort`는 준비 때 저장한 `recovery-config.json`과 `frozen-inputs.json`의 hash·campaign/회차 소유권을 검증한다. 현재 candidate/readiness/TLS/호출자 config의 부재로 stop을 막지 않는다. 사본이 없는 이전 준비는 hash가 그대로인 원 config만 복구에 사용한다. 변조·소유권 불명은 추정 실행 없이 FAIL_RECOVERY_REQUIRED다.
+- 원 origin과 900초 위반은 유지한다. 지난 복구 deadline 대신 호출별 최대 10초의 안전 복구 예산으로 stop/release/소유 정리/독립 관측만 수행한다. 기능 조작·UAC·새 clipboard/fault guard는 복구 예산으로 시작할 수 없다. 초과 회차는 실제 복귀해도 PASS가 아니다.
 - 부속 구현: [e2e_case_campaign.py](../scripts/e2e_case_campaign.py)의 `package_campaign/Campaign`, [e2e_case_desktop.py](../scripts/e2e_case_desktop.py)의 `DesktopSources`, [E2eDesktop Program.cs](../scripts/e2e-desktop/Program.cs), [ClipboardSnapshot.cs](../scripts/e2e-desktop/ClipboardSnapshot.cs), [e2e_case_recovery.py](../scripts/e2e_case_recovery.py)의 `finish_existing`. 기존 하네스·DesktopTestDriver API1을 재사용한다.
 
 | 계획 단계/이름 | 실제 정의 | 고정 조작 → 관측/predicate | 단계 상한 | 수집할 증거 |
 |---|---|---|---|---|
 {chr(10).join(rows)}
 
-위 모든 단계의 **순서·각 단계 첫 실패 중단**은 `RuntimeTests.test_all_case_step_orders_and_first_failure_at_every_step`에서 실제 executor를 기록용 sink로 실행해 확인했다. 전체 16개 정상 순서와 103개 실패 지점, 합계119개 경로다. 이 검사는 live 관측 source나 UI의 실행 성공을 검증하지 않는다. 이 C의 주요 판정 벡터는 `PredicateTests.{TESTS[case]}`로 검증했다. 각 step의 모든 live 필드를 검증한 것으로 확대하지 않는다.
+위 모든 단계의 **순서·각 단계 첫 실패 중단**은 `RuntimeTests.test_all_case_step_orders_and_first_failure_at_every_step`에서 실제 executor를 기록용 sink로 실행해 확인한다. 현재 정의는 {normal_count}개 정상 순서와 {failure_count}개 실패 지점, 합계 {path_count}개 경로다. C15의 보존 레시피를 포함한 합성 검사 수이며 실제 실행 범위는 15개다. 이 검사는 live 관측 source나 UI의 실행 성공을 검증하지 않는다. 이 C의 주요 판정 벡터는 `PredicateTests.{TESTS[case]}`로 검증한다. 각 step의 모든 live 필드를 검증한 것으로 확대하지 않는다.
 
-검증은 [test_e2e_cases.py](../scripts/test_e2e_cases.py)의 37개, [test_e2e_case_live.py](../scripts/test_e2e_case_live.py)의 13개, [브라우저 observer 테스트](../tests/e2e/browser-observer.test.cjs)의 5개를 통과했다. 실제 executor의 119개 경로와 live source의 run/sequence/partial record/ACK 인과관계/외부 중단/후보 hash 계약을 검증했다. 제품 전체·E2eDesktop 컴파일과 PowerShell/Python/JavaScript 구문 검사 결과는 [전체 검토·결과](e2e-case-implementation-review-20261021.md)에 연결했다. 테스트는 실제 DTD/SSH/제품/SCM/GUI/UAC/잠금을 호출하지 않았다.
+검증 명령과 현재 결과는 [전체 검토·결과](e2e-case-implementation-review-20261021.md)의 최신 보완 기록에 연결한다. [test_e2e_cases.py](../scripts/test_e2e_cases.py), [test_e2e_case_live.py](../scripts/test_e2e_case_live.py), [test_e2e_case_remaining.py](../scripts/test_e2e_case_remaining.py), [test_e2e_case_scope.py](../scripts/test_e2e_case_scope.py), [리뷰 회귀](../scripts/test_e2e_case_review.py), [브라우저 observer 테스트](../tests/e2e/browser-observer.test.cjs)가 대상이다. 과거 빌드/검사 개수를 현재 결과로 승계하지 않는다. 테스트는 실제 DTD/SSH/제품/SCM/GUI/UAC/잠금을 호출하지 않는다.
 
-### 11.1 이 C에 남은 미구현·미검증·외부 자원
+### 11.1 이 C에 남은 실제 환경 검증·외부 자원
 
 {blockers}
 

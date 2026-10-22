@@ -395,10 +395,13 @@ class LiveObserver:
     def independent_recovery(self,ctx,deadline):
         require(set(self.baselines)>={'pc-a','pc-b'},'baseline-incomplete-recovery-unverified')
         if not self.runtime_started:
+            proof={}
             for machine in ('pc-a','pc-b'):
                 actual=self.desktop.snapshot(machine,ctx,deadline);base=self.baselines[machine]
                 require(actual['desktop']=='Default' and actual['sid']==base['sid'] and actual['session']==base['session'] and
                         actual['activeSessionId']==base['session'] and actual['heldVirtualKeys']==[],'independent-return-failed')
+                proof[machine]=actual
+            self.last['recovery']=proof
             return {'status':'completed','resourcesAbsent':True,'verified':True}
         remote=self.harness_data('collect',ctx,deadline)
         require(remote.get('id')==ctx.run_id and remote.get('resourcesAbsent') is True,'remote-resources-remain')
@@ -441,6 +444,10 @@ class LiveObserver:
         # is never treated as independent current desktop recovery.
         b=self.desktop.snapshot('pc-b',ctx,deadline)
         if self.runtime_started:self.desktop.bridge('retire',ctx,deadline,name=b['_sourceName'])
+        else:
+            result=self.campaign.remote('e2e-case-unprepare.ps1',deadline)
+            require(result.get('status')=='completed','pre-runtime-retirement-incomplete')
+        ctx.resource('prepared:remote','released')
         proof=ctx.run_dir/'local-recovery-verified.json'
         if not proof.exists():new_json(proof,{'id':ctx.run_id,'tick':ctx.clock(),'recovery':self.last['recovery']})
         from e2e_case_process import alive

@@ -29,8 +29,9 @@ class ScopeTests(unittest.TestCase):
             prerequisites({'caseId': 'C15'})
         self.assertEqual(error.exception.code, 'turn-excluded-20261022')
 
-    def test_historical_recovery_and_other_cases_still_reach_config(self):
-        for case, action in (('C15', 'Abort'), ('C15', 'Collect'), ('C01', 'Validate'), ('C16', 'Validate')):
+    def test_historical_collect_and_other_cases_still_reach_config(self):
+        # Abort has its own owner-bound path; it must survive missing readiness.
+        for case, action in (('C15', 'Collect'), ('C01', 'Validate'), ('C16', 'Validate')):
             with patch.object(runtime, 'read_config', side_effect=runtime.CaseError('scope-test', '', exit_code=10)) as read:
                 with contextlib.redirect_stdout(io.StringIO()):
                     runtime.main(['--case', case, '--action', action, '--run-dir', 'unused', '--config', 'missing'])

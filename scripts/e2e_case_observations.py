@@ -31,8 +31,14 @@ def invariants(case,browser,events,trace,complete=True):
         pairs=browser.get('selected',[])+[r['metadata'] for r in trace if r['kind']=='selected-pair']
         require(all('relay' not in (p.get('localType'),p.get('remoteType')) for p in pairs),'direct-path-assumption-not-met')
     def msgs(t):return [r for r in events if r.get('message',{}).get('t',r.get('message',{}).get('type'))==t]
-    if case in ('C02','C12'):
-        require(not browser.get('frames',0) and not any(r['kind'] in ('native-input','capture-start') for r in trace),'forbidden-video-or-input')
+    mask=MASKS[index]
+    if not mask&1:
+        require(not browser.get('frames',0) and not browser.get('srcObjectPresent',False) and
+                not any(r['kind']=='track' and r.get('mediaKind')=='video' for r in events) and
+                not any(r['kind']=='capture-start' for r in trace),'forbidden-video-or-input')
+    if not mask&2:
+        require(not browser.get('inputEnabled',False) and
+                not any(r['kind']=='native-input' for r in trace),'forbidden-video-or-input')
     if case=='C02':require(not msgs('data-ready') and not msgs('offer'),'unapproved-session-start')
     if case in ('C07','C08','C09'):
         require(not any(r['kind']=='save-stream-error' for r in events),'native-save-failed')
@@ -60,7 +66,7 @@ def await_completion(case,source,s):
     def has(t):return any(r.get('message',{}).get('t',r.get('message',{}).get('type'))==t for r in events)
     if source in ('session','consent','baseline','catalog') and case!='C02':
         if not has('data-ready'):raise Pending('data-ready')
-    if source in ('end','final','revoked','denied') and case not in ('C03',):
+    if source in ('audit','end','final','revoked') or (case=='C02' and source=='denied'):
         if not b.get('joinVisible',False):raise Pending('viewer-end')
     if source=='final' and case in ('C07','C08') and s['receivedFile']['finalCount']==0:raise Pending('final-file')
     if source=='save' and any(r['kind']=='save-stream-error' for r in events):require(False,'save-stream-error')

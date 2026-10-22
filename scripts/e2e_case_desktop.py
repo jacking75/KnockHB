@@ -64,6 +64,7 @@ class DesktopSources:
         raise CaseError('desktop-source-timeout',name)
 
     def launch_probe(self,machine,operation,ctx,deadline,wait=True,lease_deadline=None,**fields):
+        require(not ctx.stopping or operation in ('snapshot','inspect-owned'),'recovery-probe-not-read-only')
         sample=self.clock(machine,ctx,deadline)
         require(type(sample.get('tick')) is int and type(sample.get('frequency')) is int and sample['tick']>=0 and sample['frequency']>0,'desktop-clock-domain')
         receipt=ctx.clock()

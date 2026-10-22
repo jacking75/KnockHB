@@ -5,7 +5,10 @@ root=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
 p.add_argument('action',choices=('arm','status','observe','finish','collect','evidence'))
 p.add_argument('--campaign',required=True)
+p.add_argument('--recovery-only',action='store_true')
 a=p.parse_args()
+if a.recovery_only and a.action not in ('finish','collect','status','evidence'):
+    raise SystemExit('Recovery permits only stop and read-only evidence')
 manifest_path=Path(a.campaign).resolve()
 if (root/'.artifacts').resolve() not in manifest_path.parents:raise SystemExit('Workspace artifact campaign required')
 m=json.loads(manifest_path.read_text(encoding='utf-8-sig'))
@@ -43,7 +46,7 @@ if start_file.exists():
     start=json.loads(start_file.read_text(encoding='utf-8-sig'))
     if start['id']!=m['id']:raise SystemExit('Campaign clock mismatch')
     remaining=(start['deadline']/start['frequency']-time.perf_counter())
-    if remaining<=0 and a.action not in ('finish','collect'):raise SystemExit('Global deadline expired')
+    if remaining<=0 and a.action not in ('finish','collect') and not a.recovery_only:raise SystemExit('Global deadline expired')
     # Overdue recovery still runs, but it is never reported as meeting the deadline.
     budget=max(1,min(budget,int(remaining))) if remaining>0 else 10
 out=local/(a.action+'-'+str(time.time_ns())+'.json')

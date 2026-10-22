@@ -77,9 +77,13 @@ def readiness(config,frozen):
 
 def verify_frozen(config,config_path,ctx):
     from e2e_case_runtime import freeze_inputs
+    require(not (ctx.run_dir/'finish.json').exists() and not (ctx.run_dir/'launch-once.json').exists(),
+            'prepared-run-stopped-or-consumed',exit_code=10)
     saved=read_json(ctx.run_dir/'frozen-inputs.json')
     current=freeze_inputs(config,config_path)
     require(saved==current,'prepared-inputs-changed',exit_code=10)
+    require(digest(ctx.run_dir/'recovery-config.json')==get(saved,'recoveryConfigSha256'),
+            'prepared-recovery-config-changed',exit_code=10)
     prepared=read_json(ctx.run_dir/'prepared.json')
     require(prepared.get('state')=='READY_NOT_EXECUTED' and prepared.get('runId')==ctx.run_id,'prepare-not-ready',exit_code=10)
     require(digest(ctx.run_dir/'campaign.json')==prepared['campaignSha256'],'campaign-changed',exit_code=10)

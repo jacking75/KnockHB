@@ -15,6 +15,8 @@
 
 체크는 이번 허용 범위인 구현·코드 검토·입력 없는 검증의 완료를 뜻한다. B/C 실증과 기능 PASS는 별도이며 아래 최종 수용 체크를 대신하지 않는다.
 
+후속 RV01~RV06 보완은 [최신 리뷰 기록](e2e-case-implementation-review-20261021.md)의 상단 태스크에서 추적한다. A01~A12와 11절의 수치·hash는 해당 시점의 결과다. 현재 스크립트 변경 뒤에는 새 도구 hash에 맞는 readiness/UI/복원 증거와 신규 Prepare가 필요하며 과거 동결 회차를 재실행하지 않는다. 실제 DTD/A/B/TLS/현장 담당자 및 B01~B04 실증은 여전히 미확보이며 이번에 실행하지 않는다.
+
 **구현자는 [함수·자료구조·실패 분기·검사 벡터별 상세 구현 지시서](e2e-implementation-handoff-20261022.md)를 함께 읽는다.** 이 문서는 범위와 진행 목록이며, 실제 수정 방법은 상세 지시서가 보완한다. 상세 지시서의 `신규` 표시는 아직 코드가 존재한다는 뜻이 아니다.
 
 이 문서는 현재 구현을 실행 가능한 상태로 마무리하기 위한 작업 목록이다. 사용자 요청에 따라 남은 구현·검토·검증·외부 준비·향후 실행을 구분한다. 체크하지 않은 항목은 완료되지 않았다. 예상 시간은 실측이 아닌 코드 검토에 근거한 작업량 추정이다.
@@ -351,6 +353,10 @@ A는 구현·코드 검토·입력 없는 검증이다. B01~B04와 C의 실전 �
 | COLLECTED_SAVED_EVIDENCE_ONLY | Collect exit10. 저장 hash 재검사만 수행한다 |
 
 중단은 생성 handoff의 **동일 case/config/runDir** `-Action Abort` 인자를 사용한다. 원 runner 생존 중에는 stop을 기록하고 원 runner/독립 guard가 복구한다. runner 소실 뒤에만 기존 owner/session과 원 origin으로 인계한다. 기존 intent가 있으면 같은 request ID 상태만 조회한다. 미확정 상태에서 새 launch나 추정 PID kill을 하지 않고 FAIL_RECOVERY_REQUIRED로 담당자에게 전달한다. 복귀가 미확정이면 guard와 원본을 유지한다. 현장/VM 담당자는 Default·동일 사용자·held0과 external-recovery-request를 확인하며 로그인 비밀번호를 자동 입력하지 않는다.
+
+신규 Prepare는 정규화한 비밀 없는 설정을 `recovery-config.json`으로 보관하고 frozen-inputs의 `recoveryConfigSha256`에 묶는다. Run 직전에도 사본 hash를 확인한다. Abort는 실행용 read_config/readiness를 다시 요구하지 않고 campaign/회차/launch 소유권 확인 뒤 로컬 finish를 먼저 기록한다. 현재 config·candidate·readiness·TLS가 사라져도 준비 때의 검증된 사본으로 중단한다. 이전 Prepare에 사본이 없으면 frozen hash와 같은 원 config만 사용할 수 있다. 소유 자료가 변조되거나 유실되어 원격 복구를 안전하게 결합할 수 없으면 로컬 stop 요청을 유지하고 FAIL_RECOVERY_REQUIRED를 반환한다.
+
+900초가 지난 뒤의 안전 복구는 기존 origin과 시간 위반을 그대로 남긴다. 호출별 최대 10초의 별도 유한 상한으로 stop/release/소유 정리·복원/독립 관측만 수행하며 기능 조작·새 UAC·fault·clipboard guard는 금지한다. 하위 product client는 recovery-only의 finish/status/collect/evidence만 허용하고 원격 collect도 과거 deadline으로 부재 관측을 차단하지 않는다. 초과 회차의 최종 판정은 FAIL_RECOVERY_REQUIRED이며 복구 성공으로 시간 위반을 지우지 않는다.
 
 result.json은 기능 판정, firstFailureStep, cleanup, recovery.errors, unresolvedOwnedResources, phase ticks/실제 전체 시간, 화면 점유 bounded/unknown, 실제 toolCalls, evidence hash/bytes를 분리한다. prepare-failure.json은 최초 오류와 회수 오류를 분리한다. 실행 직전 목적·예상 점유·첫 실패 중단·복귀 수단을 전달한다. 이 자료는 이번 실제 실행 허가가 아니다.
 

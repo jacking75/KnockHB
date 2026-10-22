@@ -49,8 +49,11 @@ def generate(template,output,cases=ACTIVE):
         try:read_config(str(path),case,str(run),require_evidence=False)
         except (CaseError,OSError,KeyError,TypeError) as e:missing.append(getattr(e,'code',type(e).__name__))
         missing+=['sourceEvidence','uiEvidence']
+        if not Path(c['dtdExe']).is_file():missing.append('dtdExe')
         if case=='C04' and not c['caseInputs'].get('uacTriggerSha256'):missing.append('caseInputs.uacTriggerSha256')
         if case in ('C04','C05','C06') and not c['recovery'].get('operator'):missing.append('recovery.operator')
+        if case in ('C04','C05','C06'):missing.append('recovery.operatorEvidence')
+        if case=='C11':missing.append('caseInputs.clipboardEvidence')
         entry={'caseId':case,'config':str(path),'configSha256':digest(path),'runId':rid,'state':'DRAFT_NOT_READY','missing':missing}
         commands={action:['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts'/('e2e-'+case+'.ps1')),
                           '-Action',action,'-RunDir',str(run),'-Config',str(path)]+(['-Execute'] if action=='Run' else [])

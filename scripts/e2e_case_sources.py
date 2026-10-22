@@ -217,7 +217,7 @@ def read(o,source,ctx,deadline):
                 s=assemble(o,source,ctx,deadline)
                 from e2e_case_observations import await_completion
                 await_completion(ctx.case_id,source,s)
-                terminal=source in ('audit','end','final') and ctx.case_id not in ('C03',)
+                terminal=source in ('audit','end','final')
                 terminal_rows=[r for r in s['audit'] if r.get('Kind')==3 and r.get('SessionId')==ctx.session_id]
                 require(len(terminal_rows)<=1,'duplicate-terminal-audit')
                 if terminal and not any(r.get('Kind')==3 and r.get('SessionId')==ctx.session_id for r in s['audit']):raise Pending('session-end-audit')

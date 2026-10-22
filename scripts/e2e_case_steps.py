@@ -176,7 +176,8 @@ CASES = {
   S('RemoteDragOnce',10,[('video-drag','fixed-drag')],'drag',E(pathMatched=True,buttonTransitions=['down','up'],dragCount=1,observationValid=True),'target-after-drag.json'),
   S('RemoteWheelOnce',5,[('video-wheel',120)],'wheel',E(wheelDeltaSum=120,wheelCount=1,observationValid=True),'target-after-wheel.json'),
   S('BlurResetOnce',10,[('focus','pc-a','blur-window')],'reset',all_of(same('requestId','ackId'),same('epoch','ackEpoch'),latency('requestedTick','ackTick',1000),E(resetCount=1)),'reset-events.ndjson'),
-  S('CompareTargetAndHeld',10,[],'held',HELD,'target-final.json','input-held-summary.json','input-actions.ndjson')),
+  S('CompareTargetAndHeld',10,[],'held',HELD,'target-final.json','input-held-summary.json','input-actions.ndjson'),
+  S('EndInputSessionAndAudit',20,[end()],'audit',END,'audit.ndjson')),
  'C04': (
   S('OpenAdminEligibleSession',140,[open_session(7)],'admin-before',E(privilegedStartCount=0,nativeInputCount=0),'admin-before.json'),
   S('RequestAdminOnce',10,[click('pc-a','admin-request')],'admin-pending',E(pending=True,inputEnabled=False,productHeld=0),'admin-pending.json'),
@@ -233,7 +234,8 @@ CASES = {
   S('CompareRealBClipboard',5,[],'os',E(osEqualsTestText=True),'clipboard-os-check.json'),
   S('GetClipboardOnce',10,[click('pc-a','clipboard-get')],'get',all_of(E(responseEqualsTestText=True,uiEqualsTestText=True),same('id','responseId'),same('hash','responseHash'),latency('requestedTick','responseTick',2000)),'clipboard-get.json'),
   S('CheckNoAutomaticSync',5,[end()],'counts',E(setCount=1,getCount=1,unsolicitedCount=0),'clipboard-events.ndjson'),
-  S('RestoreClipboardBaseline',10,[('restore-clipboard-baseline',)],'restored',E(baselineRestored=True,privateContentExposed=False),'clipboard-restored.json','audit.ndjson')),
+  S('RestoreClipboardBaseline',10,[('restore-clipboard-baseline',)],'restored',E(baselineRestored=True,privateContentExposed=False),'clipboard-restored.json'),
+  S('VerifyClipboardEndAudit',20,[],'audit',END,'audit.ndjson')),
  'C12': (
   S('ApproveDiagnosticsOnly',140,[open_session(32)],'session',session(32,['control','telemetry']),'diagnostics-consent.json'),
   S('ReceiveTwoTelemetrySamples',10,[],'telemetry',telemetry,'telemetry-samples.ndjson'),
