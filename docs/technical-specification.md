@@ -1,5 +1,9 @@
 # 기술 사양
 
+2026-10-23 규격 변경: NAT 환경에서 직접 P2P 연결 성공은 제품의 필수 요구사항이다. 연결 실패는 요구사항 미충족이며 정상 제약이나 릴레이 대체 성공으로 처리하지 않는다. TURN 서버 준비·강제 릴레이·릴레이 폴백은 제품 범위에서 제외하며 STUN/ICE 직접 연결은 유지한다. 아래 TURN 설정·운영 필수 검사 설명은 종전 코드의 현황이며 새 제품 요구사항이 아니다. 관련 코드 정리가 완료됐다고 간주하지 않는다.
+
+최초 관리자 실행의 권한 준비와 일회성 지원 세션 부여는 [시작 기준](startup-preparation.md)을 따른다. 서비스 자동 시작 자체는 지원 권한을 부여하지 않는다. 인증된 로컬 IPC의 `initial-support` 통지와 `consent.initialSupport` 값으로 Tray/Helper가 해당 세션의 추가 동의 UI 생략을 적용한다. Viewer의 원격 와이어 권한·바인딩·세대 검증은 유지한다.
+
 개발 LAN 기능 검증용 시그널링 `RA_MODE=lan-test`는 사설 IP의 HTTPS/WSS만 허용한다. TLS 인증서/키, 정확히 일치하는 Viewer origin, node credential, 감사 저장소를 필수로 하며 코드/PIN·동의·권한 검사는 동일하다. TURN이 준비되지 않은 LAN 직접 연결 시험에서는 TURN 설정을 생략할 수 있지만 relay/NAT 수용으로 세지 않는다. production의 TURN 필수 조건과 development의 평문 loopback 제한은 유지한다. LAN TLS 신뢰는 시험용 인증서로 설정하고 해당 신뢰의 소유/제거를 기록한다. 코드서명과 TLS 신뢰는 별개다.
 
 [제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 실행 완료는 [구현계획](../docs_working/원격제어-구현계획.md)에서만 판정한다.

@@ -10,9 +10,11 @@ static class DeploymentRegression
     public static async Task Run()
     {
         using var rsa=RSA.Create(3072);var key=rsa.ExportSubjectPublicKeyInfoPem();
-        var names=new[]{"RemoteAssist.Host.Service.exe","RemoteAssist.Host.Tray.exe","RemoteAssist.Host.Helper.exe","RemoteAssist.Host.AdminHelper.exe","RemoteAssist.Host.Recovery.exe","RemoteAssist.Host.RunbookWorker.exe","RemoteAssist.Update.exe","install.ps1","host.settings.json","runbooks/network-summary.ps1","runbooks/clear-dns-cache.ps1","notices/NOTICE.md"};
+        var names=new[]{"RemoteAssist.Host.Service.exe","RemoteAssist.Host.Tray.exe","RemoteAssist.Host.Helper.exe","RemoteAssist.Host.AdminHelper.exe","RemoteAssist.Host.Recovery.exe","RemoteAssist.Host.RunbookWorker.exe","RemoteAssist.Update.exe","install.ps1","prepare-host.ps1","prepare-sas.ps1","host.settings.json","runbooks/network-summary.ps1","runbooks/clear-dns-cache.ps1","notices/NOTICE.md"};
         var empty=Convert.ToHexStringLower(SHA256.HashData(Array.Empty<byte>()));var manifest=new ReleaseManifest("RemoteAssist","windows-x64",1,"1.0.0.0",empty,names.Select(n=>new ReleaseFile(n,0,empty)).ToArray());
         var bytes=JsonSerializer.SerializeToUtf8Bytes(manifest);var signature=rsa.SignData(bytes,HashAlgorithmName.SHA256,RSASignaturePadding.Pss);ReleaseManifest.Verify(bytes,signature,key);
+        Reject(()=>(manifest with {Files=manifest.Files.Where(f=>f.Path!="prepare-host.ps1").ToArray()}).Validate());
+        Reject(()=>(manifest with {Files=manifest.Files.Where(f=>f.Path!="prepare-sas.ps1").ToArray()}).Validate());
         var duplicate=System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.UTF8.GetString(bytes).Replace("\"Protocol\":1","\"Protocol\":1,\"Protocol\":1"));
         Reject(()=>ReleaseManifest.Verify(duplicate,rsa.SignData(duplicate,HashAlgorithmName.SHA256,RSASignaturePadding.Pss),key));
         bytes[^2]^=1;Reject(()=>ReleaseManifest.Verify(bytes,signature,key));

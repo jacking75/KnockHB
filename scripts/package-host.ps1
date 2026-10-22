@@ -14,7 +14,8 @@ foreach($name in @('Service','Tray','Helper','AdminHelper','Recovery','RunbookWo
     & dotnet publish $project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=$Version -o $stage
     if($LASTEXITCODE-ne0){throw "Publish failed: $name"}
 }
-$update=Join-Path $dest 'update'; & dotnet publish (Join-Path $repo 'src/RemoteAssist.Update/RemoteAssist.Update.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:Version=$Version -o $update
+# Only the updater EXE is distributed: bundle native runtime libraries as well.
+$update=Join-Path $dest 'update'; & dotnet publish (Join-Path $repo 'src/RemoteAssist.Update/RemoteAssist.Update.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=$Version -o $update
 if($LASTEXITCODE-ne0){throw 'Updater publish failed'}
 Copy-Item -LiteralPath (Join-Path $update 'RemoteAssist.Update.exe') -Destination $stage
 $native=Join-Path $repo 'third_party/ffmpeg/bin';if(!(Test-Path -LiteralPath $native)){throw 'Prepare verified FFmpeg first'}
@@ -30,8 +31,10 @@ try{$inventoryEntry=$sourceArchive.GetEntry('inventory.json');if(!$inventoryEntr
 [IO.File]::WriteAllText((Join-Path $stage 'notices/SOURCE.txt'),('Corresponding source: '+$SourceUrl.AbsoluteUri+[Environment]::NewLine+'SHA256: '+(Get-FileHash -LiteralPath $SourceBundle).Hash.ToLowerInvariant()),(New-Object Text.UTF8Encoding($false)))
 Copy-Item -LiteralPath (Join-Path $repo 'deploy/runbooks') -Destination $stage -Recurse
 Copy-Item -LiteralPath (Join-Path $repo 'deploy/install.ps1') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $repo 'deploy/prepare-host.ps1') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $repo 'deploy/prepare-sas.ps1') -Destination $stage
 Copy-Item -LiteralPath ([IO.Path]::GetFullPath($Settings)) -Destination (Join-Path $stage 'host.settings.json')
-foreach($file in Get-ChildItem -LiteralPath $stage -Recurse -File|Where-Object {($_.Name-like'RemoteAssist*.dll')-or($_.Name-like'RemoteAssist*.exe')-or($_.Name-eq'install.ps1')}){
+foreach($file in Get-ChildItem -LiteralPath $stage -Recurse -File|Where-Object {($_.Name-like'RemoteAssist*.dll')-or($_.Name-like'RemoteAssist*.exe')-or($_.Name-in@('install.ps1','prepare-host.ps1','prepare-sas.ps1'))}){
     $signed=Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $certificate -TimestampServer $TimestampUrl -HashAlgorithm SHA256
     if($signed.Status-ne'Valid'-or!$signed.TimeStamperCertificate){throw ('Signature/timestamp failed: '+$file.Name)}
 }

@@ -57,6 +57,46 @@ test('unsolicited admin active state cannot grant privileges',()=>{
   s.channel.onmessage({data:JSON.stringify({v:1,t:'admin-state',sessionId:'sid',generation:1,permissionGeneration:1,id:'spoofed',seq:2,state:'active',adminGeneration:1,inputEpoch:2})});
   assert.equal(s.viewer.closed,true);assert.equal(s.viewer.adminGeneration,undefined);
 });
+
+test('monitor selection is blocked during administrator startup and active mode while quality remains usable',()=>{
+  const s=session();s.viewer.acceptChannel(s.channel);s.channel.onmessage({data:JSON.stringify(s.ready)});
+  const id='0123456789abcdef0123456789abcdef';
+  assert.equal(s.viewer.controlCommand('monitor-select',{monitorIdentity:'DISPLAY2'},id),true);
+  s.viewer.adminRequestId=id;
+  const before=s.sent.length;
+  assert.equal(s.viewer.controlCommand('monitor-select',{monitorIdentity:'DISPLAY2'},id),false);
+  s.viewer.adminRequestId=null;s.viewer.adminGeneration=1;
+  assert.equal(s.viewer.controlCommand('monitor-select',{monitorIdentity:'DISPLAY2'},id),false);
+  assert.equal(s.sent.length,before);
+  assert.equal(s.viewer.controlCommand('quality-mode',{mode:'detail'},id),true);
+  assert.equal(s.viewer.closed,false);s.viewer.end();
+});
+
+test('initial admin waits for negotiated capability and input readiness, then requests only once across denial and recovery',()=>{
+  const s=session();
+  assert.equal(s.viewer.requestInitialAdmin(),false);
+  s.viewer.permissions=['screen','control','admin'];s.ready.permissions=[...s.viewer.permissions];s.ready.channels=['control','input','pointer'];
+  s.viewer.acceptChannel(s.channel);s.channel.onmessage({data:JSON.stringify(s.ready)});
+  assert.equal(s.viewer.requestInitialAdmin(),false);
+  for(const label of ['input','pointer'])s.viewer.channels.set(label,{readyState:'open',bufferedAmount:0,send(){},close(){}});
+  assert.equal(s.viewer.requestInitialAdmin(),true);
+  const id=s.viewer.adminRequestId;
+  assert.equal(s.viewer.requestInitialAdmin(),false);
+  assert.equal(s.sent.filter(m=>m.t==='admin-request').length,1);
+  s.channel.onmessage({data:JSON.stringify({v:1,t:'admin-state',sessionId:'sid',generation:1,permissionGeneration:1,id,seq:2,state:'denied',inputEpoch:2})});
+  assert.equal(s.viewer.requestInitialAdmin(),false);
+  assert.equal(s.viewer.requestAdmin(),true); // Explicit supporter retry remains available.
+  s.viewer.clearTransport();assert.equal(s.viewer.initialAdminAttempted,true);
+  s.viewer.end();
+});
+
+test('automatic admin does not run for screen/control-only permissions or during local approval',()=>{
+  const s=session();s.viewer.dataReady=true;
+  for(const label of ['input','pointer'])s.viewer.channels.set(label,{readyState:'open',close(){}});
+  s.viewer.permissions=['screen','control'];assert.equal(s.viewer.requestInitialAdmin(),false);
+  s.viewer.permissions.push('admin');s.viewer.localApprovalId='pending';assert.equal(s.viewer.requestInitialAdmin(),false);
+  assert.equal(s.viewer.initialAdminAttempted,undefined);s.viewer.end();
+});
 test('file approval suspends input and resolves reset versus local epoch races without accepting unknown ACKs',()=>{
   for(const epoch of [2,3]) {
     const s=session();s.viewer.permissions=['screen','control','file'];s.ready.permissions=[...s.viewer.permissions];s.ready.channels=['control','input','pointer','file'];

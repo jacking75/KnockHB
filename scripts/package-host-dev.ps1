@@ -25,7 +25,7 @@ try{
     # RID-specific restore needs its own lock files. Preserve the working tree locks.
     $source=Join-Path $dest 'build-source'
     # Include new source files in a dirty candidate; git ls-files alone omits untracked implementations.
-    $sourceFiles=@(& git -C $repo -c core.quotepath=false ls-files --cached --others --exclude-standard -- src deploy/runbooks third_party/ffmpeg Directory.Build.props Directory.Build.targets Directory.Packages.props global.json NuGet.Config nuget.config | Sort-Object -Unique)
+    $sourceFiles=@(& git -C $repo -c core.quotepath=false ls-files --cached --others --exclude-standard -- src deploy/runbooks deploy/prepare-host.ps1 deploy/prepare-sas.ps1 third_party/ffmpeg Directory.Build.props Directory.Build.targets Directory.Packages.props global.json NuGet.Config nuget.config | Sort-Object -Unique)
     if($LASTEXITCODE-ne0-or!$sourceFiles.Count){throw 'Source inventory failed'}
     foreach($relative in $sourceFiles){
         $sourcePath=[IO.Path]::GetFullPath((Join-Path $repo $relative))
@@ -40,6 +40,11 @@ try{
         & dotnet $msbuild $project /restore /t:Publish /p:Configuration=Release /p:RuntimeIdentifier=win-x64 /p:SelfContained=true /p:PublishSingleFile=false /p:RestoreLockedMode=false (('/p:PublishDir='+$payload+'\')) /v:minimal /nologo
         if($LASTEXITCODE-ne0){throw ('개발 publish 실패: '+$name)}
     }
+    # Ship the same elevated interactive launch that issues the one-use support grant.
+    $updaterOutput=Join-Path $dest 'updater'
+    & dotnet $msbuild (Join-Path $source 'src/RemoteAssist.Update/RemoteAssist.Update.csproj') /restore /t:Publish /p:Configuration=Release /p:RuntimeIdentifier=win-x64 /p:SelfContained=true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:RestoreLockedMode=false (('/p:PublishDir='+$updaterOutput+'\')) /v:minimal /nologo
+    if($LASTEXITCODE-ne0){throw 'Development support launcher publish failed'}
+    Copy-Item -LiteralPath (Join-Path $updaterOutput 'RemoteAssist.Update.exe') -Destination $payload
     $native=Join-Path $repo 'third_party/ffmpeg/bin'
     $dlls=@(Get-ChildItem -LiteralPath $native -Filter '*.dll' -File)
     if(!$dlls.Count){throw '검증할 FFmpeg DLL이 없다.'}
@@ -47,6 +52,8 @@ try{
     $dlls|ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload 'ffmpeg')}
     Copy-Item -LiteralPath (Join-Path $repo 'third_party/ffmpeg/notices') -Destination $payload -Recurse
     Copy-Item -LiteralPath (Join-Path $repo 'deploy/runbooks') -Destination $payload -Recurse
+    Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-host.ps1') -Destination $payload
+    Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-sas.ps1') -Destination $payload
     $hostSettings=@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false;ForceRelay=[bool]$ForceRelay}
     if($SignalingCertificate){$hostSettings.SignalingCertificateBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($SignalingCertificate)))}
     [IO.File]::WriteAllText((Join-Path $payload 'host.settings.json'),($hostSettings|ConvertTo-Json),$utf8)

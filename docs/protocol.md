@@ -118,6 +118,8 @@ joined만으로 캡처하지 않는다. Host는 peer-joined를 받으면 로컬 
 
 ### 데이터 제어 채널 시작 계약
 
+Viewer는 협상된 `admin` 권한과 입력 채널 준비가 모두 확인되면 세션당 한 번 `admin-request`를 자동 전송한다. 준비 전에는 요청하지 않으며 거부·연결 복구 후 자동 재요청하지 않는다. 수동 관리자 모드 시작은 유지한다. 최초 관리자 실행으로 부여한 지원 세션은 그 권한으로 처리하고, 기존 수동 세션은 기존 로컬 관리자 승인 절차를 유지한다. 와이어 필드는 추가하지 않는다.
+
 Host가 승인 후 `control` reliable ordered 채널을 offer에 포함해 만든다. Viewer는 같은 label의 채널 한 개만 받아들인다. 미지원/중복 채널은 세션 오류다. Host의 첫 `data-ready`는 데이터 공통 envelope와 `channels`, `permissions`, `monitor:{identity,topologyGeneration,x,y,width,height}`를 포함한다. 화면 전용은 `channels:["control"]`, `permissions:["screen"]`이다. 일반 제어는 복원 감독 준비 후 `channels:["control","input","pointer"]`, `permissions:["screen","control"]`이다. 모든 input 채널이 open이고 일치하는 준비 통지가 도착하기 전에는 Viewer가 입력을 보내지 않는다. Viewer는 500ms data-ping을 보내며 바인딩과 순번을 검사한 ping만 Host의 입력 lease를 갱신한다. 2초 동안 pong이 없으면 연결을 종료한다. 승인된 보조 기능의 채널은 FeatureContract의 정규 순서로 함께 광고하며 채널 종료·권한 철회 시 해당 작업도 취소한다.
 
 초기 관리자 요청 범위를 승인했으면 permissions는 `screen,control,admin` 순서이며 채널 구성은 일반 제어와 같다. `admin-request`는 GUID N 형식 id와 공통 envelope만 보낸다. Host는 입력을 중단하고 기존 키를 해제한 뒤 2차 동의 창을 요청한다. 지원자가 원격으로 자기 승인 창을 조작할 수 없어야 한다. Host의 같은 ID `admin-state`는 `state:pending|denied|active`를 응답한다. active에만 양의 `adminGeneration`을 포함한다. denied/active에는 Host가 증가시킨 `inputEpoch`를 넣는다. 승인 중 대기한 이전 epoch 입력은 실행하지 않는다. Viewer는 local held 상태·pending pointer를 지우고 새 epoch를 사용한다. Viewer는 active 통지를 받기 전 특권 기능을 표시하지 않는다. `admin-sas`와 `admin-revoke`는 현재 adminGeneration을 포함하며, revoke는 지원 전체 종료다. Host의 로컬 승인·privileged 준비 ACK만 active를 만들 수 있다.

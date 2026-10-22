@@ -14,7 +14,7 @@ for(const id of ['runbook-panel','runbook-choice','runbook-detail','runbook-prev
 function status(text, error = false) { for(const target of [el.status,el['session-status']]){target.textContent=text;target.classList.toggle('error',error);} }
 function reset() { input?.dispose();input=null;for(const id of ['remote-text','send-text','admin-request','admin-sas','admin-revoke'])el[id].disabled=true;el['input-status'].textContent='화면 보기';el.screen.srcObject = null; el.session.hidden = true; el.join.hidden = false; el.stats.textContent = ''; delete el.session.dataset.controlState; delete el.session.dataset.inputReady; }
 function resetFeatures(){lastDiagnostics=0;for(const id of ['chat-panel','clipboard-panel','diagnostics-panel','file-panel','media-controls','runbook-panel'])el[id].hidden=true;for(const id of ['chat-history','feature-status','diagnostics-content','runbook-preview','runbook-result','quality-status'])el[id].textContent='';el['chat-text'].value=el['clipboard-text'].value=el['file-source'].value='';el['monitor-choice'].replaceChildren();el['runbook-choice'].replaceChildren();el['clipboard-copy'].disabled=true;}
-function previewRunbook(){const book=current?.runbooks.books.find(b=>b.bookId===el['runbook-choice'].value);el['runbook-preview'].textContent=book?`${book.title}\n버전 ${book.bookVersion} · SHA256 ${book.hash}\n${book.requiresAdmin?'별도 관리자형 작업 승인 필요다.\n':''}${book.impact}\n\n${book.source}`:'';}
+function previewRunbook(){const book=current?.runbooks.books.find(b=>b.bookId===el['runbook-choice'].value);el['runbook-preview'].textContent=book?`${book.title}\n버전 ${book.bookVersion} · SHA256 ${book.hash}\n${book.requiresAdmin?'관리자 권한으로 실행한다.\n':''}${book.impact}\n\n${book.source}`:'';}
 function appendChat(text){el['chat-history'].textContent=(el['chat-history'].textContent+text+'\n').slice(-8192);el['chat-history'].scrollTop=el['chat-history'].scrollHeight;}
 function showDiagnostics(snapshot) {
   lastDiagnostics=Date.now();el['diagnostics-status'].textContent='마지막 수신: '+new Date(lastDiagnostics).toLocaleTimeString();
@@ -31,8 +31,12 @@ function updateFeatures(connection,message) {
   if(message.t==='runbook-catalog'){el['runbook-choice'].replaceChildren(...message.books.map(b=>{const option=document.createElement('option');option.value=b.bookId;option.textContent=b.title;return option;}));previewRunbook();}
   if(message.t==='runbook-result'){const r=message.result;el['runbook-result'].textContent=`${r.state} · 종료 코드 ${r.exitCode??'없음'}\n${r.stdout}\n${r.stderr}\n잔여 영향: ${r.remainingImpact}`;}
   el['media-controls'].hidden=!connection.permissions?.includes('screen');
+  const monitorLocked=!!connection.adminGeneration||!!connection.adminRequestId;
+  el['monitor-select'].disabled=monitorLocked;
+  el['monitor-choice'].disabled=monitorLocked;
+  el['monitor-select'].title=el['monitor-choice'].title=monitorLocked?'관리자 지원 중에는 처음 공유한 모니터를 유지한다.':'';
   if(message.t==='monitor-list'){el['monitor-choice'].replaceChildren(...message.monitors.map(m=>{const option=document.createElement('option');option.value=m.identity;option.textContent=`${m.identity} ${m.width}×${m.height}`;return option;}));}
-  if(message.t==='monitor-state')status('대상자가 승인한 모니터로 전환했다.');
+  if(message.t==='monitor-state')status('선택한 모니터로 전환했다.');
   if(message.t==='quality-state'){const q=message.quality;el['quality-status'].textContent=`설정: ${q.fps} fps / ${q.bitrateKbps} kbps / 최대 ${q.longEdge}×${q.shortEdge}`;}
   el['file-panel'].hidden=!connection.permissions?.includes('file');el['file-send'].disabled=!connection.files.ready()||!!connection.files.current;
   if(message.t==='file-offer'){el['file-status'].textContent=`대상자의 ${message.name} (${message.size} bytes)를 저장할지 승인한다.`;el['file-accept'].disabled=el['file-reject'].disabled=false;}
@@ -71,8 +75,9 @@ el['join-form'].addEventListener('submit', event => {
     onData: message => {
       updateFeatures(connection,message);
       if(message.t==='input-paused'||message.t==='admin-state'||message.t==='local-approval')input?.clearLocalState();
-      if(message.t==='local-approval')status(message.state==='pending'?'대상자의 건별 승인을 기다린다. 원격 입력을 일시 중단한다.':'대상자의 승인 응답을 처리했다.');
-      if(message.t==='admin-state')status(message.state==='active'?'관리자 지원 중 · 보안 화면은 대상자가 즉시 종료하거나 30초 뒤 종료된다.':message.state==='denied'?'대상자가 관리자 지원을 거부했다.':'대상자의 별도 관리자 승인을 기다리는 중이다. 입력을 일시 중단한다.');
+      if(message.t==='local-approval')status(message.state==='pending'?'대상 PC에서 작업을 준비 중이다. 원격 입력을 일시 중단한다.':'작업 준비를 마쳤다.');
+      if(message.t==='admin-state')status(message.state==='active'?'관리자 지원 중 · 대상 PC에서 즉시 종료할 수 있다.':message.state==='denied'?'관리자 모드를 시작하지 못했다.':'관리자 모드를 준비 중이다. 입력을 일시 중단한다.');
+      connection.requestInitialAdmin();
       el.session.dataset.controlState = message.t;
       const ready=connection.canControl();el.session.dataset.inputReady=String(ready);
       el['remote-text'].disabled=!ready;el['send-text'].disabled=!ready;
@@ -80,7 +85,7 @@ el['join-form'].addEventListener('submit', event => {
       el['admin-sas'].disabled=!ready||!connection.adminGeneration;el['admin-revoke'].disabled=!ready||!connection.adminGeneration;
       if(ready) {
         input??=new ViewerInput(connection,el.screen,el['remote-text'],el['send-text']);
-        el['remote-text'].disabled=false;el['send-text'].disabled=false;el['input-status'].textContent=connection.adminGeneration?'관리자 제어 · 최대 2분':'원격 제어 · 화면을 클릭한 뒤 키를 입력한다';
+        el['remote-text'].disabled=false;el['send-text'].disabled=false;el['input-status'].textContent=connection.adminGeneration?'관리자 제어 중':'원격 제어 · 화면을 클릭한 뒤 키를 입력한다';
       }
       else if(connection.permissions?.includes('control'))el['input-status'].textContent='입력 일시 중단';
     },
@@ -91,7 +96,7 @@ el['join-form'].addEventListener('submit', event => {
 el.hangup.addEventListener('click', () => current?.end());
 const command=(t,fields={})=>current?.controlCommand(t,fields,crypto.randomUUID().replaceAll('-',''));
 el['runbook-choice'].addEventListener('change',previewRunbook);
-el['runbook-send'].addEventListener('click',()=>{if(current?.runbooks.request(el['runbook-choice'].value,el['runbook-detail'].value)){el['runbook-result'].textContent='대상자의 이번 작업 승인을 기다린다.';el['runbook-send'].disabled=true;el['runbook-cancel'].disabled=false;}});
+el['runbook-send'].addEventListener('click',()=>{if(current?.runbooks.request(el['runbook-choice'].value,el['runbook-detail'].value)){el['runbook-result'].textContent='대상 PC에서 작업을 준비 중이다.';el['runbook-send'].disabled=true;el['runbook-cancel'].disabled=false;}});
 el['runbook-cancel'].addEventListener('click',()=>current?.runbooks.cancel());
 el['monitor-list'].addEventListener('click',()=>command('monitor-list'));
 el['monitor-select'].addEventListener('click',()=>{if(el['monitor-choice'].value)command('monitor-select',{monitorIdentity:el['monitor-choice'].value});});

@@ -2,7 +2,7 @@ namespace RemoteAssist.Host.Core.Security;
 
 public sealed record AdminApproval(string RequestId,string SessionId,string ConnectionId,long PermissionGeneration,long AdminGeneration,DateTimeOffset ExpiresAt);
 
-/// <summary>The initial capability permits only a request. A current local second approval is mandatory for privileged work.</summary>
+/// <summary>Bound administrator grants support legacy local approval and explicit initial session authorization.</summary>
 public sealed class AdminAuthorization(PermissionSnapshot binding,TimeProvider? time=null)
 {
     readonly object gate=new();
@@ -32,6 +32,15 @@ public sealed class AdminAuthorization(PermissionSnapshot binding,TimeProvider? 
             if(!approved)return null;
             return current=new(requestId,binding.SessionId,binding.ConnectionId,binding.Generation,++generation,
                 Min(clock.GetUtcNow().AddMinutes(2),binding.ExpiresAt));
+        }
+    }
+    public AdminApproval AuthorizeSessionRequest(string requestId)
+    {
+        lock(gate)
+        {
+            DemandBinding();
+            if(!Guid.TryParseExact(requestId,"N",out _)||pending!=null||current!=null)throw new InvalidOperationException("Administrator request state is invalid.");
+            return current=new(requestId,binding.SessionId,binding.ConnectionId,binding.Generation,++generation,binding.ExpiresAt);
         }
     }
     public bool Allows(long adminGeneration)

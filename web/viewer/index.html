@@ -32,7 +32,7 @@
     <header class="bar">
       <span class="badge">● 원격 지원 · E2E 암호화</span>
       <span id="stats"></span>
-      <button id="admin-request" type="button" disabled>관리자 지원 요청</button>
+      <button id="admin-request" type="button" disabled>관리자 모드 시작</button>
       <button id="admin-sas" type="button" disabled>Ctrl+Alt+Del</button>
       <button id="admin-revoke" type="button" disabled>관리자 지원 해제</button>
       <button id="hangup" type="button">세션 종료</button>
@@ -63,7 +63,7 @@
       </section>
       <section id="runbook-panel" hidden>
         <h2>등록된 Runbook</h2><select id="runbook-choice" aria-label="등록 작업"></select><select id="runbook-detail" aria-label="출력 상세"><option value="summary">요약</option><option value="counts">개수</option></select>
-        <pre id="runbook-preview"></pre><button id="runbook-send" type="button" disabled>대상자에게 이번 작업 승인 요청</button><button id="runbook-cancel" type="button" disabled>작업 취소</button><pre id="runbook-result" role="status"></pre>
+        <pre id="runbook-preview"></pre><button id="runbook-send" type="button" disabled>작업 실행</button><button id="runbook-cancel" type="button" disabled>작업 취소</button><pre id="runbook-result" role="status"></pre>
       </section>
       <section id="diagnostics-panel" hidden>
         <h2>읽기 전용 시스템 진단</h2><p id="diagnostics-status">수신 대기 중이다.</p><pre id="diagnostics-content"></pre>

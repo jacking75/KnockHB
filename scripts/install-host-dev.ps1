@@ -10,6 +10,13 @@ $registry='HKLM:\SYSTEM\CurrentControlSet\Services\RemoteAssistHost'
 $marker=Join-Path $root 'dev-owner.json'
 $packageRoot=[IO.Path]::GetFullPath($Package)
 function Check-Time {if([E2eOwnedCommand]::Remaining($DeadlineTick)-eq0){throw 'Development operation deadline expired'}}
+function Startup-Preparation([string]$Mode){
+    Check-Time
+    $script=Join-Path $root 'prepare-host.ps1'
+    if(!(Test-Path -LiteralPath $script)){throw 'Startup preparation script missing'}
+    $command=[E2eOwnedCommand]::Start((Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'),@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-Action',$Mode,'-InstallationRoot',$root))
+    try{if($command.Wait([Math]::Min($DeadlineTick,[E2eOwnedCommand]::Deadline(30000)),1000)-ne0){throw ('Startup preparation failed: '+$Mode)}}finally{$command.Dispose()}
+}
 function No-Link([string]$Path){
     for($item=Get-Item -LiteralPath $Path -Force;$item;$item=$item.Parent){if($item.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse path refused'}}
     if(Test-Path -LiteralPath $Path -PathType Container){foreach($item in Get-ChildItem -LiteralPath $Path -Recurse -Force){if($item.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse tree refused'}}}
@@ -65,6 +72,7 @@ if($Action-eq'Remove'){
     if($children.Count){throw 'Owned processes remain; preserve files and use the reviewed recovery procedure'}
     if(Test-Path $registry){Native 'sc.exe' @('delete',$service)}
     if(Test-Path $registry){throw 'Service deletion pending; preserve installation'}
+    if(Test-Path (Join-Path $root 'prepare-host.ps1')){Startup-Preparation 'Remove'}
     # Explicit fixed roots, ownership and reparse checks immediately before recursive removal.
     Check-Time;No-Link $root;No-Link $data
     if([IO.Path]::GetFullPath($root)-ne(Join-Path $env:ProgramFiles 'RemoteAssist-Dev')){throw 'Unsafe removal root'}
@@ -107,4 +115,6 @@ No-Link $root
 # Set protected ownership for all copied dependencies; no user-writable SYSTEM executables.
 Native 'icacls.exe' @($root,'/setowner','*S-1-5-32-544','/T')
 Native 'sc.exe' @('create',$service,'binPath=',('"'+(Join-Path $root 'RemoteAssist.Host.Service.exe')+'"'),'start=','demand','obj=','LocalSystem')
-Write-Output 'INSTALLED_NOT_STARTED_NOT_E2E_PASS'
+try{Startup-Preparation 'Prepare';Startup-Preparation 'Verify';Startup-Preparation 'Commit'}
+catch{Startup-Preparation 'Rollback';throw}
+Write-Output 'INSTALLED_PREREQUISITES_READY_NOT_STARTED_NOT_E2E_PASS'

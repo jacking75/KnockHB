@@ -77,6 +77,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
     public Func<PermissionSnapshot,IInputBackend>? CreateInputBackend {get;set;}
     public Action? InputLeaseObserved {get;set;}
     public Action<ControlMessage>? AdminCommand {get;set;}
+    public bool InitialSupport {get;set;}
     public Action<FeatureMessage>? ChatReceived {get;set;}
     public Func<FeatureMessage,CancellationToken,Task<FeatureMessage>>? ClipboardOperation {get;set;}
     public IDiagnosticsProvider DiagnosticsProvider {get;set;}=new DiagnosticsCollector();
@@ -107,6 +108,14 @@ public sealed class ScreenShareSession : IAsyncDisposable
     {
         var capability=kind switch {"file"=>Capability.File,"runbook"=>Capability.Runbook,"monitor"=>Capability.Screen,_=>throw new ArgumentException("지원하는 로컬 승인 종류가 아니다.")};
         var grant=_permissions.Current;if(grant is null||!_permissions.Allows(capability,grant.Generation))throw new UnauthorizedAccessException("로컬 승인 기능의 현재 동의가 없다.");
+        // Initial support has already authorized these operations. No consent dialog owns input.
+        // Keep monitor switching on its existing exclusive capture/input transition path.
+        if(InitialSupport&&kind is "file" or "runbook")
+        {
+            using var operation=CancellationTokenSource.CreateLinkedTokenSource(ct,_lifetime.Token);
+            operation.CancelAfter(TimeSpan.FromSeconds(kind=="runbook"?55:30));
+            return await request(operation.Token).WaitAsync(operation.Token);
+        }
         if(AdminFrame!=null||!_localApproval.TryBegin(id,kind))return default;
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,_lifetime.Token);timeout.CancelAfter(TimeSpan.FromSeconds(kind=="runbook"?55:30));
         try

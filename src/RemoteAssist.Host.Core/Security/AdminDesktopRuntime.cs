@@ -36,8 +36,9 @@ public sealed class AdminDesktopRuntime:IDisposable
                 {
                     if(config!=null||stopped!=0)throw new InvalidDataException("중복 관리자 설정이다.");
                     var value=message.Body?.Deserialize<AdminConfiguration>()??throw new InvalidDataException("관리자 설정 누락이다.");
+                    value.ValidateLifetime(DateTimeOffset.UtcNow);
                     using var identity=WindowsIdentity.GetCurrent();
-                    if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=value.WindowsSessionId||value.Approval.ExpiresAt<=DateTimeOffset.UtcNow||value.Approval.ExpiresAt>DateTimeOffset.UtcNow.AddMinutes(2)||value.Approval.AdminGeneration<1||value.Approval.PermissionGeneration<1||value.TargetFps is <1 or >60||value.MaxShortEdge is <2 or >2160||value.MaxLongEdge<value.MaxShortEdge||value.MaxLongEdge>3840||SessionProcess.RecoveryConsoleUserSid(value.WindowsSessionId)!=value.UserSid)
+                    if(!identity.IsSystem||Process.GetCurrentProcess().SessionId!=value.WindowsSessionId||value.Approval.AdminGeneration<1||value.Approval.PermissionGeneration<1||value.TargetFps is <1 or >60||value.MaxShortEdge is <2 or >2160||value.MaxLongEdge<value.MaxShortEdge||value.MaxLongEdge>3840||SessionProcess.RecoveryConsoleUserSid(value.WindowsSessionId)!=value.UserSid)
                         throw new UnauthorizedAccessException("현재 독립 관리자 승인이 아니다.");
                     _=ApprovedMonitor(value);mapping=SharedFrameMap.Open(value.Mapping,true);config=value;Volatile.Write(ref lease,Stopwatch.GetTimestamp());
                     worker=Run();
@@ -86,7 +87,7 @@ public sealed class AdminDesktopRuntime:IDisposable
         var secure=desktop.Name=="Winlogon";var entered=Stopwatch.StartNew();
         using var indicator=secure?new SecureStopWindow(value.Monitor,Stop):null;
         var monitor=ApprovedMonitor(value);
-        using var capture=new DxgiScreenCapture(monitor);
+        using IScreenCapture capture=secure?new DxgiScreenCapture(monitor):ScreenCaptureFactory.Create(monitor);
         using var scaler=new BgraFrameScaler(Math.Min(value.MaxLongEdge,1920),Math.Min(value.MaxShortEdge,1080));
         ready();var next=TimeSpan.Zero;var clock=Stopwatch.StartNew();
         ReadOnlyMemory<byte> previous=default;
@@ -96,7 +97,7 @@ public sealed class AdminDesktopRuntime:IDisposable
             while(!stop.IsCancellationRequested&&!Expired&&desktop.IsReceivingInput)
             {
                 DemandTarget(value);
-                if(secure&&entered.Elapsed.TotalSeconds>=30){Stop();break;}
+                if(secure&&!value.InitialSupport&&entered.Elapsed.TotalSeconds>=30){Stop();break;}
                 indicator?.Pump();
                 while(input.Reader.TryRead(out var work))
                 {

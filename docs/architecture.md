@@ -1,5 +1,9 @@
 # 아키텍처
 
+## 최초 실행 준비
+
+2026-10-22부터 [최초 관리자 실행 기준](startup-preparation.md)을 따른다. 설치자는 최초 UAC로 확보한 권한으로 서비스와 프로그램별 방화벽 규칙을 준비한다. 서비스는 규칙과 헬퍼/세션 권한을 검증한 뒤 준비 신호를 기록한다. 대화형 실행에서 발급한 일회성 허가가 있으면 지원 코드를 자동 생성하고 인증한 첫 피어에 세션 전체 권한을 부여한다. 이 세션의 관리자 모드·등록 Runbook·파일 수신은 대상자의 추가 승인 창을 열지 않는다. 준비 누락을 세션 중 추가 UAC나 방화벽 허용 창으로 해결하지 않는다. 아래 건별 로컬 동의 설명은 일회성 허가 없는 기존 수동 지원 경로에 적용한다. 실제 원격 동작 수용은 별도다.
+
 ### 격리된 개발 시그널링 TLS 신뢰
 
 보호 설치의 `host.settings.json`에 선택적으로 `SignalingCertificateBase64`(DER 인증서)를 지정할 수 있다. 지정하지 않으면 기존 OS 신뢰 검증을 사용한다. 지정하면 HTTPS/WSS 서버 인증서가 그 DER와 정확히 일치하고, 주소/SAN·유효기간·서버 인증 용도·사용자 지정 루트 체인을 통과해야 한다. 머신 인증서 저장소는 변경하지 않는다. 옵션은 보호된 설정과 인증된 Helper IPC로만 전달하며 원격 Viewer가 바꿀 수 없다. 개발 Viewer도 전용 임시 프로필의 단일 SPKI와 사전 주소/유효기간 검증으로 제한하고 전체 TLS 오류 무시는 금지한다. 제품 동의·권한·감사 조건은 동일하다.
@@ -7,6 +11,8 @@
 구현 기준과 수용 상태는 구분한다. 기능/와이어는 [제품 계약](product-contract.md)·[프로토콜](protocol.md), 실행 수용은 [구현계획](../docs_working/원격제어-구현계획.md)의 V/F를 따른다.
 
 ## 실행 경계
+
+2026-10-23 규격은 직접 P2P 전용이다. NAT 환경에서 직접 P2P 연결 성공은 제품의 필수 요구사항이며 연결 실패를 정상 제약이나 TURN 릴레이 폴백으로 처리하지 않는다. STUN/ICE 및 TLS 시그널링은 직접 연결 수립에 사용한다. 종전 TURN 관련 코드가 남아 있는 것과 현재 제품 지원 범위는 구별한다.
 
 ```mermaid
 flowchart LR
@@ -25,13 +31,10 @@ flowchart LR
   admin -->|"ACL 공유 프레임"| helper
  end
  go["Go · 직접 TLS/WSS · 일회성 룸/감사"]
- turn["coturn · 단기 인증 · 암호문 릴레이"]
  viewer["지원자 웹 Viewer"]
  helper <-->|"HTTPS/WSS · SDP/ICE"| go
  viewer <-->|"HTTPS/WSS · SDP/ICE"| go
  helper <-->|"DTLS-SRTP/SCTP · P2P"| viewer
- helper <--> turn
- turn <--> viewer
 ```
 
 서비스는 Session 0에서 캡처하지 않는다. WTS로 확인한 단일 콘솔 Session/SID에 일반 Tray/Helper를 생성한다. Session 변경·RDP·로그오프·Tray/IPC 상실·서비스 재시작은 기존 승인을 폐기하고 모든 소유 자식을 종료한다. 새 사용자/피어가 승계하지 않는다.

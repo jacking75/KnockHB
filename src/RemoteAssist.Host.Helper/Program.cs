@@ -89,6 +89,7 @@ sealed class HelperRuntime : IAsyncDisposable
                 if(pending!=message.Id||consent==null)throw new InvalidDataException("오래되거나 다른 동의 응답이다.");
                 var caps=message.Body?.GetProperty("capabilities").GetInt32()??0;
                 if(caps!=0){_=RemoteAssist.Protocol.FeatureContract.Permissions(caps);if((caps&~255)!=0)throw new InvalidDataException("미구현 권한은 부여할 수 없다.");}
+                session!.InitialSupport=message.Body?.TryGetProperty("initialSupport",out var initial)==true&&initial.GetBoolean();
                 consent.TrySetResult((Capability)caps);break;
             case "stop":session?.EndSession("대상자가 즉시 종료했다.");consent?.TrySetCanceled(ct);break;
             case "recovery-ack":acknowledgements.Accept(message);break;

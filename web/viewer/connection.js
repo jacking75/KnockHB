@@ -316,13 +316,21 @@ export class ViewerConnection {
   }
   canControl() { return this.live() && !this.recovering && !this.pendingReset && !this.adminRequestId && !this.localApprovalId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
   controlCommand(t,fields={},id) {
+    if(t==='monitor-select'&&(this.adminGeneration||this.adminRequestId))return false;
     const channel=this.channels.get('control');
     if(!this.live()||channel?.readyState!=='open'||channel.bufferedAmount>256*1024){this.end('기능 제어 송신 상태 오류다.',true);return false;}
     try{channel.send(JSON.stringify({...fields,v:1,t,sessionId:this.sessionId,generation:this.generation,permissionGeneration:this.permissionGeneration,id,seq:++this.dataSent}));return true;}
     catch{this.end('기능 제어 송신 실패다.',true);return false;}
   }
+  requestInitialAdmin() {
+    if(this.initialAdminAttempted||this.adminRequestId||this.adminGeneration||!this.canControl()||!this.permissions?.includes('admin'))return false;
+    // Set before requestAdmin: onData is synchronous and can call this method again.
+    this.initialAdminAttempted=true;
+    return this.requestAdmin();
+  }
   requestAdmin(id=globalThis.crypto.randomUUID().replaceAll('-','')) {
     if(!this.canControl()||!this.permissions.includes('admin')||this.adminGeneration)return false;
+    this.initialAdminAttempted=true;
     this.adminRequestId=id;this.onData({t:'input-paused'});return this.controlCommand('admin-request',{},id);
   }
   adminAction(t) {

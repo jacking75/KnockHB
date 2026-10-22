@@ -63,6 +63,26 @@ public sealed class SessionProcess : IDisposable
         DemandSupervisor(session);Enable("SeTcbPrivilege");Check(WTSQueryUserToken(session,out var token));
         using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))return identity.User?.Value??throw new UnauthorizedAccessException("대상 사용자 SID 누락");
     }
+    /// <summary>Verify the tokens/privileges needed by all helper roles before offering support.</summary>
+    public static void VerifyStartup(uint session)
+    {
+        DemandSupervisor(session);
+        var privileges=new[]{"SeTcbPrivilege","SeIncreaseQuotaPrivilege","SeAssignPrimaryTokenPrivilege"};
+        try
+        {
+            foreach(var privilege in privileges)Enable(privilege);
+            Check(WTSQueryUserToken(session,out var user));
+            using(user)using(var identity=new WindowsIdentity(user.DangerousGetHandle()))
+                if(identity.User is null)throw new UnauthorizedAccessException("대상 사용자 토큰이 없다.");
+            Check(OpenProcessToken(GetCurrentProcess(),0xB,out var system));
+            using(system)
+            {
+                Check(DuplicateTokenEx(system,0xF01FF,0,2,1,out var duplicate));
+                using(duplicate)Check(SetTokenInformation(duplicate,12,ref session,4));
+            }
+        }
+        finally{foreach(var privilege in privileges)Enable(privilege,false);}
+    }
     public static string RecoveryConsoleUserSid(uint session)
     {
         using var current=WindowsIdentity.GetCurrent();

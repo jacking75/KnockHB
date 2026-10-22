@@ -10,6 +10,8 @@ using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 
 if(args is ["--tls-only"]){await SignalingTrustRegression.Run();return 0;}
+if(args is ["--deployment-only"]){await DeploymentRegression.Run();Console.WriteLine("PASS deployment-only: signed package, required startup preparation, archive integrity and path boundaries");return 0;}
+if(args is ["--startup-only"]){await InitialLaunchRegression.Run();await InitialAdminRegression.Run();Console.WriteLine("PASS startup-only: initial launch user/session/expiry binding and session administrator authorization");return 0;}
 
 if(args is ["--audit-only"]){await AuditRegression.Run();await AuditRegression.Terminal();Console.WriteLine("PASS audit-only: rotation, denial, terminal ordering, spool replay, competing writers, torn journal");return 0;}
 if(args is ["--audit-child",var auditPath])
@@ -21,6 +23,8 @@ if(args is ["--audit-child",var auditPath])
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("initial launch remains bound to console user, session and fixed claim/authority lifetimes",InitialLaunchRegression.Run),
+    ("initial session administrator authority does not require repeated local approval",InitialAdminRegression.Run),
     ("capture initialization fallback stays bound to the approved monitor and stops on authority loss",RemainingFeatureRegression.CaptureSelection),
     ("service file audit closes unfinished transfers after helper termination and serializes durable start",RemainingFeatureRegression.FileAuditTermination),
     ("Runbook cancellation cannot resume input until the matching dialog dismissal ACK",RemainingFeatureRegression.RunbookDismissal),

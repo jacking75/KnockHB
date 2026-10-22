@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>$(WindowsTfm)</TargetFramework></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>$(WindowsTfm)</TargetFramework><ApplicationManifest>app.manifest</ApplicationManifest><IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract></PropertyGroup>
+  <ItemGroup><Compile Include="../RemoteAssist.Host.Core/Deployment/InitialSupportLaunch.cs" Link="InitialSupportLaunch.cs" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../RemoteAssist.Protocol/RemoteAssist.Protocol.csproj" /><Compile Include="../RemoteAssist.Host.Core/Deployment/ReleaseManifest.cs" Link="ReleaseManifest.cs" /><Compile Include="../RemoteAssist.Host.Core/Deployment/InstallationState.cs" Link="InstallationState.cs" /><Compile Include="../RemoteAssist.Host.Core/Windows/ProtectedInstallation.cs" Link="ProtectedInstallation.cs" /></ItemGroup>
 </Project>

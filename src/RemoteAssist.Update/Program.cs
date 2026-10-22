@@ -13,12 +13,34 @@ static class UpdateProgram
     public static async Task<int> Run(string[] args)
     {
         string? ownedDownload=null,ownedStage=null;
+        InitialSupportGrant? initialGrant=null;
         try
         {
+            // A downloaded, verified release folder can be started by double-click.
+            // The executable manifest requests the one initial Windows elevation.
+            var initialLaunch=args.Length==0 || args is ["support"];
+            if(args.Length==0&&DevSupportLauncher.IsInstalledDirectory(AppContext.BaseDirectory))args=["support-dev"];
+            if(args.Length==0)args=Path.GetFullPath(AppContext.BaseDirectory).StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)
+                ? ["support"]
+                : ["install",Path.Combine(AppContext.BaseDirectory,"release.json"),Path.Combine(AppContext.BaseDirectory,"release.sig"),Path.Combine(AppContext.BaseDirectory,"package.zip"),Path.Combine(AppContext.BaseDirectory,"trusted-public.pem")];
             using var identity=WindowsIdentity.GetCurrent();if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))throw new UnauthorizedAccessException("관리자 설치 권한이 필요하다.");
             if(Directory.Exists(root))InstallationState.DemandProtected(root);
             if(Directory.Exists(data))InstallationState.DemandProtected(data);
-            if(args.Length==1&&args[0]=="update"){var forwarded=await ForwardToActive(args);if(forwarded.HasValue)return forwarded.Value;}
+            if(args is ["support-dev"])
+            {
+                using var idle=TrySessionGate();if(idle==null)throw new InvalidOperationException("End the current support session before starting a new one.");
+                await DevSupportLauncher.Run();
+                return 0;
+            }
+            if(args.Length==1&&args[0] is "update" or "support"){var forwarded=await ForwardToActive(args);if(forwarded.HasValue)return forwarded.Value;}
+            if(args is ["support"])
+            {
+                using var idle=TrySessionGate();if(idle==null)throw new InvalidOperationException("현재 지원 세션을 먼저 종료해야 한다.");
+                InstallationState.CheckDirectory(AppContext.BaseDirectory);
+                DemandRecoveredInstall();
+                initialGrant=InitialSupportLaunch.Issue();
+                return await Installer("Support",AppContext.BaseDirectory);
+            }
             if(args.Length==1&&args[0]=="recover")return await Installer("Recover",root);
             if(args.Length==1&&args[0]=="remove")return await Installer("Remove",root);
             string manifest,signature,archive,key;bool online=args.Length==1&&args[0]=="update";
@@ -48,10 +70,20 @@ static class UpdateProgram
             Directory.CreateDirectory(data);ProtectDirectory(data);using var session=TrySessionGate();if(session==null)return 2;
             var staging=Path.Combine(data,"staging",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(Path.GetDirectoryName(staging)!);ProtectDirectory(Path.GetDirectoryName(staging)!);CleanupAbandoned("staging");ownedStage=staging;
             await release.Extract(archive,staging,deadline.Token);await File.WriteAllBytesAsync(Path.Combine(staging,"release.json"),raw,deadline.Token);await File.WriteAllBytesAsync(Path.Combine(staging,"release.sig"),await File.ReadAllBytesAsync(signature,deadline.Token),deadline.Token);await File.WriteAllTextAsync(Path.Combine(staging,"trusted-public.pem"),key,deadline.Token);
-            ProtectDirectory(staging);return await Installer("Install",staging);
+            ProtectDirectory(staging);
+            if(initialLaunch){DemandRecoveredInstall();initialGrant=InitialSupportLaunch.Issue();}
+            return await Installer("Install",staging);
         }
-        catch(Exception ex){Console.Error.WriteLine("업데이트/설치 실패: "+ex.GetType().Name);return 1;}
-        finally{foreach(var path in new[]{ownedDownload,ownedStage})if(path!=null&&Directory.Exists(path)){try{InstallationState.DemandProtected(path);Directory.Delete(path,true);}catch{Console.Error.WriteLine("보호된 업데이트 임시 디렉터리 정리가 보류됐다.");}}}
+        catch(Exception ex){Console.Error.WriteLine("업데이트/설치 실패: "+ex.Message);return 1;}
+        finally{if(initialGrant!=null){try{InitialSupportLaunch.Cancel(initialGrant.Id);}catch{Console.Error.WriteLine("최초 실행 허가 정리가 보류됐다. 다시 실행하기 전에 보호된 상태를 점검해야 한다.");}}foreach(var path in new[]{ownedDownload,ownedStage})if(path!=null&&Directory.Exists(path)){try{InstallationState.DemandProtected(path);Directory.Delete(path,true);}catch{Console.Error.WriteLine("보호된 업데이트 임시 디렉터리 정리가 보류됐다.");}}}
+    }
+    static void DemandRecoveredInstall()
+    {
+        var transaction=Path.Combine(root,"transaction.json");if(!File.Exists(transaction))return;
+        InstallationState.DemandProtected(transaction);
+        using var document=JsonDocument.Parse(File.ReadAllBytes(transaction));
+        if(document.RootElement.GetProperty("Status").GetString()=="pending")
+            throw new InvalidOperationException("중단된 설치 복구가 필요하다. 설치된 RemoteAssist.Update.exe recover를 실행한 뒤 지원을 다시 시작해야 한다.");
     }
     static async Task<int?> ForwardToActive(string[] args)
     {
@@ -92,7 +124,10 @@ static class UpdateProgram
     {
             var script=Path.Combine(path,"install.ps1");var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe")){UseShellExecute=false,CreateNoWindow=true};
         InstallationState.DemandProtected(script);
-        foreach(var arg in new[]{"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","AllSigned","-File",script,"-Action",action,"-Package",path})start.ArgumentList.Add(arg);
+        // The package was verified before protected staging; the root bootstrap was
+        // copied from that verified package. No persistent execution policy is changed.
+        InstallationState.CheckDirectory(path);
+        foreach(var arg in new[]{"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",script,"-Action",action,"-Package",path})start.ArgumentList.Add(arg);
         using var process=Process.Start(start)??throw new IOException("installer 시작 실패다.");using var deadline=new CancellationTokenSource(TimeSpan.FromMinutes(3));try{await process.WaitForExitAsync(deadline.Token);}catch{process.Kill(true);throw;}return process.ExitCode;
     }
 }

@@ -18,6 +18,7 @@ public partial class MainWindow
     SharingIndicator? indicator;
     string? currentSession,pendingId;
     bool closed;
+    DateTimeOffset? initialSupportExpires;
     int capabilities;
     int connectionGeneration=1;
     LocalActionWindow? fileDialog;
@@ -38,6 +39,14 @@ public partial class MainWindow
         if(closed)return;
         switch(message.Type)
         {
+            case "initial-support":
+                var initial=message.Body??throw new InvalidDataException("최초 지원 권한 정보 누락이다.");
+                initialSupportExpires=initial.GetProperty("expiresAt").GetDateTimeOffset();
+                if(initialSupportExpires<=DateTimeOffset.UtcNow)throw new InvalidDataException("최초 지원 권한이 만료됐다.");
+                PermissionNotice.Text="최초 관리자 실행으로 이번 지원의 화면·제어·관리자·파일 권한을 부여했다. 신뢰하는 지원자에게만 코드/PIN을 전달한다. 즉시 종료로 모든 지원을 끝낸다.";
+                Status.Text="이번 지원을 준비 중이다. 추가 승인 없이 연결한다.";
+                StartButton.IsEnabled=false;
+                break;
             case "credentials":
                 var body=message.Body??throw new InvalidDataException("코드 표시 누락");
                 currentSession=body.GetProperty("sessionId").GetString();
@@ -123,6 +132,17 @@ public partial class MainWindow
                 var offer=incoming?message.Body?.Deserialize<FileMessage>():null;
                 if(incoming&&(offer==null||offer.Id!=message.Id||offer.SessionId!=currentSession||offer.PermissionGeneration!=1||offer.Generation!=connectionGeneration))throw new InvalidDataException("파일 승인 바인딩 오류다.");
                 var requestId=message.Id;var fileSession=currentSession;
+                if(incoming&&initialSupportExpires>DateTimeOffset.UtcNow)
+                {
+                    string? folder=null;
+                    try{folder=InitialSupportDownloadFolder();}
+                    catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
+                    {FileStatus.Text="자동 수신 폴더를 준비하지 못했다. 전송을 거부한다.";}
+                    fileId=folder is null?null:requestId;FileCancel.IsEnabled=fileId!=null;
+                    RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("file-initial-support",fileSession,1,new {id=requestId,approved=folder is not null});
+                    TryPost("file-response",new {folder},requestId);
+                    break;
+                }
                 RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("file-dialog-open",fileSession,1,new {id=requestId,incoming,name=offer?.Name,size=offer?.Size});
                 var fileWindow=new LocalActionWindow(incoming?"수신 파일 저장 승인":"보낼 파일 선택",incoming?$"지원자가 보낸 {offer!.Name} ({offer.Size} bytes)의 저장 폴더를 승인한다.":"지원자에게 보낼 파일의 전체 경로를 선택한다.",incoming?Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments):""){Owner=this};fileDialog=fileWindow;
                 Dispatcher.BeginInvoke(new Action(()=>
@@ -185,6 +205,8 @@ public partial class MainWindow
     void StopLocal(){PostStop();EndLocal();Status.Text="종료 요청을 보냈다.";}
     void EndLocal()
     {
+        initialSupportExpires=null;
+        PermissionNotice.Text="신뢰하는 지원자에게 별도 연락으로 전달한다. 수동 지원은 연결할 때 권한을 선택한다.";
         pendingId=null;currentSession=null;
         capabilities=0;ChatText.IsEnabled=ChatSend.IsEnabled=false;ChatText.Clear();ChatHistory.Clear();
         FileSend.IsEnabled=FileCancel.IsEnabled=false;fileId=null;var localFile=fileDialog;fileDialog=null;localFile?.Close();FileStatus.Text="파일 전송 대기";
@@ -195,6 +217,26 @@ public partial class MainWindow
         Code.Text="—";Pin.Text="PIN —";Topmost=false;SessionBorder.BorderBrush=Brushes.SlateGray;
         try{icon?.SetActive(false);}catch{ /* The stop was already sent, or the authenticated service lease is lost. */ }
     }
+    static string InitialSupportDownloadFolder()
+    {
+        // Resolve the user's real Downloads folder (including Windows folder redirection).
+        var downloadsId=new Guid("374DE290-123F-4565-9164-39C4925E467B");
+        System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(SHGetKnownFolderPath(ref downloadsId,0,IntPtr.Zero,out var path));
+        string downloads;
+        try{downloads=System.Runtime.InteropServices.Marshal.PtrToStringUni(path)??throw new IOException("Downloads 경로 누락이다.");}
+        finally{System.Runtime.InteropServices.Marshal.FreeCoTaskMem(path);}
+        var folder=Path.GetFullPath(Path.Combine(downloads,"RemoteAssist"));
+        DemandRegularDirectories(folder);Directory.CreateDirectory(folder);DemandRegularDirectories(folder);
+        return folder;
+    }
+    static void DemandRegularDirectories(string path)
+    {
+        for(var directory=new DirectoryInfo(path);directory!=null;directory=directory.Parent)
+            if(directory.Exists&&(directory.Attributes&FileAttributes.ReparsePoint)!=0)
+                throw new IOException("자동 수신 경로는 재분석 지점을 포함할 수 없다.");
+    }
+    [System.Runtime.InteropServices.DllImport("shell32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int SHGetKnownFolderPath(ref Guid folder,uint flags,IntPtr token,out IntPtr path);
     void TryPost(string type,object? body=null,string id="")
     {try{peer?.Post(type,body,id);}catch(InvalidOperationException){Disconnected("서비스 연결이 종료됐다.");}}
 }

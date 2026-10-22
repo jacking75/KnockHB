@@ -26,6 +26,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
     string userSid="";
     string? consentId,sessionBinding,supporterBinding;
     string phase="configuration";
+    InitialSupportGrant? initialLaunch;
     AuditJournal? audit;
     FileStream? sessionLease;
     DateTime noticeTime;
@@ -42,7 +43,9 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             }
             options.Validate(256);
             RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("service-settings",metadata:new {policy=options.ForceRelay?"relay":"all"});
-            InstallationState.CheckCandidate();InstallationState.MarkReady();
+            InstallationState.CheckCandidate();
+            phase="startup-preparation";
+            await StartupPreparation.VerifyAsync(stoppingToken);
             while(!stoppingToken.IsCancellationRequested)
             {
                 sessionId=SessionProcess.ActiveConsoleSession;
@@ -51,6 +54,10 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 catch(System.ComponentModel.Win32Exception ex)when(ex.NativeErrorCode==1008){await Task.Delay(250,stoppingToken);}
             }
             if(stoppingToken.IsCancellationRequested)return;
+            SessionProcess.VerifyStartup(sessionId);
+            initialLaunch=InitialSupportLaunch.Consume(sessionId,userSid);
+            StartupPreparation.WriteStatus("ready","os-prerequisites",null);
+            InstallationState.MarkReady();
             phase="tray-launch";
             var name=Guid.NewGuid().ToString("N");var nonce=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
             using var server=LocalIpcEndpoint.CreateServer(name,userSid);
@@ -62,6 +69,11 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             tray=uiPeer;uiPeer.Start();uiPeer.Post("state",new {status="지원 코드를 만들면 대상자의 승인 후 연결한다.",ended=true});
             phase="supervision";
             Report("tray-ready");
+            if(initialLaunch is {} initial)
+            {
+                lock(gate)if(ReferenceEquals(initialLaunch,initial))uiPeer.Post("initial-support",new {expiresAt=initial.ExpiresAt});
+                await StartHelper(stoppingToken,initial);
+            }
             using var timer=new PeriodicTimer(TimeSpan.FromMilliseconds(200));
             while(await timer.WaitForNextTickAsync(stoppingToken))
             {
@@ -70,7 +82,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 if(File.Exists(notice)&&File.GetLastWriteTimeUtc(notice)!=noticeTime){InstallationState.DemandProtected(notice);var bytes=await File.ReadAllBytesAsync(notice,stoppingToken);if(bytes.Length>1024)throw new InvalidDataException("업데이트 통지 상한이다.");using var doc=JsonDocument.Parse(bytes);uiPeer.Post("update-status",doc.RootElement.Clone());noticeTime=File.GetLastWriteTimeUtc(notice);}
                 if(!SessionProcess.IsInteractiveConsole(sessionId)||SessionProcess.ConsoleUserSid(sessionId)!=userSid)
                 {StopHelper("대상 Windows 사용자가 변경됐다.");break;}
+                if(initialLaunch is {} waiting)
+                {
+                    await StartHelper(stoppingToken,waiting);
+                }
                 HelperScope? current;lock(gate)current=helper;
+                if(current?.InitialGrant is {} launch&&(DateTimeOffset.UtcNow>=launch.ExpiresAt||!current.InitialBound&&DateTimeOffset.UtcNow>=launch.ClaimDeadline))StopHelper("Initial support authorization is invalid or expired.",current);
                 if(current is not null&&(current.Child?.HasExited==true||current.Peer?.Token.IsCancellationRequested==true||current.Peer?.Completion.IsCompleted==true))StopHelper("사용자 헬퍼가 종료됐다.",current);
                 if(current?.Recovery?.HasExited==true)StopHelper("입력 복원 감독이 종료됐다.",current);
                 if(current?.Admin?.HasExited==true||current?.AdminApproval is {} adminApproval&&!current.AdminAuthorization!.Allows(adminApproval.AdminGeneration))StopHelper("관리자 승인 또는 헬퍼가 종료됐다.",current);
@@ -81,7 +98,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             }
         }
         catch(OperationCanceledException)when(stoppingToken.IsCancellationRequested){}
-        catch(Exception ex){log.LogError("Host 감독 실패: {Kind}",ex.GetType().Name);Report("supervisor-error",ex);}
+        catch(Exception ex){if(phase=="startup-preparation")StartupPreparation.WriteStatus("failed",phase,ex.Message);log.LogError("Host 감독 실패: {Kind}",ex.GetType().Name);Report("supervisor-error",ex);}
         finally{StopHelper("Host 서비스 또는 Tray 종료");tray=null;try{await Task.WhenAll(stopAudits.Values).WaitAsync(TimeSpan.FromSeconds(5));}catch{log.LogWarning("종료 감사 기록의 5초 기한이 초과됐다. 기존 spool을 보존한다.");}lifetime.StopApplication();}
     }
     async Task HandleTray(LocalIpcMessage message,CancellationToken ct)
@@ -90,47 +107,28 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         {
             case "start":await StartHelper(ct);break;
             case "consent":
-                HelperScope approvedScope;int caps;string currentSession,currentConnection;
+                HelperScope approvedScope;int caps;
                 lock(gate)
                 {
-                    if(helper?.Peer is null||consentId!=message.Id||string.IsNullOrEmpty(consentId))throw new InvalidDataException("현재 로컬 동의 요청이 아니다.");
-                    var body=message.Body??throw new InvalidDataException("동의 본문 누락");
-                    if(body.GetProperty("sessionId").GetString()!=sessionBinding||body.GetProperty("connectionId").GetString()!=supporterBinding)throw new InvalidDataException("동의 대상 바인딩 불일치");
+                    approvedScope=helper??throw new UnauthorizedAccessException("지원 세션이 없다.");
+                    if(approvedScope.InitialGrant is not null)throw new UnauthorizedAccessException("최초 실행 허가는 서비스가 적용한다.");
+                    var body=message.Body??throw new InvalidDataException("동의 본문 누락이다.");
+                    if(body.GetProperty("sessionId").GetString()!=sessionBinding||body.GetProperty("connectionId").GetString()!=supporterBinding)throw new InvalidDataException("동의 대상 바인딩 불일치다.");
                     caps=body.GetProperty("capabilities").GetInt32();
-                    if(caps!=0){_=FeatureContract.Permissions(caps);if((caps&~255)!=0)throw new InvalidDataException("현재 구현하지 않은 권한이다.");}
-                    approvedScope=helper;currentSession=sessionBinding!;currentConnection=supporterBinding!;consentId=null;
-                    approvedScope.Capabilities=(Capability)caps;
-                    if((caps&4)!=0)approvedScope.AdminAuthorization=new(new(currentSession,currentConnection,1,(Capability)caps,DateTimeOffset.UtcNow.AddHours(2)));
                 }
-                audit!.Append(caps==0?AuditKind.ConsentDenied:AuditKind.ConsentGranted,caps==0?AuditResult.Denied:AuditResult.Allowed,currentSession,currentConnection,caps==0?0:1);
-                if((caps&2)!=0)
-                {
-                    var recovery=new RecoveryScope();approvedScope.Adopt(recovery);
-                    await recovery.Start(sessionId,userSid,approvedScope.Child!.Pid,currentSession,currentConnection,approvedScope.Token,reason=>
-                    {StopHelper(reason,approvedScope);});
-                }
-                approvedScope.Token.ThrowIfCancellationRequested();
-                approvedScope.Peer!.Post("consent",new {capabilities=caps},message.Id);
+                await GrantConsent(approvedScope,message.Id,caps);
                 break;
             case "admin-response":
-                HelperScope adminOwner;AdminApproval? approved;MonitorDescriptor monitor;string adminSession,adminConnection;
+                HelperScope adminOwner;AdminApproval? approved;
                 lock(gate)
                 {
                     adminOwner=helper??throw new UnauthorizedAccessException("진행 중인 지원이 없다.");
+                    if(adminOwner.InitialGrant is not null)throw new UnauthorizedAccessException("최초 실행 허가는 서비스가 적용한다.");
                     var response=message.Body??throw new InvalidDataException("관리자 응답 누락이다.");
                     if(response.GetProperty("sessionId").GetString()!=sessionBinding||response.GetProperty("connectionId").GetString()!=supporterBinding||response.GetProperty("permissionGeneration").GetInt64()!=1)throw new UnauthorizedAccessException("관리자 로컬 응답 대상 불일치다.");
                     approved=(adminOwner.AdminAuthorization??throw new UnauthorizedAccessException("관리자 요청 승인 범위가 없다.")).RespondLocally(message.Id,response.GetProperty("approved").GetBoolean());
-                    adminSession=sessionBinding!;adminConnection=supporterBinding!;
-                    monitor=adminOwner.Monitor??throw new InvalidOperationException("활성 모니터가 없다.");adminOwner.AdminApproval=approved;
                 }
-                audit!.Append(approved is null?AuditKind.AdminDenied:AuditKind.AdminGranted,approved is null?AuditResult.Denied:AuditResult.Allowed,adminSession,adminConnection,1);
-                if(approved is null){adminOwner.Peer!.Post("admin-state",new {state="denied"},message.Id);break;}
-                var privileged=new AdminScope();adminOwner.Adopt(privileged);
-                await privileged.Start(new(approved,sessionId,userSid,monitor,"",options.TargetFps,options.MaxOutputLongEdge,options.MaxOutputShortEdge),adminOwner.AdminAuthorization!.ProcessGrant(approved),adminOwner.Recovery!,adminOwner.Token,
-                    reason=>{StopHelper(reason,adminOwner);});
-                adminOwner.Token.ThrowIfCancellationRequested();
-                adminOwner.Peer!.Post("admin-state",new {state="active",approval=approved,mapping=privileged.Mapping},message.Id);
-                tray?.Post("state",new {status="관리자 지원 중 · 보안 화면은 Ctrl+Alt+Shift+F9 또는 현장 종료 버튼으로 종료한다.",active=true,capabilities=(int)adminOwner.Capabilities,monitor});
+                await ActivateAdmin(adminOwner,message.Id,approved);
                 break;
             case "chat":
                 lock(gate)
@@ -185,15 +183,70 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             default:throw new InvalidDataException("Tray에 허용되지 않은 IPC다.");
         }
     }
-    async Task StartHelper(CancellationToken ct)
+    async Task GrantConsent(HelperScope scope,string requestId,int caps)
+    {
+        string boundSession,boundConnection;
+        lock(gate)
+        {
+            if(helper!=scope||scope.Peer is null||consentId!=requestId||string.IsNullOrEmpty(consentId)||string.IsNullOrEmpty(sessionBinding)||string.IsNullOrEmpty(supporterBinding))throw new UnauthorizedAccessException("Initial support authorization is invalid or expired.");
+            if(caps!=0){_=FeatureContract.Permissions(caps);if((caps&~255)!=0)throw new InvalidDataException("미구현 권한이다.");}
+            if(scope.InitialGrant is {} launch)
+            {
+                if(scope.InitialBound||DateTimeOffset.UtcNow>=launch.ClaimDeadline||DateTimeOffset.UtcNow>=launch.ExpiresAt||caps!=255)throw new UnauthorizedAccessException("Initial support authorization is invalid or expired.");
+                scope.InitialBound=true;
+            }
+            boundSession=sessionBinding;boundConnection=supporterBinding;consentId=null;scope.Capabilities=(Capability)caps;
+            if((caps&4)!=0)scope.AdminAuthorization=new(new(boundSession,boundConnection,1,(Capability)caps,scope.InitialGrant?.ExpiresAt??DateTimeOffset.UtcNow.AddHours(2)));
+        }
+        audit!.Append(caps==0?AuditKind.ConsentDenied:AuditKind.ConsentGranted,caps==0?AuditResult.Denied:AuditResult.Allowed,boundSession,boundConnection,caps==0?0:1);
+        if((caps&2)!=0)
+        {
+            var recovery=new RecoveryScope();scope.Adopt(recovery);
+            await recovery.Start(sessionId,userSid,scope.Child!.Pid,boundSession,boundConnection,scope.Token,reason=>StopHelper(reason,scope));
+        }
+        scope.Token.ThrowIfCancellationRequested();scope.Peer!.Post("consent",new {capabilities=caps,initialSupport=scope.InitialBound},requestId);
+    }
+    async Task ActivateAdmin(HelperScope owner,string requestId,AdminApproval? approval)
+    {
+        string boundSession,boundConnection;MonitorDescriptor monitor;
+        lock(gate)
+        {
+            if(helper!=owner)throw new UnauthorizedAccessException("종료된 지원 세션이다.");
+            boundSession=sessionBinding!;boundConnection=supporterBinding!;
+            monitor=owner.Monitor??throw new InvalidOperationException("활성 모니터가 없다.");owner.AdminApproval=approval;
+        }
+        audit!.Append(approval is null?AuditKind.AdminDenied:AuditKind.AdminGranted,approval is null?AuditResult.Denied:AuditResult.Allowed,boundSession,boundConnection,1);
+        if(approval is null){owner.Peer!.Post("admin-state",new {state="denied"},requestId);return;}
+        var privileged=new AdminScope();owner.Adopt(privileged);
+        await privileged.Start(new(approval,sessionId,userSid,monitor,"",options.TargetFps,options.MaxOutputLongEdge,options.MaxOutputShortEdge,InitialSupport:owner.InitialBound),owner.AdminAuthorization!.ProcessGrant(approval),owner.Recovery!,owner.Token,reason=>StopHelper(reason,owner));
+        owner.Token.ThrowIfCancellationRequested();
+        owner.Peer!.Post("admin-state",new {state="active",approval,mapping=privileged.Mapping},requestId);
+        tray?.Post("state",new {status="관리자 지원 중 · Ctrl+Alt+Shift+F9 또는 즉시 종료 버튼으로 종료한다.",active=true,capabilities=(int)owner.Capabilities,monitor});
+    }
+    void StartBackgroundOperation(HelperScope scope,string kind,Func<Task> operation)
+    {
+        scope.RunBackground(async ()=>
+        {
+            try{scope.Token.ThrowIfCancellationRequested();await operation();}
+            catch(OperationCanceledException)when(scope.Token.IsCancellationRequested){}
+            catch(Exception ex){Report(kind+"-error",ex);StopHelper("지원 작업 준비에 실패했다.",scope);}
+        });
+    }
+    async Task StartHelper(CancellationToken ct,InitialSupportGrant? expectedInitial=null)
     {
         var scope=new HelperScope(ct);
         lock(gate)
         {
+            // A queued automatic start must never become a manual start after Stop consumes the launch.
+            if(expectedInitial is not null&&!ReferenceEquals(initialLaunch,expectedInitial))
+            {scope.StartupFinished.TrySetResult();scope.Dispose();return;}
+            if(initialLaunch is {} pendingLaunch&&(DateTimeOffset.UtcNow>=pendingLaunch.ClaimDeadline||DateTimeOffset.UtcNow>=pendingLaunch.ExpiresAt))
+            {initialLaunch=null;scope.StartupFinished.TrySetResult();scope.Dispose();tray?.Post("state",new {status="최초 실행 지원 허가가 만료됐다.",ended=true});return;}
             if(helper!=null){scope.StartupFinished.TrySetResult();scope.Dispose();tray?.Post("state",new {status="지원 세션이 이미 진행 중이다."});return;}
             if(stopAudits.Count>=32){scope.StartupFinished.TrySetResult();scope.Dispose();tray?.Post("state",new {status="필수 종료 감사 기록이 지연돼 새 지원을 시작하지 않는다."});return;}
             sessionLease=InstallationState.TrySessionLease();
             if(sessionLease==null){scope.StartupFinished.TrySetResult();scope.Dispose();tray?.Post("state",new {status="업데이트 준비 중이다. 완료 뒤 지원 코드를 만들 수 있다."});return;}
+            scope.InitialGrant=initialLaunch;initialLaunch=null;
             helper=scope;consentId=sessionBinding=supporterBinding=null;
         }
         try
@@ -236,9 +289,11 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             await recovery.Reserve(reservation,ct);ct.ThrowIfCancellationRequested();scope.Peer!.Post("recovery-ack",id:message.Id);return;
         }
         Action? durable=null;
+        Func<Task>? deferred=null;
         lock(gate)
         {
             if(helper!=scope)return;
+            if(scope.InitialGrant is {} activeLaunch&&DateTimeOffset.UtcNow>=activeLaunch.ExpiresAt)throw new UnauthorizedAccessException("최초 실행 지원 허가가 만료됐다.");
             switch(message.Type)
             {
                 case "credentials":
@@ -249,8 +304,11 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                 case "consent-request":
                     var body=message.Body??throw new InvalidDataException("동의 요청 누락");
                     if(consentId is not null||body.GetProperty("sessionId").GetString()!=sessionBinding||!Guid.TryParseExact(message.Id,"N",out _))throw new InvalidDataException("동의 요청 상태 오류");
+                    if(scope.InitialGrant is {} first&&(scope.InitialBound||DateTimeOffset.UtcNow>=first.ClaimDeadline||DateTimeOffset.UtcNow>=first.ExpiresAt))throw new UnauthorizedAccessException("Initial support authorization is invalid or expired.");
                     supporterBinding=body.GetProperty("connectionId").GetString();scope.SupporterName=body.GetProperty("displayName").GetString()??"지원자";
-                    scope.Monitor=body.GetProperty("monitorDescriptor").Deserialize<MonitorDescriptor>();consentId=message.Id;tray?.Post("consent-request",body,message.Id);break;
+                    scope.Monitor=body.GetProperty("monitorDescriptor").Deserialize<MonitorDescriptor>();consentId=message.Id;
+                    if(scope.InitialGrant is not null)deferred=()=>GrantConsent(scope,message.Id,255);
+                    else tray?.Post("consent-request",body,message.Id);break;
                 case "state":
                     if(message.Body?.TryGetProperty("generation",out var connectionGen)==true){var value=connectionGen.GetInt32();if(value<scope.ConnectionGeneration||value>scope.ConnectionGeneration+1)throw new InvalidDataException("헬퍼 연결 세대 오류다.");scope.ConnectionGeneration=value;}
                     if(message.Body?.TryGetProperty("active",out var active)==true){var watching=active.GetBoolean()&&scope.Capabilities.HasFlag(Capability.Screen);if(watching&&!scope.MediaWatch){scope.MediaStarted=Environment.TickCount64;scope.LastMediaFrame=0;}scope.MediaWatch=watching;if(active.GetBoolean())scope.Monitor=message.Body.Value.GetProperty("monitor").Deserialize<MonitorDescriptor>();}
@@ -275,7 +333,9 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     var runbook=message.Body?.Deserialize<RunbookMessage>()??throw new InvalidDataException("Runbook 요청 누락이다.");var definition=RunbookCatalog.Demand(runbook);
                     if(!scope.Capabilities.HasFlag(Capability.Runbook)||definition.RequiresAdmin&&!scope.Capabilities.HasFlag(Capability.Admin)||runbook.SessionId!=sessionBinding||runbook.PermissionGeneration!=1||runbook.Generation!=scope.ConnectionGeneration||runbook.Id!=message.Id||scope.BookApproval.IsBusy||scope.BookCancel!=null||!scope.SeenBooks.Add(runbook.Id))throw new UnauthorizedAccessException("현재 등록 Runbook 승인이 아니다.");
                     scope.BookHistory.Enqueue(runbook.Id);if(scope.BookHistory.Count>256)scope.SeenBooks.Remove(scope.BookHistory.Dequeue());
-                    scope.BookApproval.Begin(runbook);tray?.Post("runbook-request",runbook,message.Id);break;
+                    scope.BookApproval.Begin(runbook);
+                    if(scope.InitialBound){scope.BookApproval.Respond(message.Id,true);durable=()=>StartBackgroundOperation(scope,"runbook",()=>ExecuteRunbook(scope,runbook));}
+                    else tray?.Post("runbook-request",runbook,message.Id);break;
                 case "runbook-cancel":
                     if(scope.BookApproval.Cancel(message.Id)){
                         RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("dismiss-sent",sessionBinding,1,new {id=message.Id});
@@ -284,7 +344,8 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     if(scope.ExecutingBook?.Id==message.Id){var cancelBook=scope.BookCancel;var cancelWorker=scope.BookWorker;durable=()=>{try{cancelBook?.Cancel();}catch(ObjectDisposedException){}cancelWorker?.Dispose();};}break;
                 case "monitor-request":
                     if(!scope.Capabilities.HasFlag(Capability.Screen)||scope.AdminApproval!=null||message.Body?.GetProperty("sessionId").GetString()!=sessionBinding||!scope.MonitorPending.Add(message.Id)||scope.MonitorPending.Count>1)throw new UnauthorizedAccessException("현재 모니터 승인 요청이 아니다.");
-                    tray?.Post("monitor-request",message.Body,message.Id);break;
+                    if(scope.InitialBound){scope.MonitorPending.Remove(message.Id);scope.Peer!.Post("monitor-response",new {approved=true},message.Id);}
+                    else tray?.Post("monitor-request",message.Body,message.Id);break;
                 case "file-select":
                     if(!scope.Capabilities.HasFlag(Capability.File)||message.Body?.GetProperty("sessionId").GetString()!=sessionBinding||!scope.FilePending.Add(message.Id)||scope.FilePending.Count>1)throw new UnauthorizedAccessException("로컬 파일 선택 승인이 없다.");
                     tray?.Post("file-select",message.Body,message.Id);break;
@@ -301,8 +362,16 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
                     durable=()=>{scope.FileAudits.Record(notice,n=>PersistFileAudit(n,fileConnection));lock(gate)if(helper==scope)scope.Peer!.Post("file-audit-ack",id:message.Id);};break;
                 case "admin-request":
                     if(scope.Monitor is null||scope.AdminAuthorization is null||message.Body!=null)throw new UnauthorizedAccessException("관리자 요청 승인 범위가 없다.");
-                    scope.AdminAuthorization.Request(message.Id);
-                    tray?.Post("admin-request",new {sessionId=sessionBinding,connectionId=supporterBinding,permissionGeneration=1,displayName=scope.SupporterName,monitor=scope.Monitor.Identity},message.Id);
+                    if(scope.InitialBound)
+                    {
+                        var sessionApproval=scope.AdminAuthorization.AuthorizeSessionRequest(message.Id);
+                        durable=()=>StartBackgroundOperation(scope,"admin-start",()=>ActivateAdmin(scope,message.Id,sessionApproval));
+                    }
+                    else
+                    {
+                        scope.AdminAuthorization.Request(message.Id);
+                        tray?.Post("admin-request",new {sessionId=sessionBinding,connectionId=supporterBinding,permissionGeneration=1,displayName=scope.SupporterName,monitor=scope.Monitor.Identity},message.Id);
+                    }
                     break;
                 case "admin-sas":
                     if(message.Body!=null||scope.AdminApproval is null||scope.AdminAuthorization?.Allows(scope.AdminApproval.AdminGeneration)!=true)throw new UnauthorizedAccessException("SAS 관리자 승인이 없다.");
@@ -312,6 +381,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             }
         }
         durable?.Invoke();
+        if(deferred is not null)await deferred();
     }
     FeatureMessage BoundFeature(HelperScope scope,LocalIpcMessage message,Capability capability)
     {
@@ -357,8 +427,13 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         HelperScope? scope;
         string endedSession,endedConnection;
         FileStream? releaseLease;
-        lock(gate){if(expected!=null&&helper!=expected)return;scope=helper;endedSession=sessionBinding??"";endedConnection=supporterBinding??"";helper=null;consentId=sessionBinding=supporterBinding=null;releaseLease=sessionLease;sessionLease=null;}
-        if(scope is null){releaseLease?.Dispose();return;}
+        lock(gate){if(expected!=null&&helper!=expected)return;initialLaunch=null;scope=helper;endedSession=sessionBinding??"";endedConnection=supporterBinding??"";helper=null;consentId=sessionBinding=supporterBinding=null;releaseLease=sessionLease;sessionLease=null;}
+        if(scope is null)
+        {
+            releaseLease?.Dispose();
+            try{tray?.Post("state",new {status=reason,ended=true});}catch(InvalidOperationException){}
+            return;
+        }
         // Start the observer before cancellation callbacks; retain a kernel handle, never re-open a PID.
         // Scope this measure to the selected screen-only case. Input/admin/worker recovery needs its own evidence.
         SessionProcess.ExitProbe? exitProbe=null;bool completeInventory=false;string? probeFailure=null;
@@ -416,6 +491,7 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
     sealed class HelperScope : IDisposable
     {
         readonly object ownership=new();
+        readonly List<Task> background=new();
         readonly CancellationTokenSource lifetime;
         public CancellationToken Token {get;}
         public TaskCompletionSource StartupFinished {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -430,6 +506,8 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         public MonitorDescriptor? Monitor {get;set;}
         public string SupporterName {get;set;}="지원자";
         public Capability Capabilities {get;set;}
+        public InitialSupportGrant? InitialGrant {get;set;}
+        public bool InitialBound {get;set;}
         public int ConnectionGeneration {get;set;}=1;
         public bool MediaWatch {get;set;}
         public long MediaStarted {get;set;}
@@ -462,6 +540,15 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
         public void Adopt(AdminScope value)
         {lock(ownership){if(!disposed&&admin==null){admin=value;return;}}value.Dispose();throw new OperationCanceledException(Token);}
         public void Adopt(RunbookScope value){lock(ownership){if(!disposed){bookWorker?.Dispose();bookWorker=value;return;}}value.Dispose();throw new OperationCanceledException(Token);}
+        public void RunBackground(Func<Task> operation)
+        {
+            lock(ownership)
+            {
+                if(disposed)throw new OperationCanceledException(Token);
+                background.RemoveAll(task=>task.IsCompletedSuccessfully);
+                background.Add(Task.Run(operation));
+            }
+        }
         public void Dispose()
         {
             SessionProcess? ownedChild;NamedPipeServerStream? ownedServer;IpcPeerSession? ownedPeer;
@@ -476,7 +563,12 @@ internal sealed class HostSessionSupervisor(ILogger log,IHostApplicationLifetime
             _=CompleteCleanup(ownedPeer);
         }
         async Task CompleteCleanup(IpcPeerSession? ownedPeer)
-        {await StartupFinished.Task;if(ownedPeer!=null)await ObserveDispose(ownedPeer);lifetime.Dispose();}
+        {
+            await StartupFinished.Task;
+            Task[] running;lock(ownership)running=background.ToArray();
+            try{await Task.WhenAll(running);}catch{ /* Observe failures even if stop cleanup itself failed. */ }
+            if(ownedPeer!=null)await ObserveDispose(ownedPeer);lifetime.Dispose();
+        }
         static async Task ObserveDispose(IpcPeerSession peer){try{await peer.DisposeAsync();}catch{}}
     }
 }
