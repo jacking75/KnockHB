@@ -1,4 +1,4 @@
-package signaling
+package tunnel
 
 import (
 	"context"

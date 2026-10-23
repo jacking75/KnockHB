@@ -26,11 +26,11 @@ test('ICE preceding offer is retained and applied after SDP', async () => {
   assert.equal(f.peer.candidates.length, 1); assert.equal(f.socket.sent.at(-1).type, 'answer'); f.connection.end();
 });
 
-test('signaling rejects unknown fields and invalid nested ICE before dispatch',()=>{
+test('tunnel rejects unknown fields and invalid nested ICE before dispatch',()=>{
   for(const message of [{v:1,type:'pong',unknown:true},{v:1,type:'ice',ice:{candidate:'candidate:1',extra:true}},{v:1,type:'ice',ice:{candidate:'candidate:1',sdpMLineIndex:-1}},{v:1,type:'joined',iceServers:[{urls:['turn:host'],extra:true}]}])assert.throws(()=>parseSignal(JSON.stringify(message)));
 });
 
-test('browser ICE extensions never reach the strict signaling wire contract', async () => {
+test('browser ICE extensions never reach the strict tunnel wire contract', async () => {
   const f = fixture(); f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
   const candidate = { candidate: 'candidate:1 1 udp 1 192.0.2.1 27002 typ host', sdpMid: '0', sdpMLineIndex: 0,
     usernameFragment: 'browser-extension', toJSON() { return { ...this, toJSON: undefined }; } };
@@ -85,7 +85,7 @@ test('stale input, chat and telemetry callbacks cannot terminate or update a rep
   for(const channel of channels){channel.onmessage({data:'malformed stale message'});channel.onopen();}
   assert.equal(f.connection.closed,false);assert.equal(observed,0);f.connection.end();
 });
-test('heartbeat deadline closes blackholed signaling', () => {
+test('heartbeat deadline closes blackholed tunnel', () => {
   let now = 0; const f = fixture({ now: () => now }); now = 15000; f.timers[0](); assert.equal(f.connection.closed, true);
 });
 

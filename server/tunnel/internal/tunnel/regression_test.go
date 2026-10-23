@@ -1,9 +1,9 @@
-package signaling
+package tunnel
 
 import (
 	"context"
 	"github.com/coder/websocket"
-	"github.com/remoteassist/signaling/internal/room"
+	"github.com/remoteassist/tunnel/internal/room"
 	"net/http"
 	"net/http/httptest"
 	"strings"

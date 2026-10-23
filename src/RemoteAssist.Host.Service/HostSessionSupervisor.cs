@@ -75,7 +75,7 @@ internal sealed class HostSessionSupervisor(ILogger log, IHostApplicationLifetim
                 if (!SessionProcess.IsInteractiveConsole(sessionId) || SessionProcess.ConsoleUserSid(sessionId) != userSid) { StopSupport("대상 Windows 사용자가 변경됐다."); break; }
                 if (grant is { } waiting && helper is null && Environment.TickCount64 >= nextStartTick)
                 {
-                    // 시그널링 서버가 잠시 없어도 지원은 끝나지 않는다. 잠시 뒤 다시 연다.
+                    // 터널링 서버가 잠시 없어도 지원은 끝나지 않는다. 잠시 뒤 다시 연다.
                     try { await StartHelper(waiting, stoppingToken); }
                     catch (Exception ex) when (!stoppingToken.IsCancellationRequested) { Report("helper-start-retry", ex); nextStartTick = Environment.TickCount64 + 5000; }
                 }

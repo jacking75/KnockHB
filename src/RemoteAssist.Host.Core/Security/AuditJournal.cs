@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace RemoteAssist.Host.Core.Security;
 
-// 숫자 값은 시그널링 감사 저장소와 공유한다. ConsentDenied·AdminDenied는 옛 기록 호환용으로 자리만 남긴다.
+// 숫자 값은 터널링 서버 감사 저장소와 공유한다. ConsentDenied·AdminDenied는 옛 기록 호환용으로 자리만 남긴다.
 public enum AuditKind {SessionCreated,SupporterConnected,ConsentDenied,SessionEnded,AdminGranted,AdminDenied,AdminRevoked,FileStarted,FileFinished,RunbookStarted,RunbookFinished,SasRequested}
 public enum AuditResult {Allowed,Denied,Stopped,Completed,Failed}
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

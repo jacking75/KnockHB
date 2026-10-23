@@ -25,7 +25,7 @@ try{
     $plan=@(Get-RAFirewallPlan 'C:\Program Files\RemoteAssist\versions\1.0.0.0' 25001)
     Check ($plan.Count-eq4) 'Missing network prerequisites'
     Check ($plan[0].LocalPort-eq'27002-27099'-and$plan[0].Program.EndsWith('RemoteAssist.Host.Helper.exe')) 'Media must be program/port scoped'
-    Check ($plan[2].RemotePort-eq'443,25001') 'Signaling ports differ'
+    Check ($plan[2].RemotePort-eq'443,25001') 'Tunnel ports differ'
     $other=@(Get-RAFirewallPlan 'C:\Program Files\RemoteAssist\versions\2.0.0.0' 25001)
     Check ($other[0].Name-ne$plan[0].Name) 'Version rules must not overwrite rollback rules'
     Invoke-RAFirewallPreparation $plan Prepare $journal

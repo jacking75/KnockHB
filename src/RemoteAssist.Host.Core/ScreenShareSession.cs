@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Host.Core.Media;
 using RemoteAssist.Host.Core.Security;
-using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Tunnel;
 using RemoteAssist.Host.Core.Windows;
 using RemoteAssist.Host.Core.Input;
 using RemoteAssist.Host.Core.Diagnostics;
@@ -37,7 +37,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
     private readonly object _endGate = new();
     private readonly KeyframeRequests _keyframes = new();
     private readonly Queue<IceCandidate> _remoteIce = new();
-    private SignalingClient? _signaling;
+    private TunnelClient? _tunnel;
     private RTCPeerConnection? _pc;
     private Thread? _captureThread;
     private Task? _receiveTask, _eventTask, _pairingTask, _negotiationTask, _diagnosticsTask;
@@ -111,10 +111,10 @@ public sealed class ScreenShareSession : IAsyncDisposable
             _callerCancellation = ct.Register(() => EndSession("호출자 취소", false));
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            Credentials = await SignalingClient.CreateSessionAsync(_options.SignalingUri, deadline.Token, _options.AllowLoopbackHttp, _options.SignalingCertificateBase64, _options.DeviceCode);
+            Credentials = await TunnelClient.CreateSessionAsync(_options.TunnelUri, deadline.Token, _options.AllowLoopbackHttp, _options.TunnelCertificateBase64, _options.DeviceCode);
             _log.LogInformation("세션 생성: {SessionId}", Credentials.SessionId);
-            _signaling = new SignalingClient(_options.SignalingUri, _loggerFactory?.CreateLogger<SignalingClient>(), _options.AllowLoopbackHttp, _options.SignalingCertificateBase64);
-            await _signaling.ConnectAsync(Credentials, deadline.Token);
+            _tunnel = new TunnelClient(_options.TunnelUri, _loggerFactory?.CreateLogger<TunnelClient>(), _options.AllowLoopbackHttp, _options.TunnelCertificateBase64);
+            await _tunnel.ConnectAsync(Credentials, deadline.Token);
             _lifetime.Token.ThrowIfCancellationRequested();
             _eventTask = ProcessEventsAsync();
             _receiveTask = ReceiveLoopAsync();
@@ -126,7 +126,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         catch { EndSession("세션 시작 실패", true); throw; }
     }
 
-    // ---- 시그널링 ---------------------------------------------------------
+    // ---- 터널링 서버 ---------------------------------------------------------
 
     private async Task ProcessEventsAsync()
     {
@@ -158,15 +158,15 @@ public sealed class ScreenShareSession : IAsyncDisposable
         {
             while (!_lifetime.IsCancellationRequested)
             {
-                var msg = await _signaling!.ReceiveAsync(_lifetime.Token);
-                if (msg is null) { EndSession("시그널링 연결 종료", true); return; }
+                var msg = await _tunnel!.ReceiveAsync(_lifetime.Token);
+                if (msg is null) { EndSession("터널링 서버 연결 종료", true); return; }
                 if (msg.SessionId is not null && msg.SessionId != Credentials!.SessionId) throw new InvalidDataException("다른 세션 메시지다.");
                 if (msg.Generation != 0 && msg.Generation != ConnectionGeneration)
                 {
                     if (msg.Generation < ConnectionGeneration) continue;
                     throw new InvalidDataException("잘못된 연결 세대다.");
                 }
-                if (msg.Type == "ping") { await _signaling.SendAsync(new SignalMsg { Type = "pong" }, _lifetime.Token); continue; }
+                if (msg.Type == "ping") { await _tunnel.SendAsync(new SignalMsg { Type = "pong" }, _lifetime.Token); continue; }
                 if (msg.Type == "pong") continue;
                 // 지원자가 나가면 세션을 끝낸다. 서비스가 같은 지원 ID로 새 대기를 바로 연다.
                 if (msg.Type is "peer-left" or "bye" or "error") { EndSession(msg.Code ?? "지원자 연결 종료", msg.Type == "error"); return; }
@@ -176,9 +176,9 @@ public sealed class ScreenShareSession : IAsyncDisposable
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            LocalDiagnostic.Failure("signaling-receive", ex);
-            _log.LogWarning("시그널링 수신 실패: {Kind}", ex.GetType().Name);
-            EndSession("시그널링 수신 실패", true);
+            LocalDiagnostic.Failure("tunnel-receive", ex);
+            _log.LogWarning("터널링 서버 수신 실패: {Kind}", ex.GetType().Name);
+            EndSession("터널링 서버 수신 실패", true);
         }
     }
 
@@ -208,7 +208,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
                 }
                 else ApplyIce(msg.Ice);
                 break;
-            default: throw new InvalidDataException("예상하지 않은 시그널링 메시지다.");
+            default: throw new InvalidDataException("예상하지 않은 터널링 서버 메시지다.");
         }
     }
 
@@ -291,7 +291,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         pc.onicecandidate += candidate =>
         {
             if (candidate is null || ConnectionGeneration != generation) return;
-            Enqueue(() => ConnectionGeneration != generation ? Task.CompletedTask : _signaling!.SendAsync(new SignalMsg
+            Enqueue(() => ConnectionGeneration != generation ? Task.CompletedTask : _tunnel!.SendAsync(new SignalMsg
             {
                 Type = "ice", Generation = generation, Room = Credentials!.Code,
                 Ice = new IceCandidate { Candidate = IceCandidateWire.FromNative(candidate.candidate), SdpMid = candidate.sdpMid, SdpMLineIndex = candidate.sdpMLineIndex }
@@ -322,7 +322,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         var offer = pc.createOffer(null);
         await pc.setLocalDescription(offer);
         _lifetime.Token.ThrowIfCancellationRequested();
-        await _signaling!.SendAsync(new SignalMsg { Type = "offer", Generation = generation, Room = Credentials!.Code, Sdp = offer.sdp }, token);
+        await _tunnel!.SendAsync(new SignalMsg { Type = "offer", Generation = generation, Room = Credentials!.Code, Sdp = offer.sdp }, token);
         NotifyState("WebRTC 협상 중");
         _negotiationTask = WatchNegotiationAsync(pc, token, generation);
     }
@@ -354,7 +354,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
         catch (Exception) { if (ConnectionGeneration == generation) EndSession("진단 수집이 실패하거나 기한을 넘었다.", true); }
     }
 
-    /// <summary>2초 넘게 끊긴 전송은 같은 시그널링 위에서 새 offer로 다시 만든다(ICE 재시작).</summary>
+    /// <summary>2초 넘게 끊긴 전송은 같은 터널링 서버 위에서 새 offer로 다시 만든다(ICE 재시작).</summary>
     private async Task RecoverDisconnected(RTCPeerConnection pc, int generation)
     {
         try
@@ -659,7 +659,7 @@ public sealed class ScreenShareSession : IAsyncDisposable
             var stopped = await Task.Run(() => thread.Join(TimeSpan.FromSeconds(3)));
             if (!stopped) throw new TimeoutException("네이티브 캡처가 정지하지 않았다. 살아 있는 스레드의 자원은 해제하지 않는다. 헬퍼 감독 종료가 필요하다.");
         }
-        if (_signaling is not null) await _signaling.DisposeAsync();
+        if (_tunnel is not null) await _tunnel.DisposeAsync();
         if (_files != null) await _files.DisposeAsync();
         var pending = new[] { _eventTask, _receiveTask, _pairingTask, _negotiationTask, _inputData?.Completion, _chat?.Completion, _telemetry?.Completion, _diagnosticsTask, _runbooks?.Completion }.OfType<Task>();
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(Math.Max(.1, 5 - clock.Elapsed.TotalSeconds)));

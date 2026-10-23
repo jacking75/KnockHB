@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace RemoteAssist.Protocol;
 
 /// <summary>
-/// 시그널링 서버(Go)와 주고받는 메시지.
+/// 터널링 서버(Go)와 주고받는 메시지.
 ///
 /// <b>필드명 기준은 <c>docs/protocol.md</c> 다.</b> 이 코드가 아니다.
 /// Go 서버·JS 뷰어가 같은 문서를 각자 구현하므로, 스키마를 바꿀 때는 문서를 먼저 고친다.

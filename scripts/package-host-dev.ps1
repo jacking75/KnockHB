@@ -1,16 +1,16 @@
 ﻿[CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][uri]$SignalingUri,
+    [Parameter(Mandatory=$true)][uri]$TunnelUri,
     [Parameter(Mandatory=$true)][string]$SdkDirectory,
     [Parameter(Mandatory=$true)][string]$Output,
-    [string]$SignalingCertificate
+    [string]$TunnelCertificate
 )
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactRoot=Join-Path $repo '.artifacts'
 $dest=[IO.Path]::GetFullPath($Output)
 if(!$dest.StartsWith($artifactRoot+'\',[StringComparison]::OrdinalIgnoreCase)-or(Test-Path -LiteralPath $dest)){throw '새 .artifacts 하위 출력 경로가 필요하다.'}
-if($SignalingUri.Scheme-ne'https'-or$SignalingUri.UserInfo-or$SignalingUri.Query-or$SignalingUri.Fragment-or$SignalingUri.AbsolutePath-ne'/'){throw '검토한 HTTPS signaling origin이 필요하다.'}
+if($TunnelUri.Scheme-ne'https'-or$TunnelUri.UserInfo-or$TunnelUri.Query-or$TunnelUri.Fragment-or$TunnelUri.AbsolutePath-ne'/'){throw '검토한 HTTPS tunnel origin이 필요하다.'}
 $sdk=[IO.Path]::GetFullPath($SdkDirectory)
 $msbuild=Join-Path $sdk 'MSBuild.dll'
 if(!(Test-Path -LiteralPath $msbuild)-or(Split-Path $sdk -Leaf)-notmatch'^10\.0\.\d+$'){throw '.NET 10 SDK 디렉터리가 필요하다.'}
@@ -53,8 +53,8 @@ try{
     Copy-Item -LiteralPath (Join-Path $repo 'deploy/runbooks') -Destination $payload -Recurse
     Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-host.ps1') -Destination $payload
     Copy-Item -LiteralPath (Join-Path $source 'deploy/prepare-sas.ps1') -Destination $payload
-    $hostSettings=@{SignalingUri=$SignalingUri.AbsoluteUri;AllowLoopbackHttp=$false}
-    if($SignalingCertificate){$hostSettings.SignalingCertificateBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($SignalingCertificate)))}
+    $hostSettings=@{TunnelUri=$TunnelUri.AbsoluteUri;AllowLoopbackHttp=$false}
+    if($TunnelCertificate){$hostSettings.TunnelCertificateBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($TunnelCertificate)))}
     [IO.File]::WriteAllText((Join-Path $payload 'host.settings.json'),($hostSettings|ConvertTo-Json),$utf8)
     $files=@(Get-ChildItem -LiteralPath $payload -Recurse -File|ForEach-Object {
         if($_.Attributes-band[IO.FileAttributes]::ReparsePoint){throw '후보 reparse 경로 금지'}

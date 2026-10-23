@@ -8,9 +8,9 @@
 
 | 항목 | 기본/검사 |
 |---|---|
-| SignalingUri | 기본 http://localhost:25001. loopback 밖은 HTTPS 필수 |
+| TunnelUri | 기본 http://localhost:25001. loopback 밖은 HTTPS 필수 |
 | AllowLoopbackHttp | false. true면 loopback http만 허용 |
-| SignalingCertificateBase64 | 선택. 지정하면 그 DER 인증서와 정확히 일치하는 서버만 신뢰(자체 서명 핀 고정). 머신 인증서 저장소는 바꾸지 않는다 |
+| TunnelCertificateBase64 | 선택. 지정하면 그 DER 인증서와 정확히 일치하는 서버만 신뢰(자체 서명 핀 고정). 머신 인증서 저장소는 바꾸지 않는다 |
 | TargetFps / BitrateKbps | 30 / 4000; 1..60 / 100..50000 |
 | MonitorIndex | 0; 시작 시 현재 목록 범위 |
 | PreferredEncoder | null은 허용 후보 순서, 명시는 단일 후보 엄격 실패 |
@@ -19,7 +19,7 @@
 
 알 수 없는 필드·중복 필드는 거부한다. 지원 ID(`DeviceCode`)는 설정이 아니라 `ProgramData/RemoteAssist/device-id.txt`에서 읽는다.
 
-## 시그널링 서버 환경
+## 터널링 서버 환경
 
 | 환경 변수 | 정책 |
 |---|---|
@@ -33,11 +33,11 @@
 
 static allowlist: index/app/css/connection/input/geometry/features/files/sha256/runbooks/favicon. CSP·frame 차단·nosniff·referrer·HSTS를 적용한다. /healthz는 생존, /readyz는 시작 오류·감사 장애·종료 상태다.
 
-룸 1000, 연결+upgrade 예약 2000, join 10초, heartbeat 5초/read lease 15초, 쓰기 5초, peer 이탈 통지 3초, HTTP shutdown 5초. 시그널링 128KiB/SDP 96KiB/ICE 8KiB, JSON depth 32. 감사 event 4096bytes, journal 4MiB×4/7일.
+룸 1000, 연결+upgrade 예약 2000, join 10초, heartbeat 5초/read lease 15초, 쓰기 5초, peer 이탈 통지 3초, HTTP shutdown 5초. 터널링 서버 128KiB/SDP 96KiB/ICE 8KiB, JSON depth 32. 감사 event 4096bytes, journal 4MiB×4/7일.
 
 ## 미디어·데이터
 
-Host WebRTC는 UDP 27002..27099의 host 후보만 쓴다. STUN/TURN은 없다. 방화벽 규칙은 Helper 실행 파일과 이 포트 범위, 시그널링 TCP(443, 설정 포트)에 한정한다.
+Host WebRTC는 UDP 27002..27099의 host 후보만 쓴다. STUN/TURN은 없다. 방화벽 규칙은 Helper 실행 파일과 이 포트 범위, 터널링 서버 TCP(443, 설정 포트)에 한정한다.
 
 캡처는 모니터 handle/deviceName/geometry·BGRA/stride를 검사한다. WGC 우선, 초기화 실패 때 같은 모니터의 DXGI를 한 번 쓴다. 보안 데스크톱은 AdminHelper의 DXGI 경로로 캡처한다. 화면 구성이 바뀌면 같은 모니터(없으면 주 모니터)로 자동으로 다시 맞춘다.
 

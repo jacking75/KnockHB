@@ -1,8 +1,8 @@
 services:
-  signaling:
+  tunnel:
     build:
       context: ../..
-      dockerfile: deploy/signaling/Dockerfile
+      dockerfile: deploy/tunnel/Dockerfile
       args:
         GO_IMAGE: ${RA_GO_IMAGE:?set a reviewed golang 1.27.0 image digest}
         RUNTIME_IMAGE: ${RA_RUNTIME_IMAGE:?set a reviewed distroless image digest}

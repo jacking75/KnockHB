@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/remoteassist/signaling/internal/signaling"
+	"github.com/remoteassist/tunnel/internal/tunnel"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,7 +20,7 @@ import (
 
 type settings struct {
 	addr, cert, key, viewer, mode string
-	cfg                           signaling.Config
+	cfg                           tunnel.Config
 }
 
 var viewerAssets = map[string]bool{"index.html": true, "app.css": true, "app.js": true, "connection.js": true, "features.js": true, "files.js": true, "sha256.js": true, "runbooks.js": true, "input.js": true, "input-geometry.js": true, "favicon.svg": true}
@@ -35,7 +35,7 @@ func run() int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	server := signaling.New(config.cfg, log)
+	server := tunnel.New(config.cfg, log)
 	server.StartSweeper(ctx)
 	handler := server.Routes()
 	if config.viewer != "" {
@@ -58,12 +58,12 @@ func run() int {
 			}
 			http.ServeFile(w, r, filepath.Join(config.viewer, name))
 		})
-		handler = signaling.SecurityHeaders(mux)
+		handler = tunnel.SecurityHeaders(mux)
 	}
 	httpServer := &http.Server{Addr: config.addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	listenResult := make(chan error, 1)
 	go func() {
-		log.Info("시그널링 시작", "addr", config.addr, "mode", config.mode)
+		log.Info("터널링 서버 시작", "addr", config.addr, "mode", config.mode)
 		if config.mode != "development" {
 			listenResult <- httpServer.ListenAndServeTLS(config.cert, config.key)
 		} else {
@@ -88,7 +88,7 @@ func run() int {
 		log.Error("listen 실패", "reason", listenErr)
 		return 1
 	}
-	log.Info("시그널링 종료")
+	log.Info("터널링 서버 종료")
 	return 0
 }
 
@@ -138,12 +138,12 @@ func loadSettings() (settings, error) {
 		}
 	}
 	out.cfg.OperatorSecretFile = os.Getenv("RA_OPERATOR_SECRET_FILE")
-	if out.cfg.OperatorSecretFile != "" && signaling.ReadSecretFile(out.cfg.OperatorSecretFile) == "" {
+	if out.cfg.OperatorSecretFile != "" && tunnel.ReadSecretFile(out.cfg.OperatorSecretFile) == "" {
 		return out, errors.New("운영 node credential 검사 실패")
 	}
 	out.cfg.AuditDirectory = os.Getenv("RA_AUDIT_DIR")
 	if out.cfg.AuditDirectory != "" {
-		if _, err := signaling.OpenAuditStore(out.cfg.AuditDirectory); err != nil {
+		if _, err := tunnel.OpenAuditStore(out.cfg.AuditDirectory); err != nil {
 			return out, errors.New("감사 저장소 검사 실패")
 		}
 	}

@@ -1,4 +1,4 @@
-namespace RemoteAssist.Host.Core.Signaling;
+namespace RemoteAssist.Host.Core.Tunnel;
 
 public static class IceCandidateWire
 {

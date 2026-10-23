@@ -12,7 +12,7 @@
 - 접속은 PIN 없는 **고정 9자리 지원 ID**로 한다. 끊기면 자동으로 다시 접속한다. 지원 허가는 서비스 재시작·업데이트 뒤에도 유지되고 재부팅·로그오프·사용자 변경·대상자의 즉시 종료에서 사라진다.
 - 두 PC는 지정 IP로 항상 **직접 P2P** 연결된다. STUN/TURN·릴레이·연결 가능성 분기는 없다. 실제 연결 오류는 결함으로 조사한다.
 - 대상자에게 보이는 접속 표시와 Tray의 즉시 종료 버튼은 유지한다.
-- 시그널링은 TLS(HTTPS/WSS)를 유지한다. 사설망은 자체 서명 인증서 + Host 핀 고정(`RA_MODE=lan`)을 쓴다.
+- 터널링 서버는 TLS(HTTPS/WSS)를 유지한다. 사설망은 자체 서명 인증서 + Host 핀 고정(`RA_MODE=lan`)을 쓴다.
 
 ## 문서 저장 위치
 
@@ -26,7 +26,7 @@
 
 ### 고정 시험 환경
 
-- A: `192.168.0.61` — 지원자 PC(웹 Viewer) / 시그널링.
+- A: `192.168.0.61` — 지원자 PC(웹 Viewer) / 터널링 서버.
 - B: `192.168.0.74` — 대상 Host PC. SSH 사용자: `jacking75NoteBook`.
 - SSH 인증은 기존 환경 설정과 등록된 호스트 키를 사용한다. 비밀번호·토큰·개인 키·환경 변수 전체를 출력하거나 문서에 복사하지 않는다.
 - DesktopTestDriver 저장소: `F:/github/DesktopTestDriver`. 실행본 기준: `bin/live_Release`.
@@ -43,20 +43,20 @@
 
 ## 아키텍처
 
-제품 경로는 **SYSTEM Service + 일반 권한 WPF Tray/Helper + (관리자 모드) SYSTEM AdminHelper + Go 시그널링 + 웹 Viewer**다. HostRun은 화면 전용 개발 진단 도구다.
+제품 경로는 **SYSTEM Service + 일반 권한 WPF Tray/Helper + (관리자 모드) SYSTEM AdminHelper + Go 터널링 서버 + 웹 Viewer**다. HostRun은 화면 전용 개발 진단 도구다.
 
 - **Host.Service** (Session 0 · SYSTEM): 지원 허가 읽기/폐기, 고정 지원 ID, Tray/Helper/AdminHelper/RunbookWorker 감독, 자동 재대기, 감사(실패해도 계속).
 - **Host.Tray** (사용자 세션 · 일반 권한): 지원 ID·접속 표시·즉시 종료·채팅·파일 보내기·클립보드 처리. 승인 창은 없다.
 - **Host.Helper** (사용자 세션 · 일반 권한): 캡처·인코딩·WebRTC·일반 입력.
 - **Host.AdminHelper** (사용자 세션 · SYSTEM): 연결되면 자동으로 쓰는 관리자 모드. 현재 입력 데스크톱(기본·UAC 보안 데스크톱·잠금 화면)을 캡처·입력하고 ACL 공유 mapping으로 프레임을 Helper에 넘긴다.
 - **Viewer** (지원자): 웹 SPA(브라우저 내장 WebRTC). 설치 불필요.
-- **Signaling** (Go): 지원 ID 방·SDP/ICE 중계·Viewer 교체. 미디어는 거치지 않는다.
+- **터널링 서버** (Go, `server/tunnel`): 지원자 PC(A)가 여는 접속 지점이다. 대상 PC(B)는 설치 때 받은 A의 주소로 여기에 직접 접속한다. Viewer 페이지 제공·지원 ID 방·첫 SDP/ICE 교환·Viewer 교체를 맡고, 화면·입력 미디어는 거치지 않는다(두 PC 직접 P2P). 예전 이름은 "시그널링"이었다(2026-10-23 사용자 결정으로 변경).
 
 SYSTEM 서비스도 Session 0에서 사용자 세션으로 자동 이동하지 않는다. 캡처·입력은 대상 사용자 세션의 헬퍼가 처리한다. `SetThreadDesktop`만으로 Windows 세션 경계를 넘을 수 없다.
 
 ## 기술 스택 (영역별로 더 나은 언어를 쓴다)
 
-Host는 C#, 시그널링 서버는 Go. .NET을 쓰는 곳은 모두 **.NET 10(LTS)** 로 통일한다.
+Host는 C#, 터널링 서버는 Go. .NET을 쓰는 곳은 모두 **.NET 10(LTS)** 로 통일한다.
 
 | 영역 | 선택 |
 |---|---|
@@ -68,7 +68,7 @@ Host는 C#, 시그널링 서버는 Go. .NET을 쓰는 곳은 모두 **.NET 10(LT
 | H.264 인코더 | `h264_nvenc` → `h264_qsv` → `h264_amf` → `h264_mf`, 없으면 `libopenh264`. **`libx264`는 GPL이므로 금지** |
 | 입력 주입 | Win32 `SendInput` (P/Invoke), SAS는 `SendSAS` |
 | Host UI | WPF |
-| 시그널링 | **Go** + `net/http` + `coder/websocket` (TCP 25001) |
+| 터널링 서버 | **Go** + `net/http` + `coder/websocket` (TCP 25001) |
 | Viewer | 정적 HTML/CSS/바닐라 JS (Node.js 빌드 단계 없음) |
 
 ## 프로젝트 구조
@@ -84,13 +84,13 @@ RemoteAssist.slnx
 │  ├─ RemoteAssist.Host.Core/         # 공통 로직(캡처/인코딩/입력/세션)
 │  ├─ RemoteAssist.Protocol/          # 데이터채널 메시지 C# DTO
 │  └─ RemoteAssist.Update/            # 관리자 실행 진입점·설치/업데이트
-├─ server/signaling/                  # 시그널링 서버 (Go 모듈, 별도 빌드)
+├─ server/tunnel/                  # 터널링 서버 (Go 모듈, 별도 빌드)
 ├─ web/viewer/                        # 지원자 웹 뷰어(정적 SPA)
-├─ deploy/                            # 설치 스크립트, signaling 컨테이너, runbooks
+├─ deploy/                            # 설치 스크립트, tunnel 컨테이너, runbooks
 └─ docs/                              # 기준 문서 (protocol.md가 와이어 포맷 단일 기준)
 ```
 
-`RemoteAssist.slnx`에는 C# 프로젝트와 진단 도구만 넣는다. Go 모듈은 `server/signaling`에서 `go build ./...`로 따로 빌드한다.
+`RemoteAssist.slnx`에는 C# 프로젝트와 진단 도구만 넣는다. Go 모듈은 `server/tunnel`에서 `go build ./...`로 따로 빌드한다.
 
 ## 데이터 채널 프로토콜
 
@@ -124,6 +124,6 @@ RemoteAssist.slnx
 
 ## 컨벤션
 
-- 개발용 포트는 TCP `25001~25199`, UDP `27001~27199` 범위에서만 할당한다. 시그널링은 TCP `25001`, Host WebRTC는 UDP `27002~27099`.
+- 개발용 포트는 TCP `25001~25199`, UDP `27001~27199` 범위에서만 할당한다. 터널링 서버는 TCP `25001`, Host WebRTC는 UDP `27002~27099`.
 - 성능 수치(지연·FPS·비트레이트)는 추정하지 말고 실측값을 기록한다.
 - 원격 제어 도구는 오남용 소지가 크다. 배포·운영 시 조직 보안 정책과 관련 법규(개인정보·정보통신망) 검토를 병행한다.

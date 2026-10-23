@@ -27,7 +27,7 @@ function parseEnvelope(text, maxBytes, typeField) {
 export function parseSignal(text){
   const message=parseEnvelope(text,128*1024,'type');
   const fields=['v','type','sessionId','connectionId','generation','displayName','room','role','token','sdp','ice','peerPresent','code','reason'];
-  if(Object.keys(message).some(k=>!fields.includes(k)))throw Error('미등록 시그널링 필드다.');
+  if(Object.keys(message).some(k=>!fields.includes(k)))throw Error('미등록 터널링 서버 필드다.');
   if(message.ice!==undefined){const ice=message.ice;if(!ice||Object.keys(ice).some(k=>!['candidate','sdpMid','sdpMLineIndex'].includes(k))||typeof ice.candidate!=='string'||ice.candidate.length>8192||ice.sdpMid!=null&&(typeof ice.sdpMid!=='string'||ice.sdpMid.length>256)||ice.sdpMLineIndex!=null&&(!Number.isInteger(ice.sdpMLineIndex)||ice.sdpMLineIndex<0||ice.sdpMLineIndex>65535))throw Error('ICE 필드 오류다.');}
   return message;
 }
@@ -70,8 +70,8 @@ export class ViewerConnection {
       if (!this.live()) return;
       this.send({ type: 'join', room: code, role: 'viewer', displayName });
     };
-    socket.onerror = () => { if (this.live()) this.end('시그널링 서버에 연결할 수 없다.', true); };
-    socket.onclose = () => { if (this.live()) this.end('시그널링 연결이 끊어졌다.', true); };
+    socket.onerror = () => { if (this.live()) this.end('터널링 서버에 연결할 수 없다.', true); };
+    socket.onclose = () => { if (this.live()) this.end('터널링 서버 연결이 끊어졌다.', true); };
     socket.onmessage = event => {
       if (!this.live()) return;
       try {
@@ -82,16 +82,16 @@ export class ViewerConnection {
         if (message.type === 'pong') return;
         if (message.type === 'error') { this.errorCode = message.code ?? null; this.end(describeError(message), true); return; }
         if (message.type === 'peer-left' || message.type === 'bye') { this.end('대상 PC와의 연결이 종료됐다.'); return; }
-        if (this.queuedMessages >= 128) throw Error('시그널링 처리 큐 상한이다.');
+        if (this.queuedMessages >= 128) throw Error('터널링 서버 처리 큐 상한이다.');
         this.queuedMessages++;
         this.messageChain = this.messageChain.then(() => this.live() && this.handle(message))
           .catch(() => { if (this.live()) this.end('연결 협상 또는 프로토콜 처리에 실패했다.', true); })
           .finally(() => { this.queuedMessages--; });
-      } catch { this.end('잘못된 시그널링 응답이다.', true); }
+      } catch { this.end('잘못된 터널링 서버 응답이다.', true); }
     };
     this.timers.push(setTimer(() => {
       if (!this.live()) return;
-      if (now() - this.lastSeen >= 15000) this.end('시그널링 생존 확인 시간 초과다.', true);
+      if (now() - this.lastSeen >= 15000) this.end('터널링 서버 생존 확인 시간 초과다.', true);
       else if (!this.pc && now() >= this.prePeerDeadline) this.end('대상 PC의 연결 제안 대기 시간 초과다.', true);
       else if (socket.readyState === 1) this.send({ type: 'ping' });
     }, 5000));

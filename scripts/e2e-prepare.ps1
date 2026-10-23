@@ -6,13 +6,13 @@ param(
     [string]$TargetDir='C:/ra-candidate',
     [ValidateRange(25001,25199)][int]$Port=25001,
     [switch]$Install,
-    [switch]$StartSignaling
+    [switch]$StartTunnel
 )
 # A(지원자) 머신에서 실행한다. 화면을 점유하지 않는 준비를 자동화한다.
 #   1) A의 LAN IP용 자체 서명 TLS 인증서 생성
 #   2) Host 후보 빌드(package-host-dev)
 #   3) (-Install) 후보와 install-host-dev.ps1을 B로 복사하고 B에서 Validate+Install (SSH)
-#   4) (-StartSignaling) 시그널링 서버를 새 창에서 기동
+#   4) (-StartTunnel) 터널링 서버를 새 창에서 기동
 # 그 다음은 사람이 B에서 RemoteAssist.Update.exe 관리자 실행 + UAC 승인. 이후는 브라우저 Viewer에서 진행한다.
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -37,7 +37,7 @@ Write-Host "TLS 인증서: $tls (server-cert.pem / server-key.pem / lan-test.cer
 
 # 2) Host 후보
 $candidate=Join-Path $run 'host-candidate'
-& pwsh (Join-Path $repo 'scripts/package-host-dev.ps1') -SignalingUri ("https://{0}:{1}/" -f $HostIp,$Port) -SignalingCertificate (Join-Path $tls 'lan-test.cer') -SdkDirectory $sdk -Output $candidate
+& pwsh (Join-Path $repo 'scripts/package-host-dev.ps1') -TunnelUri ("https://{0}:{1}/" -f $HostIp,$Port) -TunnelCertificate (Join-Path $tls 'lan-test.cer') -SdkDirectory $sdk -Output $candidate
 if($LASTEXITCODE -ne 0){throw 'Host 후보 빌드 실패'}
 Write-Host "Host 후보: $candidate"
 
@@ -57,11 +57,11 @@ if($Install){
     Write-Host 'B 설치 완료.'
 }
 
-# 4) 시그널링 기동
-if($StartSignaling){
-    $start="`$env:RA_MODE='lan';`$env:RA_LISTEN='0.0.0.0:$Port';`$env:RA_TLS_CERT='$tls\server-cert.pem';`$env:RA_TLS_KEY='$tls\server-key.pem';`$env:RA_VIEWER_DIR='$repo\web\viewer';cd '$repo\server\signaling';go run ."
+# 4) 터널링 서버 기동
+if($StartTunnel){
+    $start="`$env:RA_MODE='lan';`$env:RA_LISTEN='0.0.0.0:$Port';`$env:RA_TLS_CERT='$tls\server-cert.pem';`$env:RA_TLS_KEY='$tls\server-key.pem';`$env:RA_VIEWER_DIR='$repo\web\viewer';cd '$repo\server\tunnel';go run ."
     Start-Process pwsh -ArgumentList '-NoExit','-Command',$start
-    Write-Host "시그널링 기동: https://$HostIp`:$Port/  (/healthz 로 확인)"
+    Write-Host "터널링 서버 기동: https://$HostIp`:$Port/  (/healthz 로 확인)"
 }
 
 Write-Host ''

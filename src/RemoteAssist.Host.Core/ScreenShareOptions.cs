@@ -5,9 +5,9 @@ namespace RemoteAssist.Host.Core;
 public sealed record ScreenShareOptions
 {
     public const int ConsentDecisionSeconds = 120;
-    public Uri SignalingUri { get; init; } = new("http://localhost:25001");
+    public Uri TunnelUri { get; init; } = new("http://localhost:25001");
     public bool AllowLoopbackHttp { get; init; }
-    public string? SignalingCertificateBase64 { get; init; }
+    public string? TunnelCertificateBase64 { get; init; }
     public int MonitorIndex { get; init; }
     public int TargetFps { get; init; } = 30;
     public int BitrateKbps { get; init; } = 4000;
@@ -21,9 +21,9 @@ public sealed record ScreenShareOptions
 
     public void Validate(int monitorCount)
     {
-        ValidateEndpoint(SignalingUri,AllowLoopbackHttp);
-        using var certificate = Signaling.SignalingTrust.Load(SignalingCertificateBase64);
-        if (certificate is not null && SignalingUri.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
+        ValidateEndpoint(TunnelUri,AllowLoopbackHttp);
+        using var certificate = Tunnel.TunnelTrust.Load(TunnelCertificateBase64);
+        if (certificate is not null && TunnelUri.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
         if(MaxOutputShortEdge is < 2 or > 2160 || MaxOutputLongEdge < MaxOutputShortEdge || MaxOutputLongEdge > 3840)
             throw new ArgumentOutOfRangeException(nameof(MaxOutputLongEdge), "출력 크기 상한이 지원 범위를 벗어났다.");
         if (TargetFps is < 1 or > 60) throw new ArgumentOutOfRangeException(nameof(TargetFps), "FPS는 1~60이어야 한다.");
@@ -37,6 +37,6 @@ public sealed record ScreenShareOptions
     {
         if(uri is null||!uri.IsAbsoluteUri||(uri.Scheme!="https"&&!(allowLoopbackHttp&&uri.Scheme=="http"&&uri.IsLoopback))||
            !string.IsNullOrEmpty(uri.UserInfo)||!string.IsNullOrEmpty(uri.Query)||!string.IsNullOrEmpty(uri.Fragment))
-            throw new ArgumentException("HTTPS 시그널링 주소가 필요하다. 평문은 명시적 loopback 개발 모드에서만 허용한다.");
+            throw new ArgumentException("HTTPS 터널링 서버 주소가 필요하다. 평문은 명시적 loopback 개발 모드에서만 허용한다.");
     }
 }

@@ -5,14 +5,14 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RemoteAssist.Protocol;
 
-namespace RemoteAssist.Host.Core.Signaling;
+namespace RemoteAssist.Host.Core.Tunnel;
 
 /// <summary>
-/// Host 쪽 시그널링 클라이언트. Go 시그널링 서버와 말한다.
+/// Host 쪽 터널링 서버 클라이언트. Go 터널링 서버와 말한다.
 ///
 /// 와이어 포맷의 기준은 <c>docs/protocol.md</c> 다. 이 코드가 아니다.
 /// </summary>
-public sealed class SignalingClient : IAsyncDisposable
+public sealed class TunnelClient : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -32,12 +32,12 @@ public sealed class SignalingClient : IAsyncDisposable
     private int _disposed;
     public SignalMsg? JoinedAck {get;private set;}
 
-    public SignalingClient(Uri httpBase, ILogger<SignalingClient>? log = null,bool allowLoopbackHttp=false,string? certificateBase64=null)
+    public TunnelClient(Uri httpBase, ILogger<TunnelClient>? log = null,bool allowLoopbackHttp=false,string? certificateBase64=null)
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         _httpBase = httpBase;
         _log = (ILogger?)log ?? NullLogger.Instance;
-        using var trusted = SignalingTrust.Load(certificateBase64);
+        using var trusted = TunnelTrust.Load(certificateBase64);
         if (trusted is not null)
         {
             if (httpBase.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
@@ -45,8 +45,8 @@ public sealed class SignalingClient : IAsyncDisposable
             var bytes = Convert.ToBase64String(trusted.RawData);
             _socket.Options.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
             {
-                using var root = SignalingTrust.Load(bytes)!;
-                return SignalingTrust.Validate(certificate, errors, root);
+                using var root = TunnelTrust.Load(bytes)!;
+                return TunnelTrust.Validate(certificate, errors, root);
             };
         }
     }
@@ -56,16 +56,16 @@ public sealed class SignalingClient : IAsyncDisposable
     {
         ScreenShareOptions.ValidateEndpoint(httpBase,allowLoopbackHttp);
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(10));ct=deadline.Token;
-        using var trusted = SignalingTrust.Load(certificateBase64);
+        using var trusted = TunnelTrust.Load(certificateBase64);
         if (trusted is not null && httpBase.Scheme != "https") throw new ArgumentException("Pinned trust requires HTTPS.");
         using var handler = new HttpClientHandler {AllowAutoRedirect=false};
-        if (trusted is not null) handler.ServerCertificateCustomValidationCallback = (_, certificate, _, errors) => SignalingTrust.Validate(certificate, errors, trusted);
+        if (trusted is not null) handler.ServerCertificateCustomValidationCallback = (_, certificate, _, errors) => TunnelTrust.Validate(certificate, errors, trusted);
         using var http = new HttpClient(handler);
         using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(httpBase,"/session"));
         if(deviceCode is not null)request.Content=JsonContent.Create(new {code=deviceCode});
         using var response = await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
         response.EnsureSuccessStatusCode();
-        await response.Content.LoadIntoBufferAsync(SignalingFraming.MaxBytes,ct);
+        await response.Content.LoadIntoBufferAsync(TunnelFraming.MaxBytes,ct);
         return SessionCredentials.Parse(await response.Content.ReadAsByteArrayAsync(ct));
     }
 
@@ -79,7 +79,7 @@ public sealed class SignalingClient : IAsyncDisposable
         }.Uri;
 
         await _socket.ConnectAsync(wsUri, ct);
-        _log.LogInformation("시그널링 연결: {Uri}", wsUri);
+        _log.LogInformation("터널링 서버 연결: {Uri}", wsUri);
 
         await SendAsync(new SignalMsg
         {
@@ -108,7 +108,7 @@ public sealed class SignalingClient : IAsyncDisposable
     public async Task SendAsync(SignalMsg msg, CancellationToken ct = default)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(msg, Json);
-        if (bytes.Length > SignalingFraming.MaxBytes) throw new InvalidDataException("메시지 크기 상한 초과다.");
+        if (bytes.Length > TunnelFraming.MaxBytes) throw new InvalidDataException("메시지 크기 상한 초과다.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         ct = timeout.Token;
@@ -129,7 +129,7 @@ public sealed class SignalingClient : IAsyncDisposable
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
-        return await SignalingFraming.ReceiveAsync(_socket, deadline.Token);
+        return await TunnelFraming.ReceiveAsync(_socket, deadline.Token);
     }
 
     private async Task HeartbeatAsync(CancellationToken ct)
@@ -182,7 +182,7 @@ public sealed class SessionCredentials
 
     public static SessionCredentials Parse(ReadOnlyMemory<byte> bytes)
     {
-        using var document=ProtocolJson.ParseObject(bytes,SignalingFraming.MaxBytes);
+        using var document=ProtocolJson.ParseObject(bytes,TunnelFraming.MaxBytes);
         var credentials=JsonSerializer.Deserialize<SessionCredentials>(bytes.Span)??throw new InvalidDataException("세션 발급 본문 누락이다.");
         if(!Digits(credentials.Code,9)||!Id(credentials.HostToken)||!Id(credentials.SessionId)||credentials.ExpiresIn is <30 or >1800)
             throw new InvalidDataException("세션 발급 계약과 다른 응답이다.");

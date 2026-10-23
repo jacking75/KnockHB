@@ -79,7 +79,7 @@ el['join-form'].addEventListener('submit',event=>{
 });
 function connect(code,name){
   current?.end();reset();resetFeatures();
-  if(location.protocol!=='https:'&&location.hostname!=='localhost'&&location.hostname!=='127.0.0.1'){status('시그널링 서버의 HTTPS Viewer 주소를 열어야 한다.',true);return;}
+  if(location.protocol!=='https:'&&location.hostname!=='localhost'&&location.hostname!=='127.0.0.1'){status('터널링 서버의 HTTPS Viewer 주소를 열어야 한다.',true);return;}
   let connection;
   connection=new ViewerConnection({base:location.origin,code,displayName:name,
     isCurrent:()=>current===connection,

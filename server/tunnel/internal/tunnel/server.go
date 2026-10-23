@@ -1,4 +1,4 @@
-// Package signaling 은 시그널링 HTTP/WebSocket 엔드포인트를 제공한다.
+// Package tunnel 은 터널링 서버 HTTP/WebSocket 엔드포인트를 제공한다.
 //
 // 서버가 하는 일은 두 가지뿐이다.
 //  1. 세션 코드 발급 (POST /session). Host가 고정 device code를 지정할 수 있다
@@ -8,7 +8,7 @@
 // 서버는 더 이상 관여하지 않는다. STUN/TURN 서버는 쓰지 않는다.
 //
 // 와이어 포맷의 기준은 docs/protocol.md 다. 이 파일이 아니다.
-package signaling
+package tunnel
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/remoteassist/signaling/internal/room"
+	"github.com/remoteassist/tunnel/internal/room"
 )
 
 const (
@@ -46,7 +46,7 @@ const (
 	notifyTimeout = 3 * time.Second
 )
 
-// Msg 는 시그널링 메시지다. 필드명 기준은 docs/protocol.md.
+// Msg 는 터널링 서버 메시지다. 필드명 기준은 docs/protocol.md.
 type Msg struct {
 	Version      int    `json:"v"`
 	SessionID    string `json:"sessionId,omitempty"`
@@ -88,7 +88,7 @@ type Config struct {
 	AuditDirectory     string
 }
 
-// Server 는 시그널링 서버다.
+// Server 는 터널링 서버다.
 type Server struct {
 	rooms             *room.Manager
 	cfg               Config

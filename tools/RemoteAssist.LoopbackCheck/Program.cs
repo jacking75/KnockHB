@@ -10,15 +10,15 @@ using RemoteAssist.Host.Core;
 using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Host.Core.Input;
 using RemoteAssist.Host.Core.Media;
-using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Tunnel;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 
-// 사용: RemoteAssist.LoopbackCheck --signaling http://127.0.0.1:25080 [--out <결과 JSON>]
-// scripts/loopback-check.ps1이 시그널링 서버를 띄우고 이 도구를 실행한다.
+// 사용: RemoteAssist.LoopbackCheck --tunnel http://127.0.0.1:25080 [--out <결과 JSON>]
+// scripts/loopback-check.ps1이 터널링 서버를 띄우고 이 도구를 실행한다.
 SetProcessDpiAwarenessContext(-4);
-var signaling = new Uri(Arg("--signaling") ?? "http://127.0.0.1:25080");
+var tunnel = new Uri(Arg("--tunnel") ?? "http://127.0.0.1:25080");
 var output = Arg("--out");
 var checks = new List<object>();
 var measurements = new Dictionary<string, double>();
@@ -36,12 +36,12 @@ void Record(string name, bool pass, string detail = "")
 try
 {
     // 1. Host 세션: 실제 ScreenShareSession. 입력·관리자·Runbook은 기록만 하는 가짜 경로다.
-    var host = new FakeHost(signaling, DeviceCode);
+    var host = new FakeHost(tunnel, DeviceCode);
     await host.Start();
     Record("host opens fixed support ID room", host.Credentials?.Code == DeviceCode, host.Credentials?.Code ?? "");
 
     // 2. Viewer 접속과 WebRTC 연결
-    await using var viewer = new FakeViewer(signaling, "loopback viewer");
+    await using var viewer = new FakeViewer(tunnel, "loopback viewer");
     var joinClock = Stopwatch.StartNew();
     var joined = await viewer.Join(DeviceCode);
     Record("viewer joins with the support ID only (no PIN)", joined.Type == "joined" && joined.PeerPresent == true, joined.Type);
@@ -126,7 +126,7 @@ try
     Record("chat reaches the host", host.Chats.Contains("안녕하세요"));
 
     // 10. 교체 접속: 새 Viewer가 이어받고 기존 Viewer는 replaced를 받는다. Host 세션은 끝난다.
-    await using (var second = new FakeViewer(signaling, "second viewer"))
+    await using (var second = new FakeViewer(tunnel, "second viewer"))
     {
         var refused = await second.Join(DeviceCode);
         Record("second viewer is told to retry while the room is handed over", refused.Type == "error" && refused.Code == "busy", refused.Code ?? refused.Type);
@@ -140,10 +140,10 @@ try
     await host.Stop();
 
     // 11. 재대기와 재접속: 같은 지원 ID로 새 세션을 열고 다시 붙는다.
-    var again = new FakeHost(signaling, DeviceCode);
+    var again = new FakeHost(tunnel, DeviceCode);
     var reopen = Stopwatch.StartNew();
     await again.Start();
-    await using (var back = new FakeViewer(signaling, "returning viewer"))
+    await using (var back = new FakeViewer(tunnel, "returning viewer"))
     {
         var rejoined = await back.Join(DeviceCode);
         await back.Connected.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -169,7 +169,7 @@ string? Arg(string name) { var i = Array.IndexOf(args, name); return i >= 0 && i
 [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(nint value);
 
 /// <summary>실제 ScreenShareSession. 서비스·Tray 대신 기록용 callback을 연결한다.</summary>
-sealed class FakeHost(Uri signaling, string code)
+sealed class FakeHost(Uri tunnel, string code)
 {
     public ScreenShareSession? Session { get; private set; }
     public SessionCredentials? Credentials { get; private set; }
@@ -178,7 +178,7 @@ sealed class FakeHost(Uri signaling, string code)
     public TaskCompletionSource<RemoteAssist.Host.Core.Security.SupporterIdentity> Supporter { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public async Task Start()
     {
-        var session = new ScreenShareSession(new ScreenShareOptions { SignalingUri = signaling, AllowLoopbackHttp = true, DeviceCode = code, TargetFps = 15, BitrateKbps = 2000 });
+        var session = new ScreenShareSession(new ScreenShareOptions { TunnelUri = tunnel, AllowLoopbackHttp = true, DeviceCode = code, TargetFps = 15, BitrateKbps = 2000 });
         Session = session;
         session.CreateInputBackend = _ => Input;
         session.SupporterJoined = s => Supporter.TrySetResult(s);
@@ -223,7 +223,7 @@ sealed class RecordingInput : IInputBackend
 sealed class FakeViewer : IAsyncDisposable
 {
     static readonly JsonSerializerOptions Json = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
-    readonly Uri signaling;
+    readonly Uri tunnel;
     readonly string name;
     readonly ClientWebSocket socket = new();
     readonly CancellationTokenSource stop = new();
@@ -243,11 +243,11 @@ sealed class FakeViewer : IAsyncDisposable
     public long TakeVideoBytes() => Interlocked.Exchange(ref videoBytes, 0);
     public bool HasChannel(string label) => channels.ContainsKey(label);
     public IEnumerable<string> ChannelLabels => channels.Keys.OrderBy(x => x);
-    public FakeViewer(Uri signaling, string name) { this.signaling = signaling; this.name = name; }
+    public FakeViewer(Uri tunnel, string name) { this.tunnel = tunnel; this.name = name; }
 
     public async Task<SignalMsg> Join(string code)
     {
-        await socket.ConnectAsync(new Uri((signaling.Scheme == "https" ? "wss://" : "ws://") + signaling.Authority + "/ws"), stop.Token);
+        await socket.ConnectAsync(new Uri((tunnel.Scheme == "https" ? "wss://" : "ws://") + tunnel.Authority + "/ws"), stop.Token);
         loop = Receive();
         await Signal(new SignalMsg { Type = "join", Room = code, Role = "viewer", DisplayName = name });
         return await joined.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -267,7 +267,7 @@ sealed class FakeViewer : IAsyncDisposable
         {
             while (!stop.IsCancellationRequested)
             {
-                var message = await SignalingFraming.ReceiveAsync(socket, stop.Token);
+                var message = await TunnelFraming.ReceiveAsync(socket, stop.Token);
                 if (message is null) return;
                 switch (message.Type)
                 {

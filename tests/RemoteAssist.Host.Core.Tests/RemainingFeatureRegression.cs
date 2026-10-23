@@ -3,7 +3,7 @@ using System.Text;
 using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Host.Core.Files;
 using RemoteAssist.Host.Core.Runbooks;
-using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Tunnel;
 using RemoteAssist.Protocol;
 
 static class RemainingFeatureRegression
@@ -67,7 +67,7 @@ static class RemainingFeatureRegression
         foreach(var value in new[]{json.Replace("600}","600,\"expiresIn\":700}"),json.Replace("600}","600,\"unknown\":0}"),json.Replace("\"012345678\"","null"),json.Replace("600}","600,\"pin\":\"0123\"}"),json.Replace("expiresIn","ExpiresIn"),json.Replace(new string('a',32),new string('!',32)),"{}"})
             Reject(()=>SessionCredentials.Parse(Encoding.UTF8.GetBytes(value)));
         foreach(var value in new[]{"{\"v\":1,\"type\":\"ice\",\"ice\":{\"candidate\":\"candidate:1\",\"extra\":1}}","{\"v\":1,\"type\":\"joined\",\"iceServers\":[{\"urls\":[\"turn:host\"],\"extra\":1}]}"})
-            Reject(()=>SignalingFraming.Parse(Encoding.UTF8.GetBytes(value)));
+            Reject(()=>TunnelFraming.Parse(Encoding.UTF8.GetBytes(value)));
         Check(RemoteAssist.Host.Core.Deployment.DeviceId.Valid("012345678")&&!RemoteAssist.Host.Core.Deployment.DeviceId.Valid("12345678")&&!RemoteAssist.Host.Core.Deployment.DeviceId.Valid("12345678a"),"device id validation");
         return Task.CompletedTask;
     }

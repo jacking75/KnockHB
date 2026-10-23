@@ -2,10 +2,10 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-namespace RemoteAssist.Host.Core.Signaling;
+namespace RemoteAssist.Host.Core.Tunnel;
 
 /// <summary>Explicit per-connection certificate trust; never modifies OS stores.</summary>
-public static class SignalingTrust
+public static class TunnelTrust
 {
     public static X509Certificate2? Load(string? encoded)
     {

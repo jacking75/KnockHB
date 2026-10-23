@@ -443,8 +443,8 @@ third_party/ffmpeg/*
 !third_party/ffmpeg/notices/
 
 # Go 빌드 산출물
-server/signaling/signaling
-server/signaling/signaling.exe
+server/tunnel/tunnel
+server/tunnel/tunnel.exe
 
 # 웹 뷰어
 web/viewer/node_modules/
@@ -452,7 +452,7 @@ web/viewer/dist/
 .playwright-cli/
 
 deploy/coturn/private/
-deploy/signaling/private/
-deploy/signaling/audit/
-deploy/signaling/.env
+deploy/tunnel/private/
+deploy/tunnel/audit/
+deploy/tunnel/.env
 /docs_working/desktop-driver-artifacts-20261019/

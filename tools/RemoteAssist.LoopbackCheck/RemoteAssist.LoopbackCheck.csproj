@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    한 PC 루프백 통합 검사. 실제 Go 시그널링 서버와 실제 Host 세션(ScreenShareSession)에
+    한 PC 루프백 통합 검사. 실제 Go 터널링 서버와 실제 Host 세션(ScreenShareSession)에
     C#으로 만든 가짜 Viewer를 붙여 연결·채널·입력·관리자 요청·모니터·Runbook·재접속 흐름을 확인한다.
     입력은 주입하지 않고 기록만 한다. 화면은 읽기만 한다. 서비스 설치·UAC를 하지 않는다.
   -->

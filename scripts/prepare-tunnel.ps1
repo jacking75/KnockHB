@@ -6,7 +6,7 @@ $target=[IO.Path]::GetFullPath($Destination);if(Test-Path -LiteralPath $target){
 New-Item -ItemType Directory -Path (Join-Path $target 'private/tls') -Force|Out-Null;New-Item -ItemType Directory -Path (Join-Path $target 'audit')|Out-Null
 if($env:OS-eq'Windows_NT'){$acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')));foreach($sid in @('S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($sid)),'FullControl','ContainerInherit,ObjectInherit','None','Allow')))};Set-Acl -LiteralPath $target -AclObject $acl}
 Copy-Item -LiteralPath $NodeSecret -Destination (Join-Path $target 'private/node.secret');Copy-Item -LiteralPath $Certificate -Destination (Join-Path $target 'private/tls/cert.pem');Copy-Item -LiteralPath $PrivateKey -Destination (Join-Path $target 'private/tls/key.pem')
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../deploy/signaling/docker-compose.yml') -Destination $target
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../deploy/tunnel/docker-compose.yml') -Destination $target
 $lines=@("RA_GO_IMAGE=$GoImage","RA_RUNTIME_IMAGE=$RuntimeImage",('RA_ALLOWED_ORIGINS='+$ViewerOrigin.Authority))
 [IO.File]::WriteAllLines((Join-Path $target '.env'),$lines,(New-Object Text.UTF8Encoding($false)))
 Write-Output 'Staging prepared. Copy secrets privately, set Linux owner 65532 and mode 0700/0600, and build from the reviewed repository checkout.'

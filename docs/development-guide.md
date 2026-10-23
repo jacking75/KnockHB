@@ -10,7 +10,7 @@ Windows x64, global.json의 .NET 10 SDK/WindowsDesktop, Go 1.27, Node 22 이상�
 dotnet restore RemoteAssist.slnx --locked-mode
 dotnet build RemoteAssist.slnx --no-restore
 dotnet run --project tests/RemoteAssist.Host.Core.Tests --no-build
-cd server/signaling; go vet ./...; go test ./...; cd ../..
+cd server/tunnel; go vet ./...; go test ./...; cd ../..
 node --test web/viewer/tests/*.test.js
 pwsh -NoProfile -File scripts/verify-local.ps1   # 위 검사 묶음 + 설치 계약 검사, 결과를 .artifacts에 기록
 ```
@@ -25,16 +25,16 @@ dotnet run --project tools/RemoteAssist.HostRun -c Release -- --encoder-check --
 
 ## 개발 설치
 
-1. 시그널링 TLS 인증서를 준비한다. 사설망은 `python scripts/prepare-e2e-tls.py --directory <새 폴더> --ip <서버 IP>`로 7일짜리 자체 서명 인증서(`server-cert.pem`, `server-key.pem`, DER `lan-test.cer`)를 만들 수 있다. 지원자 브라우저에는 이 인증서를 신뢰시키거나 첫 접속 때 예외를 허용한다.
-2. 시그널링 서버를 띄운다.
+1. 터널링 서버 TLS 인증서를 준비한다. 사설망은 `python scripts/prepare-e2e-tls.py --directory <새 폴더> --ip <서버 IP>`로 7일짜리 자체 서명 인증서(`server-cert.pem`, `server-key.pem`, DER `lan-test.cer`)를 만들 수 있다. 지원자 브라우저에는 이 인증서를 신뢰시키거나 첫 접속 때 예외를 허용한다.
+2. 터널링 서버를 띄운다.
    ```powershell
-   cd server/signaling
+   cd server/tunnel
    $env:RA_MODE='lan'; $env:RA_LISTEN='0.0.0.0:25001'; $env:RA_TLS_CERT='<폴더>/server-cert.pem'; $env:RA_TLS_KEY='<폴더>/server-key.pem'; $env:RA_VIEWER_DIR='../../web/viewer'
    go run .
    ```
 3. Host 후보를 만든다. 자체 서명이면 DER 인증서를 핀 고정한다.
    ```powershell
-   pwsh scripts/package-host-dev.ps1 -SignalingUri https://<서버 IP>:25001/ -SignalingCertificate <폴더>/lan-test.cer -SdkDirectory <.NET 10 SDK 폴더> -Output .artifacts/<새 폴더>
+   pwsh scripts/package-host-dev.ps1 -TunnelUri https://<서버 IP>:25001/ -TunnelCertificate <폴더>/lan-test.cer -SdkDirectory <.NET 10 SDK 폴더> -Output .artifacts/<새 폴더>
    ```
 4. 대상 PC의 관리자 PowerShell에서 설치한다: `scripts/install-host-dev.ps1 -Action Install -Package .artifacts/<폴더>`.
 5. 대상 사용자가 `Program Files\RemoteAssist-Dev\RemoteAssist.Update.exe`를 관리자 권한으로 실행한다. Tray에 지원 ID가 뜬다.

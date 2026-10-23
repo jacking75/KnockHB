@@ -18,7 +18,7 @@
 |---|---|---|
 | Host — 캡처·인코딩·입력·데스크톱 전환 | **C# / .NET 10** | WinRT(`Windows.Graphics.Capture`)를 CsWinRT로, DXGI/D3D11 COM을 `Vortice.Windows`로 바로 다룬다. `SendInput`·`OpenInputDesktop` P/Invoke, Windows 서비스 호스팅, Named Pipe가 모두 표준 제공. Go면 COM vtable을 손으로 짜거나 cgo 셰임이 필요해 **가장 어려운 부분이 더 어려워진다** |
 | Host UI — 트레이·상태 창 | **C# / WPF** | Windows 데스크톱 UI 성숙도. Host 본체와 같은 언어라 IPC 계약을 공유하기 쉽다 |
-| 시그널링 서버 | **Go** | 하는 일이 "다수 WebSocket을 오래 붙들고 릴레이"뿐. goroutine 동시성, 단일 정적 바이너리, 작은 컨테이너 이미지가 그대로 이점 |
+| 터널링 서버 | **Go** | 하는 일이 "다수 WebSocket을 오래 붙들고 릴레이"뿐. goroutine 동시성, 단일 정적 바이너리, 작은 컨테이너 이미지가 그대로 이점 |
 | Viewer | **웹 (바닐라 JS)** | 브라우저 내장 WebRTC. 지원자 측 설치 불필요가 최대 도입 이점 |
 
 **두 언어를 쓰는 대가.** 공유 DTO를 코드로 나눌 수 없다. 와이어 포맷의 기준은 코드가 아니라
@@ -34,7 +34,7 @@
 | .NET SDK | **10.0.400** | `Microsoft.WindowsDesktop.App 10.0.11` 동반 확인 (WPF 필요) |
 | Go | **1.27.0** windows/amd64 | |
 | Node.js / npm | **24.18.0** / 11.16.0 | 웹 뷰어용 |
-| Docker | **29.0.1** | 시그널링 컨테이너용 |
+| Docker | **29.0.1** | 터널링 서버 컨테이너용 |
 | Git | 2.52.0.windows.1 | |
 
 > **미완료:** 테스트 머신 2대(대상 PC / 지원자 PC). LAN P2P·서비스 설치 검증에 필요하다. VM 2대로 대체 가능.
@@ -69,7 +69,7 @@
 
 | 모듈 | 버전 | 용도 | 상태 |
 |---|---|---|---|
-| `github.com/coder/websocket` | **v1.8.15** | 시그널링 WebSocket | ✅ 적용됨 (T1.1). 유일한 외부 의존성 |
+| `github.com/coder/websocket` | **v1.8.15** | 터널링 서버 WebSocket | ✅ 적용됨 (T1.1). 유일한 외부 의존성 |
 | `github.com/gorilla/websocket` | v1.5.3 | 대안 | 위가 안 맞을 때만 |
 
 ---
@@ -126,7 +126,7 @@
 
 | 용도 | 포트 |
 |---|---|
-| 시그널링 서버 (HTTP/WebSocket) | TCP **25001** |
+| 터널링 서버 (HTTP/WebSocket) | TCP **25001** |
 | Host WebRTC (직접 P2P, host 후보만) | UDP **27002~27099** |
 
 STUN/TURN 서버는 쓰지 않는다. 두 PC는 지정 IP로 항상 직접 연결된다.
@@ -139,10 +139,10 @@ STUN/TURN 서버는 쓰지 않는다. 두 PC는 지정 IP로 항상 직접 연�
 |---|---|
 | `dotnet build RemoteAssist.slnx` | ✅ 성공 — 경고 0, 오류 0 |
 | SIPSorcery 10.0.16 on `net10.0-windows` | ✅ 복원·컴파일 확인 (.NET 10 지원 실증) |
-| `go build ./...` (`server/signaling`) | ✅ 성공 |
+| `go build ./...` (`server/tunnel`) | ✅ 성공 |
 | `go vet ./...` · `gofmt -l` | ✅ 지적사항 없음 |
-| `go test ./...` | ✅ 10개 통과 (시그널링 릴레이·룸 정리·인증·고루틴 누수) |
-| 시그널링 서버 실동작 | ✅ TCP 25001에서 `/healthz`·`POST /session` 확인 |
+| `go test ./...` | ✅ 10개 통과 (터널링 서버 릴레이·룸 정리·인증·고루틴 누수) |
+| 터널링 서버 실동작 | ✅ TCP 25001에서 `/healthz`·`POST /session` 확인 |
 | 화면 캡처 (WGC) | ✅ 1920x1080 PNG 덤프 확인 (`tools/RemoteAssist.CaptureDump`) |
 | 화면 캡처 (DXGI) | ❌ **이 개발 머신에서 미지원** — 하이브리드 GPU(Intel UHD + NVIDIA GTX 1660 Ti Max-Q)에서 `DXGI_ERROR_UNSUPPORTED`. 폴백 경로로만 유지하며, 단일 GPU 머신에서 별도 검증 필요 |
 | H.264 인코딩 | ✅ 1080p **97.8fps**, 출력 지연 0프레임 (`h264_nvenc`). 5개 인코더 모두 사용 가능, libx264는 선택 불가 |

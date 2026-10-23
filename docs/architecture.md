@@ -18,12 +18,14 @@ flowchart LR
   service <-->|"작업·결과"| book
   admin -->|"ACL 공유 프레임"| helper
  end
- go["Go 시그널링 · TLS/WSS\n지원 ID 방·SDP/ICE 중계"]
+ go["Go 터널링 서버 · TLS/WSS\n지원 ID 방·SDP/ICE 중계"]
  viewer["지원자 웹 Viewer"]
  helper <-->|"HTTPS/WSS"| go
  viewer <-->|"HTTPS/WSS"| go
  helper <-->|"DTLS-SRTP/SCTP · 직접 P2P"| viewer
 ```
+
+터널링 서버는 지원자 PC(A)가 여는 접속 지점이다. 대상 PC는 설치 때 받은 A의 주소(`TunnelUri`)로 직접 접속하고, 브라우저는 포트를 열 수 없으므로 이 서버가 Viewer 페이지 제공과 첫 SDP/ICE 교환을 맡는다. 화면·입력은 이 서버를 거치지 않고 두 PC가 직접 주고받는다. 예전 이름은 "시그널링"이다.
 
 서비스는 Session 0에서 캡처하지 않는다. WTS로 확인한 단일 콘솔 Session/SID에 Tray와 Helper를 만든다. 사용자가 바뀌면 지원 허가를 없애고 모든 자식을 끝낸다.
 
@@ -36,10 +38,10 @@ flowchart LR
 
 ## 세션 수명
 
-1. 허가가 있고 Helper가 없으면 서비스가 Helper를 띄운다(`StartHelper`). Helper는 시그널링 방을 열고 지원자를 무기한 기다린다.
+1. 허가가 있고 Helper가 없으면 서비스가 Helper를 띄운다(`StartHelper`). Helper는 터널링 서버 방을 열고 지원자를 무기한 기다린다.
 2. 지원자가 들어오면 Helper가 바로 전 권한(`PermissionGate.Grant`)으로 PeerConnection과 모든 기능 채널을 만든다. 승인 단계는 없다.
 3. Viewer는 연결 직후 관리자 모드를 요청한다. 서비스가 AdminHelper를 띄우고, 이후 화면과 입력은 AdminHelper를 거친다(일반·상승 창·UAC·잠금 화면을 한 경로로 처리).
-4. 지원자가 나가면 세션이 끝나고 서비스는 1초 뒤(시작 실패가 이어지면 5초 뒤) 새 Helper를 띄운다. 시그널링 서버가 내려가 있어도 재시도한다.
+4. 지원자가 나가면 세션이 끝나고 서비스는 1초 뒤(시작 실패가 이어지면 5초 뒤) 새 Helper를 띄운다. 터널링 서버가 내려가 있어도 재시도한다.
 
 ### 일반·관리자 이중 구조의 결정
 
@@ -47,7 +49,7 @@ flowchart LR
 
 ## 소유권과 종료
 
-- `ScreenShareSession`이 직렬 이벤트 큐·시그널링 수신·heartbeat·연결 generation·캡처 스레드를 소유한다. 캡처·스케일러·인코더는 캡처 스레드 하나에서 만들고 쓰고 버린다. 오래된 PeerConnection·채널 callback은 generation 검사로 버린다.
+- `ScreenShareSession`이 직렬 이벤트 큐·터널링 서버 수신·heartbeat·연결 generation·캡처 스레드를 소유한다. 캡처·스케일러·인코더는 캡처 스레드 하나에서 만들고 쓰고 버린다. 오래된 PeerConnection·채널 callback은 generation 검사로 버린다.
 - 서비스의 Job이 Helper·AdminHelper·RunbookWorker를 소유한다. 헬퍼가 멈추면 Job 종료로 정리한다. 입력은 Helper 안의 `InputSession`이 눌린 키·버튼을 추적해 정지·일시 중단 때 떼고, AdminHelper는 데스크톱을 떠날 때 자기가 누른 키를 뗀다.
 - `session.gate` 파일 잠금은 지원자가 연결된 동안만 잡는다. 업데이트 설치는 연결이 없을 때 진행한다.
 - 감사 기록(`AuditJournal`)은 지원을 막지 않는다. 기록 실패는 `service-status.ndjson`에 남긴다.
@@ -68,7 +70,7 @@ flowchart LR
 
 ## 연결 복구
 
-일시 ICE 단절이 2초 이어지면 Host가 같은 시그널링 위에서 다음 generation offer로 전송을 다시 만든다(최대 3회). 시그널링이 끊기거나 지원자가 나가면 세션을 끝내고 Host가 같은 지원 ID로 다시 대기한다.
+일시 ICE 단절이 2초 이어지면 Host가 같은 터널링 서버 위에서 다음 generation offer로 전송을 다시 만든다(최대 3회). 터널링 서버가 끊기거나 지원자가 나가면 세션을 끝내고 Host가 같은 지원 ID로 다시 대기한다.
 
 ## 설치·업데이트
 

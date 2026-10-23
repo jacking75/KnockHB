@@ -1,12 +1,12 @@
 # 와이어 포맷 (단일 기준)
 
-> **이 문서가 기준이다.** C#(`RemoteAssist.Protocol`), Go(`server/signaling`), JS(`web/viewer`)는
+> **이 문서가 기준이다.** C#(`RemoteAssist.Protocol`), Go(`server/tunnel`), JS(`web/viewer`)는
 > 각각 이 문서를 구현한 것이지 서로를 참조하지 않는다.
 > **스키마 변경은 항상 이 문서를 먼저 고치고, 그 다음 세 곳의 코드를 맞춘다.**
 >
 > 버전: `v1`. 2026-10-23 상호 신뢰 규격으로 동의·승인 메시지를 없앴다.
 
-## 시그널링
+## 터널링 서버
 
 모든 메시지는 정수 `v:1`이 필요하다. 누락·다른 버전·중복 JSON 필드·잘못된 타입·128KiB 초과·binary는 거부하고 연결을 끊는다. 미등록 필드도 거부한다.
 
@@ -48,7 +48,7 @@ Viewer는 joined 뒤 20초 안에 offer가 없으면 끊고 다시 접속한다.
 
 ### 전송 재구성 세대
 
-STUN/TURN 서버는 쓰지 않는다. 양쪽은 빈 ICE 서버 목록으로 host 후보만 교환한다. 연결 generation은 1부터 시작한다. 일시 `disconnected`/`failed`가 2초 이어지면 Host가 같은 시그널링에서 다음 generation offer를 보낸다(ICE 재시작에 해당). 5초 간격·연속 최대 3회·각 30초다. PeerConnection을 다시 만들면 데이터 채널 순번·inputEpoch는 새 generation에서 1부터 시작하고, 캡처·입력·진행 중 파일·Runbook을 멈췄다가 재개한다. 관리자 모드는 유지된다. 시그널링 상실·지원자 이탈은 재구성하지 않고 세션을 끝낸다.
+STUN/TURN 서버는 쓰지 않는다. 양쪽은 빈 ICE 서버 목록으로 host 후보만 교환한다. 연결 generation은 1부터 시작한다. 일시 `disconnected`/`failed`가 2초 이어지면 Host가 같은 터널링 서버에서 다음 generation offer를 보낸다(ICE 재시작에 해당). 5초 간격·연속 최대 3회·각 30초다. PeerConnection을 다시 만들면 데이터 채널 순번·inputEpoch는 새 generation에서 1부터 시작하고, 캡처·입력·진행 중 파일·Runbook을 멈췄다가 재개한다. 관리자 모드는 유지된다. 터널링 서버 상실·지원자 이탈은 재구성하지 않고 세션을 끝낸다.
 
 ## 데이터 채널 공통
 

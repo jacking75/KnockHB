@@ -36,7 +36,7 @@ Check 'A의 사설 LAN IPv4' ($null -ne $HostIp) $(if($HostIp){$HostIp}else{'LAN
 
 # 3. 포트가 비어 있는지
 $inUse=Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-Check "시그널링 포트 $Port 사용 가능" ($null -eq $inUse)
+Check "터널링 서버 포트 $Port 사용 가능" ($null -eq $inUse)
 
 # 4. B 도달성 (ping + SSH + 같은 서브넷)
 $ping=Test-Connection -ComputerName $TargetHost -Count 1 -Quiet -ErrorAction SilentlyContinue

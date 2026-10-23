@@ -2,9 +2,9 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using RemoteAssist.Protocol;
 
-namespace RemoteAssist.Host.Core.Signaling;
+namespace RemoteAssist.Host.Core.Tunnel;
 
-public static class SignalingFraming
+public static class TunnelFraming
 {
     public const int MaxBytes = 128 * 1024;
     public static async Task<SignalMsg?> ReceiveAsync(WebSocket socket, CancellationToken ct)
@@ -15,8 +15,8 @@ public static class SignalingFraming
         {
             var result = await socket.ReceiveAsync(buffer.AsMemory(), ct);
             if (result.MessageType == WebSocketMessageType.Close) return null;
-            if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException("텍스트 시그널링만 허용한다.");
-            if (bytes.Length + result.Count > MaxBytes) throw new InvalidDataException("시그널링 크기 상한 초과다.");
+            if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException("텍스트 터널링 서버만 허용한다.");
+            if (bytes.Length + result.Count > MaxBytes) throw new InvalidDataException("터널링 서버 크기 상한 초과다.");
             bytes.Write(buffer, 0, result.Count);
             if (result.EndOfMessage) break;
         }
@@ -26,7 +26,7 @@ public static class SignalingFraming
     {
         if (bytes.Length > MaxBytes) throw new InvalidDataException("메시지 크기 상한 초과다.");
         using var doc = ProtocolJson.Parse(bytes,MaxBytes);
-        var msg = JsonSerializer.Deserialize<SignalMsg>(bytes.Span) ?? throw new InvalidDataException("빈 시그널링이다.");
+        var msg = JsonSerializer.Deserialize<SignalMsg>(bytes.Span) ?? throw new InvalidDataException("빈 터널링 서버다.");
         // A property initializer is not evidence that the sender included a version.
         if (!doc.RootElement.TryGetProperty("v", out var version) || version.GetInt32() != 1 || msg.Version != 1)
             throw new InvalidDataException("지원하지 않는 프로토콜 버전이다.");

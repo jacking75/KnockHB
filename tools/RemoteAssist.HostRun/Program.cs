@@ -17,7 +17,7 @@ try
     var parsed = Parse(args);
     var options = new ScreenShareOptions
     {
-        SignalingUri = new Uri(parsed.GetValueOrDefault("--signaling") ?? "http://localhost:25001"),
+        TunnelUri = new Uri(parsed.GetValueOrDefault("--tunnel") ?? "http://localhost:25001"),
         AllowLoopbackHttp = parsed.ContainsKey("--dev-loopback"),
         TargetFps = Number(parsed,"--fps",30), MonitorIndex = Number(parsed,"--monitor",0),
         BitrateKbps = Number(parsed,"--bitrate",4000), PreferredEncoder = parsed.GetValueOrDefault("--encoder")
@@ -109,7 +109,7 @@ static Dictionary<string,string?> Parse(string[] args)
     {
         var name=args[i];if(!result.TryAdd(name,null))throw new ArgumentException("중복 CLI 옵션이다: "+name);
         if(name is "--encoder-check" or "--dev-loopback")continue;
-        if(name is not ("--encoder" or "--fps" or "--monitor" or "--bitrate" or "--signaling" or "--out"))throw new ArgumentException("알 수 없는 CLI 옵션이다: "+name);
+        if(name is not ("--encoder" or "--fps" or "--monitor" or "--bitrate" or "--tunnel" or "--out"))throw new ArgumentException("알 수 없는 CLI 옵션이다: "+name);
         if(++i>=args.Length||args[i].StartsWith("--",StringComparison.Ordinal))throw new ArgumentException("CLI 값이 필요하다: "+name);
         result[name]=args[i];
     }

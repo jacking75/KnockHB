@@ -4,12 +4,12 @@ using System.Text.Json;
 using RemoteAssist.Host.Core;
 using RemoteAssist.Host.Core.Media;
 using RemoteAssist.Host.Core.Security;
-using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Tunnel;
 using RemoteAssist.Host.Core.Capture;
 using RemoteAssist.Protocol;
 using SIPSorcery.Net;
 
-if(args is ["--tls-only"]){await SignalingTrustRegression.Run();return 0;}
+if(args is ["--tls-only"]){await TunnelTrustRegression.Run();return 0;}
 if(args is ["--deployment-only"]){await DeploymentRegression.Run();Console.WriteLine("PASS deployment-only: signed package, required startup preparation, archive integrity and path boundaries");return 0;}
 if(args is ["--startup-only"]){await InitialLaunchRegression.Run();Console.WriteLine("PASS startup-only: launch grant is bound to this logon, user and Windows session");return 0;}
 
@@ -50,7 +50,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("input consent, replay, final button coordinate, reset, revocation and partial Unicode recovery",InputRegression.Run),
     ("Host settings accepts Windows UTF8 BOM but rejects duplicate and unknown configuration",async()=>
     {
-        var json=Encoding.UTF8.GetBytes("{\"SignalingUri\":\"http://127.0.0.1:25001\",\"AllowLoopbackHttp\":true}");
+        var json=Encoding.UTF8.GetBytes("{\"TunnelUri\":\"http://127.0.0.1:25001\",\"AllowLoopbackHttp\":true}");
         var bom=new byte[]{0xEF,0xBB,0xBF}.Concat(json).ToArray();
         Check(HostSettings.Parse(bom).AllowLoopbackHttp,"PowerShell UTF8 BOM broke settings");
         foreach(var invalid in new[]{"{\"AllowLoopbackHttp\":false,\"AllowLoopbackHttp\":true}","{\"Unrecognized\":true}"})await Reject(()=>Task.FromResult(HostSettings.Parse(Encoding.UTF8.GetBytes(invalid))));
@@ -165,18 +165,18 @@ var tests = new (string Name, Func<Task> Run)[]
         for (var split = 1; split < bytes.Length; split++)
         {
             using var socket = new FragmentSocket([bytes[..split], bytes[split..]]);
-            var message = await SignalingFraming.ReceiveAsync(socket, CancellationToken.None);
+            var message = await TunnelFraming.ReceiveAsync(socket, CancellationToken.None);
             Check(message?.Reason == "한글 😀", "split UTF8 was corrupted");
         }
     }),
     ("framing rejects binary, oversize, duplicate and absent version", async () =>
     {
         using var binary = new FragmentSocket([Encoding.UTF8.GetBytes("{\"v\":1,\"type\":\"ping\"}")], WebSocketMessageType.Binary);
-        await Reject(() => SignalingFraming.ReceiveAsync(binary, default));
+        await Reject(() => TunnelFraming.ReceiveAsync(binary, default));
         using var large = new FragmentSocket([new byte[128 * 1024], new byte[1]]);
-        await Reject(() => SignalingFraming.ReceiveAsync(large, default));
+        await Reject(() => TunnelFraming.ReceiveAsync(large, default));
         foreach (var text in new[] { "{\"v\":1,\"v\":1,\"type\":\"ping\"}", "{\"type\":\"ping\"}", "{\"v\":0,\"type\":\"ping\"}" })
-            await Reject(() => Task.FromResult(SignalingFraming.Parse(Encoding.UTF8.GetBytes(text))));
+            await Reject(() => Task.FromResult(TunnelFraming.Parse(Encoding.UTF8.GetBytes(text))));
     }),
     ("supporter gets every capability once; nothing runs before connect or after the session ends", async () =>
     {
@@ -191,7 +191,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("invalid options fail before native resource allocation", async () =>
     {
         foreach (var value in new[] { 0, -1, 61, int.MaxValue }) await Reject(() => { new ScreenShareOptions { TargetFps=value }.Validate(1); return Task.CompletedTask; });
-        await Reject(() => { new ScreenShareOptions { SignalingUri=new Uri("http://192.0.2.1:25001"), AllowLoopbackHttp=true }.Validate(1); return Task.CompletedTask; });
+        await Reject(() => { new ScreenShareOptions { TunnelUri=new Uri("http://192.0.2.1:25001"), AllowLoopbackHttp=true }.Validate(1); return Task.CompletedTask; });
         new ScreenShareOptions { AllowLoopbackHttp=true }.Validate(1);
         await Reject(() => Task.FromResult(new FFmpegH264Encoder("libx264")));
     }),
@@ -210,8 +210,8 @@ var tests = new (string Name, Func<Task> Run)[]
         foreach (var fixture in doc.RootElement.EnumerateArray())
         {
             var bytes=Encoding.UTF8.GetBytes(fixture.GetProperty("message").GetRawText());
-            if (!fixture.GetProperty("valid").GetBoolean()) await Reject(()=>Task.FromResult(SignalingFraming.Parse(bytes)));
-            else {var parsed=SignalingFraming.Parse(bytes);var encoded=JsonSerializer.SerializeToUtf8Bytes(parsed);var roundtrip=SignalingFraming.Parse(encoded);Check(parsed==roundtrip || parsed.Type==roundtrip.Type && parsed.SessionId==roundtrip.SessionId && parsed.Reason==roundtrip.Reason,"golden roundtrip changed");}
+            if (!fixture.GetProperty("valid").GetBoolean()) await Reject(()=>Task.FromResult(TunnelFraming.Parse(bytes)));
+            else {var parsed=TunnelFraming.Parse(bytes);var encoded=JsonSerializer.SerializeToUtf8Bytes(parsed);var roundtrip=TunnelFraming.Parse(encoded);Check(parsed==roundtrip || parsed.Type==roundtrip.Type && parsed.SessionId==roundtrip.SessionId && parsed.Reason==roundtrip.Reason,"golden roundtrip changed");}
         }
     }),
     ("zero output and slow encoder never pass diagnostics", () =>

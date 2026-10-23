@@ -8,12 +8,12 @@ $ErrorActionPreference='Stop'
 $OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $script:RAFirewallGroup='RemoteAssist.Startup.v1'
 
-function Get-RAFirewallPlan([string]$Root,[int]$SignalingPort) {
-    if($SignalingPort-lt1-or$SignalingPort-gt65535){throw 'Invalid signaling port'}
+function Get-RAFirewallPlan([string]$Root,[int]$TunnelPort) {
+    if($TunnelPort-lt1-or$TunnelPort-gt65535){throw 'Invalid tunnel port'}
     $rootPath=[IO.Path]::GetFullPath($Root).TrimEnd('\')
     $sha=[Security.Cryptography.SHA256]::Create()
     try{$tag=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($rootPath.ToLowerInvariant())))).Replace('-','').Substring(0,24)}finally{$sha.Dispose()}
-    $tcpPorts=(@(443,$SignalingPort)|Sort-Object -Unique)-join','
+    $tcpPorts=(@(443,$TunnelPort)|Sort-Object -Unique)-join','
     @(
         @{Suffix='MediaIn';File='RemoteAssist.Host.Helper.exe';Direction='Inbound';Protocol='UDP';LocalPort='27002-27099';RemotePort='Any'},
         @{Suffix='MediaOut';File='RemoteAssist.Host.Helper.exe';Direction='Outbound';Protocol='UDP';LocalPort='27002-27099';RemotePort='Any'},
@@ -111,8 +111,8 @@ foreach($name in @('Service','Tray','Helper','AdminHelper','RunbookWorker')){
     if($exe.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse helper refused'}
 }
 $settings=Get-Content -LiteralPath (Join-Path $root 'host.settings.json') -Raw -Encoding UTF8|ConvertFrom-Json
-$endpoint=[uri]$settings.SignalingUri
-if(!$endpoint.IsAbsoluteUri-or$endpoint.Scheme-ne'https'){throw 'HTTPS signaling endpoint required for installed Host'}
+$endpoint=[uri]$settings.TunnelUri
+if(!$endpoint.IsAbsoluteUri-or$endpoint.Scheme-ne'https'){throw 'HTTPS tunnel endpoint required for installed Host'}
 $plan=@(Get-RAFirewallPlan $root $endpoint.Port)
 $sas=Join-Path $root 'prepare-sas.ps1'
 if(!(Test-Path -LiteralPath $sas)){throw 'SAS startup preparation script missing'}

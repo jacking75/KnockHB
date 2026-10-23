@@ -1,9 +1,9 @@
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using RemoteAssist.Host.Core.Signaling;
+using RemoteAssist.Host.Core.Tunnel;
 
-internal static class SignalingTrustRegression
+internal static class TunnelTrustRegression
 {
     public static Task Run()
     {
@@ -19,11 +19,11 @@ internal static class SignalingTrustRegression
         using var cert=Make(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddHours(1));
         using var other=Make(DateTimeOffset.UtcNow.AddMinutes(-2),DateTimeOffset.UtcNow.AddHours(1));
         using var expired=Make(DateTimeOffset.UtcNow.AddHours(-2),DateTimeOffset.UtcNow.AddHours(-1));
-        if(!SignalingTrust.Validate(cert,SslPolicyErrors.RemoteCertificateChainErrors,cert) ||
-           SignalingTrust.Validate(cert,SslPolicyErrors.RemoteCertificateNameMismatch,cert) ||
-           SignalingTrust.Validate(null,SslPolicyErrors.RemoteCertificateNotAvailable,cert) ||
-           SignalingTrust.Validate(other,SslPolicyErrors.RemoteCertificateChainErrors,cert) ||
-           SignalingTrust.Validate(expired,SslPolicyErrors.RemoteCertificateChainErrors,expired) ||
+        if(!TunnelTrust.Validate(cert,SslPolicyErrors.RemoteCertificateChainErrors,cert) ||
+           TunnelTrust.Validate(cert,SslPolicyErrors.RemoteCertificateNameMismatch,cert) ||
+           TunnelTrust.Validate(null,SslPolicyErrors.RemoteCertificateNotAvailable,cert) ||
+           TunnelTrust.Validate(other,SslPolicyErrors.RemoteCertificateChainErrors,cert) ||
+           TunnelTrust.Validate(expired,SslPolicyErrors.RemoteCertificateChainErrors,expired) ||
            !cert.MatchesHostname("192.168.0.61",false,false) || cert.MatchesHostname("192.168.0.74",false,false))
             throw new InvalidOperationException("Pinned TLS validation regression.");
         Console.WriteLine("PASS pinned TLS: correct leaf, name mismatch, missing peer, changed leaf, expiry, IP SAN");

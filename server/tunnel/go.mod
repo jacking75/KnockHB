@@ -1,4 +1,4 @@
-module github.com/remoteassist/signaling
+module github.com/remoteassist/tunnel
 
 go 1.27
 

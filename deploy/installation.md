@@ -6,7 +6,7 @@
 
 배포 폴더의 `RemoteAssist.Update.exe`를 인자 없이 실행하면 같은 폴더의 release.json/release.sig/package.zip/trusted-public.pem으로 설치한다. 실행 매니페스트가 최초 Windows UAC를 요청하며 사용자가 승인한다. 패키지·배포자 검증 기준은 아래와 동일하다.
 
-설치자는 보호 경로에 파일을 배치한 뒤 `prepare-host.ps1 -Action Prepare`로 프로그램별 방화벽을 준비한다. Helper의 WebRTC UDP 27002~27099, Helper/Service의 시그널링 HTTPS 송신에 한정한다. 서비스는 시작할 때 `Verify`만 수행하며 세션 도중 방화벽 설정이나 승격 요청을 추가하지 않는다. 설치 실패 시 이번 준비가 만든 규칙만 되돌리고, 제거 시 해당 설치 버전의 규칙을 삭제한다.
+설치자는 보호 경로에 파일을 배치한 뒤 `prepare-host.ps1 -Action Prepare`로 프로그램별 방화벽을 준비한다. Helper의 WebRTC UDP 27002~27099, Helper/Service의 터널링 서버 HTTPS 송신에 한정한다. 서비스는 시작할 때 `Verify`만 수행하며 세션 도중 방화벽 설정이나 승격 요청을 추가하지 않는다. 설치 실패 시 이번 준비가 만든 규칙만 되돌리고, 제거 시 해당 설치 버전의 규칙을 삭제한다.
 
 준비 상태와 실패 사유는 보호된 `ProgramData/RemoteAssist/startup-preparation.json`에 기록한다. 이 상태는 OS 준비 여부이며 영상·입력 성공이 아니다. [전체 시작 UX 기준](../docs/startup-preparation.md)의 추가 승인 UI 개편과는 구분한다.
 
