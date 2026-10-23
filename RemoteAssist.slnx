@@ -16,6 +16,7 @@
     <Project Path="tools/RemoteAssist.BoundaryProbe/RemoteAssist.BoundaryProbe.csproj" />
     <Project Path="tools/RemoteAssist.MediaProbe/RemoteAssist.MediaProbe.csproj" />
     <Project Path="tools/RemoteAssist.InputTarget/RemoteAssist.InputTarget.csproj" />
+    <Project Path="tools/RemoteAssist.LoopbackCheck/RemoteAssist.LoopbackCheck.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RemoteAssist.Host.Core.Tests/RemoteAssist.Host.Core.Tests.csproj" />

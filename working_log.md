@@ -1,5 +1,10 @@
 # 작업 로그
 
+## 2026-10-23 11:01 KST — 한 PC 루프백 통합 검사와 실연결 시험 계획
+
+- 두 PC가 없는 환경에서 할 수 있는 범위를 수행했다. `scripts/loopback-check.ps1`로 실제 Go 시그널링 + 실제 ScreenShareSession + C# 가짜 Viewer(입력은 기록만, 화면 읽기만)를 붙여 연결·7개 채널·입력 경로·관리자 요청(승인 창 없음)·모니터 전환·원격 명령·채팅·Viewer 교체(busy/replaced)·재접속을 21/21 PASS로 확인했다(연결 607ms, data-ready 834ms, nvenc RTP 수신).
+- 실연결 시험 계획서 `docs_working/실연결-시험-계획-2.md`(T13) 작성. 실제 SendInput·UAC 캡처·두 PC·브라우저 Viewer는 T14/T15로 남겼다.
+
 ## 2026-10-23 10:38 KST — 현황 문서 1~6단계 구현(상호 신뢰 규격)
 
 - STUN/TURN/relay 제거(시그널링·Host·Viewer·배포), 지원 ID 방의 Viewer 교체(`busy`/`replaced`)와 시그널링 `lan` 모드(TLS 유지, operator/감사 선택) 추가.
