@@ -13,7 +13,9 @@ function Require-Admin {
     if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw '관리자 권한 PowerShell에서 실행해야 한다.'}
 }
 function Run([string]$File,[string[]]$Arguments,[int[]]$Allowed=@(0)){
-    $process=Start-Process -FilePath $File -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
+    # Start-Process joins the array without quoting; quote arguments that contain spaces.
+    $quoted=@($Arguments|ForEach-Object {if($_-match'\s'-and$_-notmatch'^".*"$'){'"'+$_+'"'}else{$_}})
+    $process=Start-Process -FilePath $File -ArgumentList $quoted -NoNewWindow -Wait -PassThru
     if($process.ExitCode-notin$Allowed){throw ("$File 실패: "+$process.ExitCode)}
 }
 function Prepare([string]$Mode){

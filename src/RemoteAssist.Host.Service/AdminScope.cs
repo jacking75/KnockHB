@@ -18,6 +18,7 @@ internal sealed class AdminScope:IDisposable
     SharedFrameMap? mapping;
     bool disposed;
     public bool HasExited {get{lock(gate)return disposed||child?.HasExited==true||peer?.Token.IsCancellationRequested==true;}}
+    public bool IsReady=>ready.Task.IsCompletedSuccessfully;
     public string Mapping {get{lock(gate)return mapping?.Name??throw new InvalidOperationException("관리자 mapping이 없다.");}}
     public async Task Start(AdminConfiguration configuration,CancellationToken ct,Action<string> failed)
     {

@@ -1,5 +1,14 @@
 # 작업 로그
 
+## 2026-10-23 23:20 KST — 두 PC 수동 실연결 테스트(수동-실연결-테스트-3) 실행
+
+- 환경: A `192.168.0.61`(Chrome Viewer + 시그널링 lan 모드, 자체 서명 TLS), B `192.168.0.74`(Intel UHD + GTX 1660 Ti Max-Q, 드라이버 27.20.100.8190 / 32.0.16.1062). 두 PC 모두 pwsh가 없어 Windows PowerShell 5.1로 준비했고, B 설치는 비밀번호 SSH(환경 변수)로 했다.
+- 화면 점유: 동작 1~5와 재개 확인은 약 6분(23:07~23:13, 서버 로그 기준). 그 전 23:02~23:03에는 Helper 재시작 루프 때문에 즉시 중단·원인 분석을 했다.
+- 결과: 동작 1 PASS(1280×720 · 디코딩 30fps · 약 4Mbps · 경로 `192.168.0.74:27002` 직접 P2P). 동작 2 PASS(영문·숫자·한글 문자 입력·창 드래그·실제 키보드 빠른 입력·Ctrl+A). 동작 4 PASS(B 서비스 재시작 뒤 같은 지원 ID로 약 10초 안에 자동 재접속). 동작 5 PASS(즉시 종료 → 화면 끊김·허가 삭제·재접속 거부, 재실행+UAC 뒤 재개). **동작 3 FAIL**: AdminHelper의 `IDXGIOutput1.DuplicateOutput`이 `0x887A0004`(DXGI_ERROR_UNSUPPORTED)로 실패해 관리자 모드를 쓸 수 없다(하이브리드 GPU 추정, 미분석).
+- 시험 중 고친 결함: `install-host-dev.ps1` 공백 경로 인자 미인용, `prepare-host.ps1` 방화벽 포트 목록을 문자열 하나로 전달, IPC 허용 목록에 `device`·`supporter`·`admin-monitor` 누락(UAC 승인 직후 서비스 종료), 관리자 헬퍼 준비 전 실패가 지원 세션 전체를 끊음(이제 관리자 거부 후 일반 모드 유지), 진단 기록에 HRESULT·Helper 종료 사유 추가. Host.Core 38/38 PASS.
+- 남은 결함·문서 불일치: 하이브리드 GPU DXGI 캡처, 문자 입력 칸에서 포커스 이동 직후 첫 전송이 안내 없이 무시됨, Viewer 새로고침은 자동 재접속이 아니라 ID만 채움(문서 7장 기대 결과와 다름), `install-host-dev.ps1 -Action Remove`가 `initial-support.json`을 남김(문서 9장과 다름), `e2e-preflight.ps1` Go 버전 오판, `e2e-prepare.ps1`이 pwsh를 요구하고 TLS 디렉터리를 미리 만들지 않음. B에 예전 시험의 Helper 인바운드 Block 방화벽 규칙 2개가 있어 지웠다.
+- 정리: B 개발 설치 제거(서비스·설치 폴더·방화벽 규칙·후보·허가 파일), A 서버 종료, TLS 키 삭제. B에 메모장 창(저장 안 한 시험 탭)이 남아 있다.
+
 ## 2026-10-23 14:10 KST — A 머신용 E2E 준비 스크립트
 
 - 이 머신은 A가 아니고 B에 닿지 않아(실제 테스트는 다른 A 머신에서) 준비물만 만들었다. `scripts/e2e-preflight.ps1`(읽기 전용 준비 점검: 도구·A LAN IP·B ping/SSH·포트)과 `scripts/e2e-prepare.ps1`(TLS 인증서 + Host 후보 빌드 + B에 SSH 설치 + 시그널링 기동)을 추가했다. 둘 다 ParseFile 문법 검사 통과, preflight는 이 PC에서 NOT READY로 올바르게 보고(B 미도달·A의 192.168.0.x 없음).

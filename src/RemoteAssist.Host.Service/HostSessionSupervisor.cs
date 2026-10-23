@@ -266,7 +266,9 @@ internal sealed class HostSessionSupervisor(ILogger log, IHostApplicationLifetim
         try
         {
             owner.Adopt(privileged);
-            await privileged.Start(new(approval, sessionId, userSid, owner.Monitor!, "", options.TargetFps, options.MaxOutputLongEdge, options.MaxOutputShortEdge), owner.Token, reason => StopHelper(reason, owner));
+            // 준비 전 실패(예: 보안 데스크톱 캡처 불가)는 관리자 모드 거부로 끝내고 일반 지원을 유지한다.
+            await privileged.Start(new(approval, sessionId, userSid, owner.Monitor!, "", options.TargetFps, options.MaxOutputLongEdge, options.MaxOutputShortEdge), owner.Token,
+                reason => { if (privileged.IsReady) StopHelper(reason, owner); else privileged.Dispose(); });
             owner.Token.ThrowIfCancellationRequested();
             Audit(AuditKind.AdminGranted, AuditResult.Allowed, approval.SessionId, approval.ConnectionId, 1);
             owner.Peer!.Post("admin-state", new { state = "active", approval, mapping = privileged.Mapping }, approval.RequestId);
@@ -339,16 +341,16 @@ internal sealed class HostSessionSupervisor(ILogger log, IHostApplicationLifetim
         var session = scope.SessionBinding; var connection = scope.ConnectionId ?? "";
         var hadAdmin = scope.Admin is not null;
         scope.Dispose();
-        Report("helper-stopped");
+        Report("helper-stopped", detail: reason);
         if (session is null) return;
         try { scope.FileAudits.End(n => PersistFileAudit(n, connection)); } catch (Exception ex) { Report("audit-file-stop-error", ex); }
         if (hadAdmin) Audit(AuditKind.AdminRevoked, AuditResult.Stopped, session, connection, 1);
         if (audit is not null) try { audit.AppendSessionEndedOnce(session, connection); } catch (Exception ex) { Report("audit-stop-error", ex); }
     }
 
-    void Report(string kind, Exception? error = null, int? childPid = null)
+    void Report(string kind, Exception? error = null, int? childPid = null, string? detail = null)
     {
-        // 메타데이터만 남긴다. 예외 본문·IPC 본문·자격 증명은 쓰지 않는다.
+        // 메타데이터만 남긴다. 예외 본문·IPC 본문·자격 증명은 쓰지 않는다. detail은 코드가 정한 종료 사유다.
         var path = Path.Combine(AppContext.BaseDirectory, "service-status.ndjson");
         try
         {
@@ -357,7 +359,8 @@ internal sealed class HostSessionSupervisor(ILogger log, IHostApplicationLifetim
                 if (File.Exists(path) && new FileInfo(path).Length > 4 * 1024 * 1024) File.Move(path, path + ".1", true);
                 File.AppendAllText(path, JsonSerializer.Serialize(new
                 {
-                    utc = DateTimeOffset.UtcNow, kind, phase, sessionId, childPid, error = error?.GetType().Name,
+                    utc = DateTimeOffset.UtcNow, kind, phase, sessionId, childPid, detail, error = error?.GetType().Name,
+                    hresult = error is null ? null : $"0x{error.HResult:X8}",
                     nativeError = (error as System.ComponentModel.Win32Exception)?.NativeErrorCode, stack = error?.StackTrace
                 }) + Environment.NewLine);
             }

@@ -81,7 +81,7 @@ function Invoke-RAFirewallPreparation($Plan,[string]$Mode,[string]$Journal) {
                 $temp=$Journal+'.tmp'
                 [IO.File]::WriteAllText($temp,(@{Created=@($created)}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
                 if(Test-Path -LiteralPath $Journal){[IO.File]::Replace($temp,$Journal,[NullString]::Value)}else{[IO.File]::Move($temp,$Journal)}
-                New-NetFirewallRule -PolicyStore PersistentStore -Name $spec.Name -DisplayName $spec.Name -Group $script:RAFirewallGroup -Program $spec.Program -Direction $spec.Direction -Action Allow -Enabled True -Profile Any -Protocol $spec.Protocol -LocalPort $spec.LocalPort -RemotePort $spec.RemotePort -LocalAddress Any -RemoteAddress Any -EdgeTraversalPolicy Block|Out-Null
+                New-NetFirewallRule -PolicyStore PersistentStore -Name $spec.Name -DisplayName $spec.Name -Group $script:RAFirewallGroup -Program $spec.Program -Direction $spec.Direction -Action Allow -Enabled True -Profile Any -Protocol $spec.Protocol -LocalPort ($spec.LocalPort-split',') -RemotePort ($spec.RemotePort-split',') -LocalAddress Any -RemoteAddress Any -EdgeTraversalPolicy Block|Out-Null
             }
         }
         foreach($spec in $Plan){Assert-RAFirewallRule (Get-NetFirewallRule -PolicyStore ActiveStore -Name $spec.Name -ErrorAction Stop) $spec}
