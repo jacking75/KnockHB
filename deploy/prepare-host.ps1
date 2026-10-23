@@ -96,6 +96,21 @@ function Invoke-RAFirewallPreparation($Plan,[string]$Mode,[string]$Journal) {
     }
 }
 
+# Hybrid GPU laptops put DXGI apps on the discrete GPU, where the panel output (driven by the
+# integrated GPU) cannot be duplicated (DXGI_ERROR_UNSUPPORTED). AdminHelper runs as SYSTEM, so
+# its per-app Windows graphics preference lives in the SYSTEM hive. Not a hard prerequisite:
+# without it admin mode is denied and normal support continues, so Verify does not check it.
+$script:RAGpuPreferenceKey='Registry::HKEY_USERS\S-1-5-18\Software\Microsoft\DirectX\UserGpuPreferences'
+function Invoke-RAGpuPreference([string]$Root,[string]$Mode,[string]$Key=$script:RAGpuPreferenceKey) {
+    $exe=Join-Path ([IO.Path]::GetFullPath($Root).TrimEnd('\')) 'RemoteAssist.Host.AdminHelper.exe'
+    if($Mode-eq'Prepare'){
+        if(!(Test-Path -LiteralPath $Key)){New-Item -Path $Key -Force|Out-Null}
+        New-ItemProperty -LiteralPath $Key -Name $exe -Value 'GpuPreference=1;' -PropertyType String -Force|Out-Null
+    }elseif($Mode-in'Rollback','Remove'-and(Test-Path -LiteralPath $Key)){
+        Remove-ItemProperty -LiteralPath $Key -Name $exe -ErrorAction SilentlyContinue
+    }
+}
+
 if($LibraryOnly){return}
 $principal=[Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Initial administrator launch required; no elevation during a support session.'}
@@ -120,14 +135,17 @@ if($Action-eq'Prepare'){
     try{
         & $sas -Action Prepare | Out-Null
         Invoke-RAFirewallPreparation $plan $Action (Join-Path $root 'startup-firewall.pending.json')
+        Invoke-RAGpuPreference $root Prepare
     }catch{
         $failure=$_
+        Invoke-RAGpuPreference $root Rollback
         & $sas -Action Rollback | Out-Null
         throw $failure
     }
 }else{
     # Shared SAS state stays committed across versions; only full removal restores it.
     Invoke-RAFirewallPreparation $plan $Action (Join-Path $root 'startup-firewall.pending.json')
+    Invoke-RAGpuPreference $root $Action
     & $sas -Action $Action | Out-Null
 }
 @{state=if($Action-eq'Verify'){'PREREQUISITES_VERIFIED_NOT_FUNCTION_PASS'}else{$Action.ToUpperInvariant()};rules=@($plan.Name)}|ConvertTo-Json -Compress

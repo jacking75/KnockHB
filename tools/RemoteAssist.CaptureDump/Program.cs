@@ -22,6 +22,8 @@ Options opts;
 try { opts = ParseArgs(args); }
 catch(Exception ex) { Console.Error.WriteLine($"설정 오류: {ex.Message}");return 1; }
 
+if (opts.ProbeDxgi) return DxgiProbe.Run();
+
 if (opts.List)
 {
     Console.WriteLine($"WGC 지원: {(WgcScreenCapture.IsSupported() ? "예" : "아니오")}");
@@ -160,6 +162,7 @@ static Options ParseArgs(string[] args)
                 o.Backend = args[++i].ToLowerInvariant();
                 break;
             case "--verbose":o.Verbose=true;break;
+            case "--probe-dxgi":o.ProbeDxgi=true;break;
             default:throw new ArgumentException("알 수 없는 옵션 또는 값 누락이다: "+args[i]);
         }
     }
@@ -174,6 +177,7 @@ static extern bool SetProcessDpiAwarenessContext(nint value);
 internal sealed class Options
 {
     public bool Verbose {get;set;}
+    public bool ProbeDxgi {get;set;}
     public bool List { get; set; }
     public int Monitor { get; set; }
     public int Frames { get; set; } = 3;

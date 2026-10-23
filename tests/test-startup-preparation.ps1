@@ -57,7 +57,19 @@ try{
     $script:rules[$plan[0].Name]=[pscustomobject]@{Name=$plan[0].Name;Group='SomeoneElse';Program='C:\Other.exe';Action='Allow'}
     Reject {Invoke-RAFirewallPreparation $plan Prepare $journal}
     Check ($script:rules.Count-eq1) 'Foreign colliding rule changed'
-    Write-Output 'PASS startup preparation: scoped rules, idempotence, verify-only, policy denial, partial rollback, tampering, ownership'
+
+    # GPU preference uses a throwaway current-user key, never the real SYSTEM hive.
+    $gpuKey='HKCU:\Software\RemoteAssist-startup-test-'+[guid]::NewGuid().ToString('N')
+    $root='C:\Program Files\RemoteAssist\versions\1.0.0.0'; $adminExe=Join-Path $root 'RemoteAssist.Host.AdminHelper.exe'
+    try{
+        Invoke-RAGpuPreference $root Prepare $gpuKey; Invoke-RAGpuPreference $root Prepare $gpuKey
+        Check ((Get-ItemProperty -LiteralPath $gpuKey).$adminExe-eq'GpuPreference=1;') 'AdminHelper must prefer the power-saving GPU'
+        Invoke-RAGpuPreference $root Verify $gpuKey
+        Invoke-RAGpuPreference $root Remove $gpuKey
+        Check ($null-eq(Get-ItemProperty -LiteralPath $gpuKey).$adminExe) 'Remove left the GPU preference'
+        Invoke-RAGpuPreference $root Rollback $gpuKey
+    }finally{if(Test-Path -LiteralPath $gpuKey){Remove-Item -LiteralPath $gpuKey -Recurse}}
+    Write-Output 'PASS startup preparation: scoped rules, idempotence, verify-only, policy denial, partial rollback, tampering, ownership, GPU preference'
 }finally{
     $resolved=(Resolve-Path -LiteralPath $temp).Path
     if($resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase)-and(Split-Path $resolved -Leaf)-like'RemoteAssist-startup-test-*'){Remove-Item -LiteralPath $resolved -Recurse -Force}

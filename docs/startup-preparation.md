@@ -24,6 +24,10 @@
 
 `RemoteAssist.Host.Helper.exe`의 WebRTC UDP 27002~27099(수신·송신)와 Helper/Service의 터널링 서버 TCP(443, 설정 포트) 송신 규칙을 버전 경로에 묶어 등록한다. 서비스는 시작할 때 Verify만 수행한다. 정식 설치에서 검증이 실패하면 서비스를 시작하지 않는다. 개발 실행(개발 설치·빌드 출력)에서는 검증 실패를 경고로 기록하고 계속한다.
 
+## 관리자 헬퍼 GPU 지정
+
+하이브리드 GPU 노트북(내장 + 외장)은 DXGI 앱을 외장 GPU에 배정한다. 그러면 내장 GPU가 구동하는 패널 출력을 Desktop Duplication으로 복제할 수 없다(`DuplicateOutput` → `0x887A0004` DXGI_ERROR_UNSUPPORTED, 2026-10-23 Intel UHD + GTX 1660 Ti에서 실측). Prepare는 SYSTEM 하이브(`HKU\S-1-5-18\Software\Microsoft\DirectX\UserGpuPreferences`)에 버전 경로의 `RemoteAssist.Host.AdminHelper.exe`를 `GpuPreference=1;`(절전 GPU)로 등록하고 Rollback·Remove에서 지운다. 단일 GPU·일반 다중 GPU PC에서는 출력을 가진 어댑터로 장치를 만들기 때문에 영향이 없다. 하이브리드 노트북에서 외장 GPU에 직결된 외부 모니터는 여전히 관리자 캡처가 안 될 수 있다. 이때는 관리자 모드만 거부되고 일반 지원은 계속된다. 필수 조건이 아니므로 Verify는 이 값을 검사하지 않는다.
+
 ## SAS 사전 준비
 
 Ctrl+Alt+Del 전송에 필요한 `SoftwareSASGeneration`을 최초 실행에서 준비한다. 값이 없으면 서비스 허용(1), 접근성 앱만 허용(2)이면 양쪽 허용(3)으로 설정한다. 명시적 금지(0)나 알 수 없는 값은 준비 실패다. 원래 값은 `ProgramData/RemoteAssist/startup-sas.json`에 먼저 기록하고 제거할 때 우리가 설정한 값일 때만 복구한다. [Microsoft 정책 설명](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-winlogon#softwaresasgeneration)
