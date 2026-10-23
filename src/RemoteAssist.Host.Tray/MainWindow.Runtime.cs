@@ -129,6 +129,8 @@ public partial class MainWindow
     void EndLocal()
     {
         SetActive(false);
+        // 세션이 끝나면 헬퍼의 마지막 file-state가 오지 않는다. 보내던 파일의 안내도 함께 정리한다.
+        if(fileId!=null)FileStatus.Text="지원 세션이 끝나 파일 보내기를 중단했다.";
         ChatText.Clear();fileId=null;FileCancel.IsEnabled=false;
         indicator?.Dispose();indicator=null;
     }

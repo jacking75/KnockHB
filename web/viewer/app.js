@@ -95,7 +95,9 @@ function connect(code,name){
       connection.requestInitialAdmin();
       el.session.dataset.controlState=message.t;
       const ready=connection.canControl();el.session.dataset.inputReady=String(ready);
-      el['remote-text'].disabled=el['send-text'].disabled=!ready;
+      // A click on the text button blurs the video and starts an input reset. Keep the button usable while only the
+      // reset ACK is pending so the click queues the text (ViewerInput.resumed sends it).
+      el['remote-text'].disabled=el['send-text'].disabled=!ready&&!connection.pendingReset;
       el['admin-request'].disabled=!ready||!!connection.adminGeneration;
       el['admin-sas'].disabled=!ready||!connection.adminGeneration;
       if(ready){
