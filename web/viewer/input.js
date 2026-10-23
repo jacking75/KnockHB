@@ -48,8 +48,16 @@ export class ViewerInput {
       }
     });
     // Physical characters never accompany IME composition. The committed Unicode is sent once.
-    listen(sendText,'click',()=>{if(!this.composing&&text.value.length>0&&text.value.length<=4096&&connection.input({t:'key',a:'text',text:text.value}))text.value='';});
+    // Clicking the button blurs the video and pauses input until the reset ACK. Keep the text and send it on resume.
+    listen(sendText,'click',()=>{this.textQueued=!this.sendQueuedText();});
   }
+  sendQueuedText() {
+    const value=this.text.value;
+    if(this.composing||value.length===0||value.length>4096)return true;
+    if(!this.connection.input({t:'key',a:'text',text:value}))return false;
+    this.text.value='';return true;
+  }
+  resumed() {if(this.textQueued)this.textQueued=!this.sendQueuedText();}
   reset() {this.keys.clear();this.buttons.clear();this.connection.resetInput();}
   clearLocalState() {this.keys.clear();this.buttons.clear();}
   dispose() {this.reset();this.abort.abort();this.text.value='';}

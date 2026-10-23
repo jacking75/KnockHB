@@ -100,6 +100,7 @@ function connect(code,name){
       el['admin-sas'].disabled=!ready||!connection.adminGeneration;
       if(ready){
         input??=new ViewerInput(connection,el.screen,el['remote-text'],el['send-text']);
+        input.resumed();
         el['input-status'].textContent=connection.adminGeneration?'관리자 제어 중 · 화면을 클릭한 뒤 키를 입력한다':'원격 제어 · 화면을 클릭한 뒤 키를 입력한다';
       }
       else el['input-status'].textContent='입력 일시 중단';

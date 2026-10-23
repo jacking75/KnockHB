@@ -36,7 +36,10 @@ if($Action-eq'Remove'){
     if(Test-Path $registry){Run (Join-Path $env:SystemRoot 'System32\sc.exe') @('delete',$service)}
     if(Test-Path (Join-Path $root 'prepare-host.ps1')){Prepare 'Remove'}
     if(Test-Path $root){Remove-Item -LiteralPath $root -Recurse -Force}
-    Write-Output '개발 설치를 제거했다. ProgramData의 지원 ID·감사 기록은 남긴다.'
+    # 제거하면 지원도 끝난다. 다음 설치 뒤 서비스가 옛 허가로 바로 대기하지 않게 허가를 지운다.
+    $grant=Join-Path $env:ProgramData 'RemoteAssist\initial-support.json'
+    if(Test-Path -LiteralPath $grant){Remove-Item -LiteralPath $grant -Force}
+    Write-Output '개발 설치를 제거했다. 지원 허가를 지웠고 ProgramData의 지원 ID·감사 기록은 남긴다.'
     exit 0
 }
 

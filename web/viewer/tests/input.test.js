@@ -20,6 +20,13 @@ test('IME sends one committed Unicode and blur resets remote held keys',async()=
   root.fire('blur');assert.equal(sent.at(-1).t,'reset');input.dispose();
   assert.equal(virtualKey('F24'),135);assert.equal(virtualKey('Unidentified'),undefined);
 });
+test('text button pressed while input reset is pending sends once on resume',()=>{
+  let open=false;const sent=[],connection={canControl:()=>open,input:m=>{if(!open)return false;sent.push(m);return true;},resetInput(){}};
+  const text=new Target(),button=new Target();const input=new ViewerInput(connection,new Target(),text,button,new Target(),new Target());
+  text.value='원격 테스트';button.fire('click');assert.equal(sent.length,0);assert.equal(text.value,'원격 테스트');
+  open=true;input.resumed();input.resumed();
+  assert.deepEqual(sent,[{t:'key',a:'text',text:'원격 테스트'}]);assert.equal(text.value,'');input.dispose();
+});
 test('latest pointer coalescing, reliable final coordinate and epoch reset survive reorder',()=>{
   const viewer=new ViewerConnection({base:'http://localhost:25001',createSocket:()=>({readyState:0,close(){}}),setTimer:()=>1,clearTimer(){}});
   viewer.sessionId='sid';viewer.permissionGeneration=1;viewer.permissions=['screen','control'];viewer.dataReady=true;viewer.monitor={identity:'DISPLAY',topologyGeneration:1};

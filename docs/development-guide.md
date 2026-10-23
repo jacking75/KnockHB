@@ -34,7 +34,7 @@ dotnet run --project tools/RemoteAssist.HostRun -c Release -- --encoder-check --
    ```
 3. Host 후보를 만든다. 자체 서명이면 DER 인증서를 핀 고정한다.
    ```powershell
-   pwsh scripts/package-host-dev.ps1 -TunnelUri https://<서버 IP>:25001/ -TunnelCertificate <폴더>/lan-test.cer -SdkDirectory <.NET 10 SDK 폴더> -Output .artifacts/<새 폴더>
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-host-dev.ps1 -TunnelUri https://<서버 IP>:25001/ -TunnelCertificate <폴더>/lan-test.cer -SdkDirectory <.NET 10 SDK 폴더> -Output .artifacts/<새 폴더>
    ```
 4. 대상 PC의 관리자 PowerShell에서 설치한다: `scripts/install-host-dev.ps1 -Action Install -Package .artifacts/<폴더>`.
 5. 대상 사용자가 `Program Files\RemoteAssist-Dev\RemoteAssist.Update.exe`를 관리자 권한으로 실행한다. Tray에 지원 ID가 뜬다.
