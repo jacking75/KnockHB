@@ -9,3 +9,7 @@ function Initialize-E2ESsh([string]$PasswordEnv) {
     $env:SSH_ASKPASS=$askpass;$env:SSH_ASKPASS_REQUIRE='force';if(!$env:DISPLAY){$env:DISPLAY='e2e'}
     @('-o','PreferredAuthentications=password,keyboard-interactive','-o','NumberOfPasswordPrompts=1')
 }
+# B의 SSH 기본 셸(cmd)과 5.1의 따옴표 전달을 거치지 않도록 원격 PowerShell은 인코딩해 보낸다.
+function Format-E2ERemote([string]$Script) {
+    'powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference='SilentlyContinue';"+$Script))
+}

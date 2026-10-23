@@ -50,17 +50,17 @@ if($Install){
     . (Join-Path $PSScriptRoot 'e2e-ssh.ps1')
     $ssh=Initialize-E2ESsh $PasswordEnv
     $remote="$TargetUser@$TargetHost"
-    $installer="powershell -NoProfile -ExecutionPolicy Bypass -File {0}/install-host-dev.ps1 -Action {1} -Package {0}"
+    $installer="& powershell -NoProfile -ExecutionPolicy Bypass -File '{0}/install-host-dev.ps1' -Action {1} -Package '{0}'; exit `$LASTEXITCODE"
     Write-Host "B($remote)로 복사 중..."
-    & ssh @ssh $remote "powershell -NoProfile -Command ""if(Test-Path '$TargetDir'){Remove-Item -LiteralPath '$TargetDir' -Recurse -Force}; New-Item -ItemType Directory -Path '$TargetDir' | Out-Null"""
+    & ssh @ssh $remote (Format-E2ERemote "if(Test-Path '$TargetDir'){Remove-Item -LiteralPath '$TargetDir' -Recurse -Force}; New-Item -ItemType Directory -Path '$TargetDir' | Out-Null")
     if($LASTEXITCODE -ne 0){throw 'B 디렉터리 준비 실패 (SSH 확인)'}
     & scp -q @ssh -r (Join-Path $candidate 'candidate.json') (Join-Path $candidate 'payload') (Join-Path $repo 'scripts/install-host-dev.ps1') ("{0}:{1}/" -f $remote,$TargetDir)
     if($LASTEXITCODE -ne 0){throw 'B 복사 실패'}
     Write-Host 'B에서 후보 검증...'
-    & ssh @ssh $remote ($installer -f $TargetDir,'Validate')
+    & ssh @ssh $remote (Format-E2ERemote ($installer -f $TargetDir,'Validate'))
     if($LASTEXITCODE -ne 0){throw 'B 후보 검증 실패'}
     Write-Host 'B에 설치 (관리자 권한 SSH 세션이어야 한다)...'
-    & ssh @ssh $remote ($installer -f $TargetDir,'Install')
+    & ssh @ssh $remote (Format-E2ERemote ($installer -f $TargetDir,'Install'))
     if($LASTEXITCODE -ne 0){throw 'B 설치 실패 (관리자 권한 SSH 필요. 예전 Helper Block 방화벽 규칙이 있으면 지운다)'}
     Write-Host 'B 설치 완료.'
 }

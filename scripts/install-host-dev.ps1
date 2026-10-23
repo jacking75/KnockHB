@@ -57,7 +57,7 @@ Stop-Host
 if(Test-Path $root){Remove-Item -LiteralPath $root -Recurse -Force}
 New-Item -ItemType Directory -Path $root|Out-Null
 Copy-Item -Path (Join-Path $payload '*') -Destination $root -Recurse
-if(!(Test-Path $registry)){Run (Join-Path $env:SystemRoot 'System32\sc.exe') @('create',$service,'binPath=',('"'+$image+'"'),'start=','auto','obj=','LocalSystem')}
+if(!(Test-Path $registry)){Run (Join-Path $env:SystemRoot 'System32\sc.exe') @('create',$service,'binPath=',('"\"'+$image+'\""'),'start=','auto','obj=','LocalSystem')}
 try{Prepare 'Prepare';Prepare 'Verify';Prepare 'Commit'}
 catch{Prepare 'Rollback';throw}
 Write-Output ('개발 설치 완료: '+$root+'. 대상 사용자가 RemoteAssist.Update.exe를 관리자 권한으로 실행하면 지원을 시작한다.')

@@ -1,5 +1,17 @@
 # 작업 로그
 
+## 2026-10-23 23:40 KST — 후속 4건: 커밋, 터널링 서버 이름 변경, 하이브리드 GPU 수정과 동작 3 재시험, 잔여 결함
+
+- 1차 실연결 수정을 커밋했다(c336b51).
+- "시그널링"을 "터널링 서버"로 바꿨다(07f00e1). 문서, Go 모듈 `server/tunnel`, `Host.Core/Tunnel`, 설정 키 `TunnelUri`, 스크립트, 배포 파일이 대상이다. Go·.NET·Viewer·PowerShell 테스트와 루프백 검사가 PASS다.
+- 하이브리드 GPU: `CaptureDump --probe-dxgi`로 B에서 실측했다. 프로세스가 NVIDIA에 배정되면 출력이 NVIDIA 아래에 보이고 `DuplicateOutput`이 `0x887A0004`로 실패한다. 절전 GPU 지정 시 Intel 아래로 옮겨 가 성공한다. `prepare-host`가 AdminHelper에 SYSTEM 하이브 `GpuPreference=1;`을 등록하고 제거한다(3f5a197).
+- 잔여 결함 수정(36d57bf)
+  - Viewer 문자 입력: reset ACK 전에 누른 전송을 보관했다가 재개 때 보낸다.
+  - 제거 스크립트: 지원 허가를 지운다.
+  - preflight·prepare: Go 확인 위치, 5.1 실행, TLS 폴더 생성, `-PasswordEnv`.
+  - 시험 문서: 새로고침 기대 결과를 실제 동작에 맞췄다.
+- 동작 3 재시험 PASS. 관리자 모드, 관리자 창 조작, UAC 보안 데스크톱 표시·클릭, Ctrl+Alt+Del 보안 화면이 B(Intel UHD + GTX 1660 Ti)에서 된다. 점유 약 4분이다. 준비 중 `e2e-prepare` 원격 따옴표 결함과 `install-host-dev` 서비스 경로 따옴표 누락(unquoted service path)을 찾아 고쳤다. 정리까지 확인했다. 자세한 내용은 `docs_working/동작3-재시험-4.md`.
+
 ## 2026-10-23 23:20 KST — 두 PC 수동 실연결 테스트(수동-실연결-테스트-3) 실행
 
 - 환경: A `192.168.0.61`(Chrome Viewer + 시그널링 lan 모드, 자체 서명 TLS), B `192.168.0.74`(Intel UHD + GTX 1660 Ti Max-Q, 드라이버 27.20.100.8190 / 32.0.16.1062). 두 PC 모두 pwsh가 없어 Windows PowerShell 5.1로 준비했고, B 설치는 비밀번호 SSH(환경 변수)로 했다.
