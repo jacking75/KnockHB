@@ -46,6 +46,10 @@ ICE candidate 문자열은 브라우저 형식 `candidate:` 접두사를 포함�
 
 Viewer는 joined 뒤 20초 안에 offer가 없으면 끊고 다시 접속한다. offer 수신 뒤 WebRTC 협상은 30초다. Host는 지원자가 들어오면 바로 offer를 만든다.
 
+### H.264 수신 level
+
+Host offer는 `packetization-mode=1;profile-level-id=42e034;level-asymmetry-allowed=1`이고, answer의 level을 Viewer가 받을 수 있는 상한으로 쓴다(3.1 → 1280×720, 4.x → 1920×1080, 5.x → 그 이상). Chrome은 실제 디코딩 능력과 관계없이 answer에 3.1(`42e01f`)을 적으므로, Viewer는 브라우저에는 원래 answer를 적용하고 터널링 서버로 보내는 사본에서만 `level-asymmetry-allowed=1`인 H264 fmtp의 level이 4.2(`2a`)보다 낮으면 4.2로 올린다. 그래서 브라우저 Viewer는 1080p60까지 받는다.
+
 ### 전송 재구성 세대
 
 STUN/TURN 서버는 쓰지 않는다. 양쪽은 빈 ICE 서버 목록으로 host 후보만 교환한다. 연결 generation은 1부터 시작한다. 일시 `disconnected`/`failed`가 2초 이어지면 Host가 같은 터널링 서버에서 다음 generation offer를 보낸다(ICE 재시작에 해당). 5초 간격·연속 최대 3회·각 30초다. PeerConnection을 다시 만들면 데이터 채널 순번·inputEpoch는 새 generation에서 1부터 시작하고, 캡처·입력·진행 중 파일·Runbook을 멈췄다가 재개한다. 관리자 모드는 유지된다. 터널링 서버 상실·지원자 이탈은 재구성하지 않고 세션을 끝낸다.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ViewerConnection, parseSignal, retryable } from '../connection.js';
+import { ViewerConnection, parseSignal, retryable, advertiseReceiveLevel } from '../connection.js';
 
 class Socket {
   constructor() { this.readyState = 0; this.sent = []; this.closeCount = 0; }
@@ -129,4 +129,15 @@ test('duplicate offer terminates rather than starting a second peer', async () =
   f.socket.message({ type: 'offer', sdp: 'offer' }); await f.connection.messageChain;
   f.socket.message({ type: 'offer', sdp: 'offer2' }); await f.connection.messageChain;
   assert.equal(peers, 1); assert.equal(f.connection.closed, true);
+});
+
+test('answer copy sent to the Host advertises H264 receive level 4.2 only under level asymmetry', () => {
+  const sdp = ['v=0','m=video 9 UDP/TLS/RTP/SAVPF 102 103','a=rtpmap:102 H264/90000','a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f','a=rtpmap:103 VP8/90000','a=fmtp:103 x-profile-level-id=42e01f',''].join('\r\n');
+  const out = advertiseReceiveLevel(sdp);
+  assert.match(out, /a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e02a\r\n/);
+  assert.match(out, /a=fmtp:103 x-profile-level-id=42e01f\r\n/, 'non-H264 payload untouched');
+  const strict = sdp.replace('level-asymmetry-allowed=1;', '');
+  assert.equal(advertiseReceiveLevel(strict), strict, 'without asymmetry the level is binding');
+  const high = sdp.replace('42e01f', '42e034');
+  assert.equal(advertiseReceiveLevel(high), high, 'never lowers a higher level');
 });

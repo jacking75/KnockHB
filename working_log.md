@@ -1,5 +1,12 @@
 # 작업 로그
 
+## 2026-10-24 00:10 KST — T14 나머지·T15 실측
+
+- Chrome answer의 H264 level 3.1(42e01f) 때문에 Host가 1280×720으로 상한을 두던 결함을 고쳤다. Viewer가 Host에 보내는 answer 사본에만 수신 level 4.2를 적는다(protocol.md 갱신, Viewer 60/60).
+- 성능 측정 대상 창 `scripts/e2e-motion-target.ps1`(latency·motion)을 추가했다.
+- 실연결 결과(B Intel UHD + GTX 1660 Ti, 관리자 모드): 1080p 연결, 원격 명령 SYSTEM/사용자, Runbook, 클립보드·채팅 양방향, 파일 A→B(SHA256 일치) PASS. 모니터 전환은 B 단일 모니터라 해당 없음.
+- T15: 송신·디코딩 30fps(60초 1800프레임) PASS. 표시 FPS는 A 모니터 30Hz 한계로 측정하지 못했다(사용자 판단). 입력-표시 p50 188 / p95 306ms로 **FAIL**(기준 150). 관리자 모드 2단 캡처 주기·IPC 입력 경로·Viewer 지터 버퍼가 후보다. 미적용. 정리 완료.
+
 ## 2026-10-23 23:40 KST — 후속 4건: 커밋, 터널링 서버 이름 변경, 하이브리드 GPU 수정과 동작 3 재시험, 잔여 결함
 
 - 1차 실연결 수정을 커밋했다(c336b51).

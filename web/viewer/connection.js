@@ -43,6 +43,13 @@ export function describeError(message) {
 }
 /** 다시 접속해도 되는 오류다. 'replaced'는 다른 지원자 화면이 이어받은 것이므로 다시 접속하지 않는다. */
 export const retryable = code => code !== 'replaced';
+// Chrome answers H264 level 3.1 whatever it can decode, which caps the Host at 720p. The browser keeps its own
+// answer; only the copy sent to the Host advertises receive level 4.2 (1080p60) under level asymmetry (protocol.md).
+export function advertiseReceiveLevel(sdp) {
+  const h264 = new Set([...sdp.matchAll(/^a=rtpmap:(\d+) H264\/90000\r?$/gmi)].map(m => m[1]));
+  return sdp.replace(/^(a=fmtp:(\d+) .*profile-level-id=)([0-9a-f]{4})([0-9a-f]{2})(.*)$/gmi, (line, head, pt, profile, level, tail) =>
+    h264.has(pt) && /level-asymmetry-allowed=1/.test(line) && parseInt(level, 16) < 0x2a ? `${head}${profile}2a${tail}` : line);
+}
 
 export class ViewerConnection {
   constructor({ base, code, displayName, createSocket = url => new WebSocket(url),
@@ -153,7 +160,7 @@ export class ViewerConnection {
     for (const ice of this.pendingIce.splice(0)) { await pc.addIceCandidate(ice); if (!this.live()) return; }
     const answer = await pc.createAnswer(); if (!this.live()) return;
     await pc.setLocalDescription(answer); if (!this.live()) return;
-    this.send({ type: 'answer',generation:this.generation, room: this.code, sdp: answer.sdp });
+    this.send({ type: 'answer',generation:this.generation, room: this.code, sdp: advertiseReceiveLevel(answer.sdp) });
     let busy = false; let lastBytes = 0; let lastTime = 0;let lastLost=0,lastPackets=0,lastDecoded=0,lastDecodeTime=0,lastVideoAt=this.now(),watchVideo=false;
     this.timers.push(this.setTimer(()=>{
       if(!this.live()||this.pc!==pc)return;
