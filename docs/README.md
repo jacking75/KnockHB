@@ -16,6 +16,7 @@
 | [워크플로우](workflows.md) | 시작·연결·미디어·입력·관리자·보조 기능·복구 |
 | [최초 관리자 실행](startup-preparation.md) | 지원 허가와 OS 준비 |
 | [개발 가이드](development-guide.md) | 로컬 검사·개발 설치·실연결 시험 |
+| [두 PC 실연결 시험](live-e2e-test.md) | E2E 준비·실행·판정·성능 측정·정리 |
 | [스택](stack.md) | 언어·라이브러리·포트 |
 | [설치/업데이트](../deploy/installation.md) | 서명·보호 설치·transaction/rollback |
 | [터널링 서버 운영](../deploy/tunnel/README.md) | TLS·감사·metrics·컨테이너 |
