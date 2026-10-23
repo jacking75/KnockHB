@@ -351,7 +351,9 @@ public sealed class ScreenShareSession : IAsyncDisposable
         var telemetry = _telemetry!;
         try { await DiagnosticsLoop.Run(DiagnosticsProvider, _permissions, grant, () => telemetry.IsOpen, message => telemetry.Send(message, Capability.Diagnostics), token); }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception) { if (ConnectionGeneration == generation) EndSession("진단 수집이 실패하거나 기한을 넘었다.", true); }
+        // 진단은 보조 기능이다. 실패·기한 초과는 진단만 멈추고 화면·입력·파일 세션은 유지한다.
+        // 루프가 끝나므로 기한을 넘긴 provider 호출이 쌓이지 않는다.
+        catch (Exception ex) { if (ConnectionGeneration == generation) { LocalDiagnostic.Failure("diagnostics", ex); _log.LogWarning("진단 수집 중단: {Kind}", ex.GetType().Name); } }
     }
 
     /// <summary>2초 넘게 끊긴 전송은 같은 터널링 서버 위에서 새 offer로 다시 만든다(ICE 재시작).</summary>

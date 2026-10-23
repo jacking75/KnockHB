@@ -24,6 +24,8 @@ function resetFeatures(){
   for(const id of ['chat-history','feature-status','diagnostics-content','runbook-preview','runbook-result','quality-status'])el[id].textContent='';
   el['chat-text'].value=el['clipboard-text'].value=el['file-source'].value='';
   el['monitor-choice'].replaceChildren();el['runbook-choice'].replaceChildren();el['clipboard-copy'].disabled=true;
+  // 파일 제안은 연결마다 새로 받는다. 이전 연결의 안내와 버튼을 남기지 않는다.
+  el['file-status'].textContent='';el['file-accept'].disabled=el['file-reject'].disabled=el['file-cancel'].disabled=true;
 }
 function previewRunbook(){const book=current?.runbooks.books.find(b=>b.bookId===el['runbook-choice'].value);el['runbook-preview'].textContent=book?`${book.title}\n버전 ${book.bookVersion} · SHA256 ${book.hash}\n${book.requiresAdmin?'관리자 권한으로 실행한다.\n':''}${book.impact}\n\n${book.source}`:'';}
 function appendChat(text){el['chat-history'].textContent=(el['chat-history'].textContent+text+'\n').slice(-8192);el['chat-history'].scrollTop=el['chat-history'].scrollHeight;}
