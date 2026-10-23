@@ -2,8 +2,8 @@
 
 | 번호 | 경로 | 생성일(KST) | 상태 |
 |---|---|---|---|
-| 1 | docs_working/구현계획-1.md | 2026-10-23 10:35 | 유지 |
+| 1 | docs_working/구현계획-1.md | 2026-10-23 10:35 | 삭제 2026-10-24 (남은 과제는 docs/live-e2e-test.md §9) |
 | 2 | docs_working/실연결-시험-계획-2.md | 2026-10-23 11:01 | 삭제 2026-10-24 (방법은 docs/live-e2e-test.md) |
 | 3 | docs_working/수동-실연결-테스트-3.md | 2026-10-23 12:07 | 삭제 2026-10-24 (방법은 docs/live-e2e-test.md) |
-| 4 | docs_working/동작3-재시험-4.md | 2026-10-23 23:27 | 삭제 2026-10-24 (결과는 working_log.md) |
-| 5 | docs_working/T14-나머지-T15-시험-5.md | 2026-10-23 23:40 | 삭제 2026-10-24 (결과는 working_log.md) |
+| 4 | docs_working/동작3-재시험-4.md | 2026-10-23 23:27 | 삭제 2026-10-24 (결과는 docs/live-e2e-test.md §9) |
+| 5 | docs_working/T14-나머지-T15-시험-5.md | 2026-10-23 23:40 | 삭제 2026-10-24 (결과는 docs/live-e2e-test.md §9) |

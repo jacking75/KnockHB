@@ -2,7 +2,7 @@
 
 사내 PC 관리 운영 부서용 Windows 원격 지원 도구. 개발자 문서는 [docs/README.md](docs/README.md)에서 시작한다.
 구조·설계는 [아키텍처](docs/architecture.md)와 [기술 사양](docs/technical-specification.md),
-와이어 포맷은 [protocol.md](docs/protocol.md), 진행 상태는 [구현계획](docs_working/구현계획-1.md)을 기준으로 한다.
+와이어 포맷은 [protocol.md](docs/protocol.md), 실연결 진행 상태와 남은 과제는 [두 PC 실연결 시험](docs/live-e2e-test.md) §9를 기준으로 한다.
 설계와 어긋나는 구현을 하기 전에 해당 기준 문서를 먼저 갱신한다.
 
 ## 제품 결정 (2026-10-23 사용자 확정, 모든 기능 결정에 우선)
@@ -19,7 +19,7 @@
 - `docs/`: 아키텍처·기술 사양·프로토콜·개발자 가이드 등 지속적으로 유지하는 기준 문서.
 - `docs_working/`: 개발 과정에서 임시로 만드는 리뷰·조사·분석·작업 메모·태스크 문서. 새 임시 개발 문서는 여기에 작성한다.
 - `README.md` 파일에서는 `docs_working/`이 임시 계획·조사·리뷰·작업 기록을 보관하는 디렉터리라는 용도만 설명한다. 그 안의 개별 문서 이름·내용·링크는 언급하지 않는다.
-- 진행 상태는 `docs_working/구현계획-1.md`의 체크리스트에서 관리한다.
+- 진행 상태와 남은 과제는 `docs/live-e2e-test.md` §9 "현재 상태와 남은 과제"에서 관리한다. `working_log.md`는 만들지 않는다.
 - 개발자용 시험 도구 DesktopTestDriver는 별도 저장소(`F:/github/DesktopTestDriver`)다. 기본 빌드·검증은 RemoteAssist 없이 자체 fixture로 완료한다.
 
 ## 실연결(E2E) 시험 — 필수 지침

@@ -1,6 +1,6 @@
 # 기술 사양
 
-[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 진행 상태는 [구현계획](../docs_working/구현계획-1.md)에서 관리한다.
+[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 진행 상태는 [실연결 현재 상태](live-e2e-test.md#9-현재-상태와-남은-과제)에서 관리한다.
 
 .NET SDK 10.0.400, Protocol net10.0, Windows 프로젝트 net10.0-windows10.0.19041.0이다. NuGet은 packages.lock.json과 locked restore, Go는 go.mod/go.sum으로 고정한다. SIPSorcery/SIPSorceryMedia.FFmpeg 10.0.16, Vortice 3.8.3, Microsoft.Extensions 10.0.11, Go 1.27/coder-websocket v1.8.15를 사용한다. Viewer는 정적 ES module이고 Node는 회귀 테스트용이다.
 
