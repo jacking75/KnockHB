@@ -5,7 +5,7 @@ using System.Text.Json;
 using Microsoft.Win32;
 using RemoteAssist.Host.Core.Deployment;
 
-/// <summary>Interactive entry point for the explicitly owned, protected unsigned development install.</summary>
+/// <summary>개발 설치(Program Files\RemoteAssist-Dev)의 관리자 실행 진입점. 지원 허가를 남기고 서비스를 다시 시작한다.</summary>
 internal static class DevSupportLauncher
 {
     static readonly string Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemoteAssist-Dev");
@@ -14,11 +14,7 @@ internal static class DevSupportLauncher
 
     internal static async Task Run()
     {
-        if (!IsInstalledDirectory(AppContext.BaseDirectory)) throw new UnauthorizedAccessException("support-dev requires the protected development installation.");
-        InstallationState.DemandProtected(Environment.ProcessPath!);
-        var marker = ReadOwner(Path.Combine(Root, "dev-owner.json"));
-        var stateOwner = ReadOwner(Path.Combine(InstallationState.Data, "dev-owner.json"));
-        if (marker != stateOwner) throw new UnauthorizedAccessException("Development installation and state ownership differ.");
+        if (!IsInstalledDirectory(AppContext.BaseDirectory)) throw new InvalidOperationException("support-dev는 개발 설치 폴더에서 실행한다.");
         DemandServiceImage();
         if (File.Exists(Path.Combine(Root, "startup-firewall.pending.json")))
             throw new InvalidOperationException("A previous firewall preparation requires recovery before support can start.");
@@ -70,38 +66,22 @@ internal static class DevSupportLauncher
                 await Task.Delay(100, deadline.Token);
             }
             await Prepare("Commit", deadline.Token);
-            Console.WriteLine("DEVELOPMENT_STARTUP_READY_NOT_E2E_PASS");
+            Console.WriteLine("DEVELOPMENT_SUPPORT_READY");
         }
         catch
         {
-            // Cleanup has its own finite allowance; never roll rules back beneath a running child.
+            // 정리에도 시간 상한을 둔다. 실행 중인 자식 아래에서 규칙을 되돌리지 않는다.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(40));
             if (started && service != 0) await Stop(service, cleanup.Token);
             if (prepared) await Prepare("Rollback", cleanup.Token);
+            if (grant != null) InitialSupportLaunch.Revoke(grant.Id);
             throw;
         }
         finally
         {
-            try { if (grant != null) InitialSupportLaunch.Cancel(grant.Id); }
-            finally
-            {
-                if (service != 0) CloseServiceHandle(service);
-                CloseServiceHandle(manager);
-            }
+            if (service != 0) CloseServiceHandle(service);
+            CloseServiceHandle(manager);
         }
-    }
-
-    static string ReadOwner(string path)
-    {
-        InstallationState.DemandProtected(path);
-        if (new FileInfo(path).Length > 8192) throw new InvalidDataException("Development marker too large.");
-        using var owner = JsonDocument.Parse(File.ReadAllBytes(path));
-        var value = owner.RootElement;
-        var id = value.GetProperty("id").GetString();
-        if (!Guid.TryParseExact(id, "N", out _) || value.GetProperty("kind").GetString() != "UNSIGNED_DEVELOPMENT_NOT_RELEASE" ||
-            value.GetProperty("root").GetString() != Root || value.GetProperty("data").GetString() != InstallationState.Data)
-            throw new UnauthorizedAccessException("Development ownership marker mismatch.");
-        return id!;
     }
 
     static void DemandServiceImage()

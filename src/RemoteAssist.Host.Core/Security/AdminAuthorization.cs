@@ -1,61 +1,26 @@
 namespace RemoteAssist.Host.Core.Security;
 
-public sealed record AdminApproval(string RequestId,string SessionId,string ConnectionId,long PermissionGeneration,long AdminGeneration,DateTimeOffset ExpiresAt);
+public sealed record AdminApproval(string RequestId,string SessionId,string ConnectionId,long PermissionGeneration,long AdminGeneration);
 
-/// <summary>Bound administrator grants support legacy local approval and explicit initial session authorization.</summary>
-public sealed class AdminAuthorization(PermissionSnapshot binding,TimeProvider? time=null)
+/// <summary>
+/// 관리자 모드 세대를 발급한다. 지원자는 상호 신뢰 관계이므로 요청하면 바로 허가한다.
+/// 세대 번호는 이전 관리자 헬퍼의 늦은 입력이 새 헬퍼로 섞이지 않게 하는 용도다.
+/// </summary>
+public sealed class AdminAuthorization(PermissionSnapshot binding)
 {
     readonly object gate=new();
-    readonly TimeProvider clock=time??TimeProvider.System;
-    string? pending;
-    DateTimeOffset deadline;
     AdminApproval? current;
     long generation;
     bool ended;
-    public bool PendingExpired {get{lock(gate)return !ended&&pending!=null&&clock.GetUtcNow()>=deadline;}}
-    public string Request(string requestId)
+    public AdminApproval Authorize(string requestId)
     {
         lock(gate)
         {
-            DemandBinding();
-            if(!Guid.TryParseExact(requestId,"N",out _)||pending!=null||current!=null)throw new InvalidOperationException("관리자 요청 상태 오류다.");
-            pending=requestId;deadline=clock.GetUtcNow().AddSeconds(30);return requestId;
+            if(ended)throw new InvalidOperationException("종료한 지원 세션이다.");
+            if(!Guid.TryParseExact(requestId,"N",out _)||current!=null)throw new InvalidOperationException("관리자 요청 상태 오류다.");
+            return current=new(requestId,binding.SessionId,binding.ConnectionId,binding.Generation,++generation);
         }
     }
-    public AdminApproval? RespondLocally(string requestId,bool approved)
-    {
-        lock(gate)
-        {
-            DemandBinding();
-            if(pending!=requestId||clock.GetUtcNow()>=deadline)throw new UnauthorizedAccessException("만료되거나 다른 관리자 승인이다.");
-            pending=null;
-            if(!approved)return null;
-            return current=new(requestId,binding.SessionId,binding.ConnectionId,binding.Generation,++generation,
-                Min(clock.GetUtcNow().AddMinutes(2),binding.ExpiresAt));
-        }
-    }
-    public AdminApproval AuthorizeSessionRequest(string requestId)
-    {
-        lock(gate)
-        {
-            DemandBinding();
-            if(!Guid.TryParseExact(requestId,"N",out _)||pending!=null||current!=null)throw new InvalidOperationException("Administrator request state is invalid.");
-            return current=new(requestId,binding.SessionId,binding.ConnectionId,binding.Generation,++generation,binding.ExpiresAt);
-        }
-    }
-    public bool Allows(long adminGeneration)
-    {lock(gate)return !ended&&current is {} grant&&grant.AdminGeneration==adminGeneration&&clock.GetUtcNow()<grant.ExpiresAt&&clock.GetUtcNow()<binding.ExpiresAt;}
-    public void Revoke(){lock(gate){pending=null;current=null;generation++;}}
-    public void End(){lock(gate){ended=true;pending=null;current=null;generation++;}}
-    public PermissionSnapshot ProcessGrant(AdminApproval approval)
-    {
-        lock(gate)
-        {
-            if(current!=approval||!Allows(approval.AdminGeneration))throw new UnauthorizedAccessException("현재 관리자 승인이 아니다.");
-            return binding with {Capabilities=Capability.Screen|Capability.Control|Capability.Admin,ExpiresAt=approval.ExpiresAt};
-        }
-    }
-    void DemandBinding()
-    {if(ended||clock.GetUtcNow()>=binding.ExpiresAt||!binding.Capabilities.HasFlag(Capability.Admin)||!binding.Capabilities.HasFlag(Capability.Screen)||!binding.Capabilities.HasFlag(Capability.Control))throw new UnauthorizedAccessException("관리자 요청 범위가 승인되지 않았다.");}
-    static DateTimeOffset Min(DateTimeOffset a,DateTimeOffset b)=>a<b?a:b;
+    public bool Allows(long adminGeneration){lock(gate)return !ended&&current is {} grant&&grant.AdminGeneration==adminGeneration;}
+    public void End(){lock(gate){ended=true;current=null;generation++;}}
 }

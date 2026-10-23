@@ -1,6 +1,6 @@
 # Function-only contract check. Does not run installer code, SCM, UAC or any filesystem mutation.
 $ErrorActionPreference='Stop'
-$repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'deploy/install.ps1'),[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Installer parse failure'}

@@ -11,7 +11,7 @@ using SIPSorcery.Net;
 
 if(args is ["--tls-only"]){await SignalingTrustRegression.Run();return 0;}
 if(args is ["--deployment-only"]){await DeploymentRegression.Run();Console.WriteLine("PASS deployment-only: signed package, required startup preparation, archive integrity and path boundaries");return 0;}
-if(args is ["--startup-only"]){await InitialLaunchRegression.Run();await InitialAdminRegression.Run();Console.WriteLine("PASS startup-only: initial launch user/session/expiry binding and session administrator authorization");return 0;}
+if(args is ["--startup-only"]){await InitialLaunchRegression.Run();Console.WriteLine("PASS startup-only: launch grant is bound to this logon, user and Windows session");return 0;}
 
 if(args is ["--audit-only"]){await AuditRegression.Run();await AuditRegression.Terminal();Console.WriteLine("PASS audit-only: rotation, denial, terminal ordering, spool replay, competing writers, torn journal");return 0;}
 if(args is ["--audit-child",var auditPath])
@@ -23,29 +23,27 @@ if(args is ["--audit-child",var auditPath])
 
 var tests = new (string Name, Func<Task> Run)[]
 {
-    ("initial launch remains bound to console user, session and fixed claim/authority lifetimes",InitialLaunchRegression.Run),
-    ("initial session administrator authority does not require repeated local approval",InitialAdminRegression.Run),
+    ("launch grant survives service restarts but not reboot, logoff, user or session change",InitialLaunchRegression.Run),
     ("capture initialization fallback stays bound to the approved monitor and stops on authority loss",RemainingFeatureRegression.CaptureSelection),
     ("service file audit closes unfinished transfers after helper termination and serializes durable start",RemainingFeatureRegression.FileAuditTermination),
-    ("Runbook cancellation cannot resume input until the matching dialog dismissal ACK",RemainingFeatureRegression.RunbookDismissal),
+    ("remote command request is bound to its script hash and target account",RemainingFeatureRegression.RemoteCommand),
     ("session credentials and nested ICE reject unknown, duplicate, missing and malformed fields",RemainingFeatureRegression.StrictCredentials),
-    ("C#/Go/JS shared permission and channel fixtures",async()=>
+    ("C#/JS shared full permission and channel fixture",async()=>
     {
-        using var fixtures=JsonDocument.Parse(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory,"features.json")));
-        foreach(var fixture in fixtures.RootElement.EnumerateArray()){var names=fixture.GetProperty("permissions").EnumerateArray().Select(x=>x.GetString()!).ToArray();var channels=fixture.GetProperty("channels").EnumerateArray().Select(x=>x.GetString()!).ToArray();var mask=fixture.GetProperty("mask").GetInt32();Check(FeatureContract.ParsePermissions(names)==mask&&FeatureContract.Channels(mask).SequenceEqual(channels),"shared feature contract drift");}
+        using var fixture=JsonDocument.Parse(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory,"features.json")));
+        Check(fixture.RootElement.GetProperty("permissions").EnumerateArray().Select(x=>x.GetString()).SequenceEqual(FeatureContract.Permissions)&&fixture.RootElement.GetProperty("channels").EnumerateArray().Select(x=>x.GetString()).SequenceEqual(FeatureContract.Channels),"shared feature contract drift");
     }),
     ("signed release tamper, platform/protocol, ZIP escape and registered Runbook injection",DeploymentRegression.Run),
     ("file channel credit window, durable audit, denial and checksum failure preserve bounded exchange",FileChannelRegression.Run),
     ("native file handle boundary, zero/multiple chunks, collision, hash tamper and revocation",FileRegression.Run),
     ("feature permissions, bounded clipboard hashes and diagnostics revocation prevent excess collection",FeatureRegression.Run),
-    ("admin requires second local approval and shared frame slots reject stale or cleared data",AdminRegression.Run),
+    ("admin generation and shared frame slots reject stale or cleared data",AdminRegression.Run),
     ("audit binds durable closed metadata, rotates bounded files and rejects storage failures",AuditRegression.Run),
-    ("independent input recovery reserves before down and retains repeated Unicode partial prefixes",RecoveryRegression.Run),
     ("control startup rejects mismatched capability, unknown field, missing monitor and extra ping body",async()=>
     {
-        var ready=new ControlMessage {T="data-ready",SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,Id="request",Channels=["control"],Permissions=["screen"],Monitor=new("DISPLAY",1,-2160,0,2160,3840)};
+        var ready=new ControlMessage {T="data-ready",SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,Id="request",Channels=[..FeatureContract.Channels],Permissions=[..FeatureContract.Permissions],Monitor=new("DISPLAY",1,-2160,0,2160,3840)};
         var bytes=JsonSerializer.SerializeToUtf8Bytes(ready);Check(ControlMessage.Parse(bytes).Monitor!.X==-2160,"portrait binding lost");
-        foreach(var invalid in new[]{ready with {Permissions=["control"]},ready with {Monitor=null},ready with {T="data-ping"},ready with {Generation=9007199254740992L}})
+        foreach(var invalid in new[]{ready with {Permissions=["screen"]},ready with {Channels=["control"]},ready with {Monitor=null},ready with {T="data-ping"},ready with {Generation=9007199254740992L}})
             await Reject(()=>Task.FromResult(ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(invalid))));
         await Reject(()=>Task.FromResult(ControlMessage.Parse(Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(bytes).Replace("\"v\":1","\"unknown\":true,\"v\":1")))));
     }),
@@ -55,7 +53,7 @@ var tests = new (string Name, Func<Task> Run)[]
         var json=Encoding.UTF8.GetBytes("{\"SignalingUri\":\"http://127.0.0.1:25001\",\"AllowLoopbackHttp\":true}");
         var bom=new byte[]{0xEF,0xBB,0xBF}.Concat(json).ToArray();
         Check(HostSettings.Parse(bom).AllowLoopbackHttp,"PowerShell UTF8 BOM broke settings");
-        foreach(var invalid in new[]{"{\"AllowLoopbackHttp\":false,\"AllowLoopbackHttp\":true}","{\"Unrecognized\":true}","{\"StunServers\":null}"})await Reject(()=>Task.FromResult(HostSettings.Parse(Encoding.UTF8.GetBytes(invalid))));
+        foreach(var invalid in new[]{"{\"AllowLoopbackHttp\":false,\"AllowLoopbackHttp\":true}","{\"Unrecognized\":true}"})await Reject(()=>Task.FromResult(HostSettings.Parse(Encoding.UTF8.GetBytes(invalid))));
     }),
     ("protected installation ACL allows readers but rejects writers and non-admin owners",async()=>
     {
@@ -180,20 +178,15 @@ var tests = new (string Name, Func<Task> Run)[]
         foreach (var text in new[] { "{\"v\":1,\"v\":1,\"type\":\"ping\"}", "{\"type\":\"ping\"}", "{\"v\":0,\"type\":\"ping\"}" })
             await Reject(() => Task.FromResult(SignalingFraming.Parse(Encoding.UTF8.GetBytes(text))));
     }),
-    ("permissions deny before consent, stale grants and after termination", async () =>
+    ("supporter gets every capability once; nothing runs before connect or after the session ends", async () =>
     {
-        var clock = new FakeTime(); var gate = new PermissionGate(clock);
-        Check(!gate.Allows(Capability.Screen, 0), "pre-consent screen allowed");
-        await Reject(() => Task.FromResult(gate.Grant("sid", "peer", Capability.Control, TimeSpan.FromMinutes(1))));
-        await Reject(() => Task.FromResult(gate.Grant("sid", "peer", Capability.Screen|Capability.Admin, TimeSpan.FromMinutes(1))));
-        var grant = gate.Grant("sid", "peer", Capability.Screen | Capability.Control | Capability.Admin, TimeSpan.FromMinutes(1));
-        Check(gate.Allows(Capability.Screen, grant.Generation), "screen denied");
-        Check(gate.Allows(Capability.Control, grant.Generation), "explicit control denied");
-        Check(!gate.Allows(Capability.File, grant.Generation), "admin implied file");
-        await Reject(() => Task.FromResult(gate.Grant("sid", "other", Capability.Screen, TimeSpan.FromMinutes(1))));
-        clock.Utc = clock.Utc.AddMinutes(1); Check(!gate.Allows(Capability.Screen, grant.Generation), "expired lease allowed");
-        gate.End(); Check(!gate.Allows(Capability.Screen, grant.Generation), "ended grant allowed");
-        await Reject(() => Task.FromResult(gate.Grant("sid", "peer", Capability.Screen, TimeSpan.FromMinutes(1))));
+        var gate = new PermissionGate();
+        Check(!gate.Allows(Capability.Screen, 1), "capability before the supporter connected");
+        var grant = gate.Grant("sid", "peer");
+        Check(grant.Capabilities == Capability.All && gate.Allows(Capability.Admin, grant.Generation) && gate.Allows(Capability.Runbook, grant.Generation), "supporter did not get every capability");
+        await Reject(() => Task.FromResult(gate.Grant("sid", "other")));
+        gate.End(); Check(!gate.Allows(Capability.Screen, grant.Generation), "ended session allowed");
+        await Reject(() => Task.FromResult(gate.Grant("sid", "peer")));
     }),
     ("invalid options fail before native resource allocation", async () =>
     {

@@ -47,7 +47,7 @@ public sealed class FFmpegH264Encoder : IVideoEncoder
             try
             {
                 var options = Options(name);
-                options["profile"]=name switch {"h264_qsv"=>"66","libopenh264"=>"constrained_baseline",_=>"baseline"};
+                options["profile"]=name switch {"h264_qsv"=>"66","libopenh264" or "h264_amf"=>"constrained_baseline",_=>"baseline"}; // FFmpeg h264_amf에는 baseline 값이 없다.
                 if(name=="h264_nvenc")options["level"]=MaximumLevel.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 candidate = _factory.Create(name, options);
                 candidate.Configure(width, height, fps, bitrateKbps);

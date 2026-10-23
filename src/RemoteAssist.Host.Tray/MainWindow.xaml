@@ -5,28 +5,29 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RemoteAssist.Host.Tray"
         mc:Ignorable="d"
-        Title="RemoteAssist — 대상자 지원" Height="730" Width="520" MinHeight="680" MinWidth="490"
+        Title="RemoteAssist — 원격 지원" Height="640" Width="520" MinHeight="600" MinWidth="490"
         WindowStartupLocation="CenterScreen" Background="#F4F7FB">
     <Border x:Name="SessionBorder" BorderThickness="4" BorderBrush="#94A3B8" Padding="24">
         <StackPanel>
             <TextBlock Text="RemoteAssist" FontSize="26" FontWeight="Bold" Foreground="#0F172A"/>
-            <TextBlock Text="내가 승인한 지원자에게만 화면을 공유한다." Margin="0,8,0,16"/>
-            <TextBlock x:Name="Status" Text="서비스 연결 확인 중이다." TextWrapping="Wrap" Height="48" AutomationProperties.AutomationId="HostStatus"/>
+            <TextBlock Text="PC 관리 담당자가 이 PC에 원격으로 접속해 지원한다." Margin="0,8,0,16" TextWrapping="Wrap"/>
             <TextBlock Text="지원 ID" FontWeight="SemiBold"/>
-            <TextBlock x:Name="Code" Text="—" FontSize="28" Margin="0,8,0,0" AutomationProperties.AutomationId="PairingCode"/>
-            <TextBlock x:Name="PermissionNotice" Text="지원자가 이 지원 ID로 접속한다. 수동 지원은 연결할 때 권한을 선택한다." TextWrapping="Wrap" Margin="0,0,0,16"/>
-            <Button x:Name="StartButton" Content="새 지원 코드 만들기" Click="StartClicked" Height="38" IsEnabled="False" AutomationProperties.AutomationId="HostStart"/>
-            <Button x:Name="StopButton" Content="즉시 종료" Click="StopClicked" Height="42" Margin="0,8,0,0" Background="#B91C1C" Foreground="White" FontWeight="Bold" AutomationProperties.AutomationId="HostStop"/>
-            <TextBlock Text="승인한 세션의 채팅" Margin="0,12,0,4" FontWeight="SemiBold"/>
+            <TextBlock x:Name="Code" Text="—" FontSize="28" Margin="0,8,0,0" AutomationProperties.AutomationId="SupportId"/>
+            <TextBlock x:Name="PermissionNotice" Text="서비스 연결 확인 중이다." TextWrapping="Wrap" Margin="0,4,0,12"/>
+            <TextBlock x:Name="Status" Text="" TextWrapping="Wrap" Height="44" AutomationProperties.AutomationId="HostStatus"/>
+            <Button x:Name="StopButton" Content="즉시 종료 (지원 중지)" Click="StopClicked" Height="42" Margin="0,8,0,0" Background="#B91C1C" Foreground="White" FontWeight="Bold" AutomationProperties.AutomationId="HostStop"/>
+            <TextBlock Text="지원자와 채팅" Margin="0,16,0,4" FontWeight="SemiBold"/>
             <TextBox x:Name="ChatHistory" Height="100" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="ChatHistory"/>
             <DockPanel Margin="0,6,0,0">
                 <Button x:Name="ChatSend" AutomationProperties.AutomationId="ChatSend" DockPanel.Dock="Right" Content="보내기" IsEnabled="False" Click="ChatClicked" Padding="12,4"/>
                 <TextBox x:Name="ChatText" AutomationProperties.AutomationId="ChatText" MaxLength="4096" IsEnabled="False"/>
             </DockPanel>
-            <Button x:Name="FileSend" AutomationProperties.AutomationId="FileSend" Content="내가 선택한 파일 보내기" IsEnabled="False" Click="FileClicked" Margin="0,12,0,0" Height="32"/>
-            <TextBlock x:Name="FileStatus" AutomationProperties.AutomationId="FileStatus" Text="파일 전송 대기" Margin="0,6,0,0"/>
+            <DockPanel Margin="0,12,0,0">
+                <Button x:Name="FileCancel" AutomationProperties.AutomationId="FileCancel" DockPanel.Dock="Right" Content="취소" IsEnabled="False" Click="FileCancelClicked" Padding="12,4" Margin="6,0,0,0"/>
+                <Button x:Name="FileSend" AutomationProperties.AutomationId="FileSend" Content="지원자에게 파일 보내기" IsEnabled="False" Click="FileClicked" Height="32"/>
+            </DockPanel>
+            <TextBlock x:Name="FileStatus" AutomationProperties.AutomationId="FileStatus" Text="받은 파일은 다운로드\RemoteAssist 폴더에 저장된다." Margin="0,6,0,0" TextWrapping="Wrap"/>
             <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Margin="0,6,0,0"/>
-            <Button x:Name="FileCancel" AutomationProperties.AutomationId="FileCancel" Content="파일 전송 취소" IsEnabled="False" Click="FileCancelClicked" Height="28"/>
         </StackPanel>
     </Border>
 </Window>

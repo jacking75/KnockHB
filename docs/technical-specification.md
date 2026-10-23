@@ -1,64 +1,50 @@
 # 기술 사양
 
-2026-10-23 규격 변경: NAT 환경에서 직접 P2P 연결 성공은 제품의 필수 요구사항이다. 연결 실패는 요구사항 미충족이며 정상 제약이나 릴레이 대체 성공으로 처리하지 않는다. TURN 서버 준비·강제 릴레이·릴레이 폴백은 제품 범위에서 제외하며 STUN/ICE 직접 연결은 유지한다. 아래 TURN 설정·운영 필수 검사 설명은 종전 코드의 현황이며 새 제품 요구사항이 아니다. 관련 코드 정리가 완료됐다고 간주하지 않는다.
+[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 진행 상태는 [구현계획](../docs_working/구현계획-1.md)에서 관리한다.
 
-최초 관리자 실행의 권한 준비와 일회성 지원 세션 부여는 [시작 기준](startup-preparation.md)을 따른다. 서비스 자동 시작 자체는 지원 권한을 부여하지 않는다. 인증된 로컬 IPC의 `initial-support` 통지와 `consent.initialSupport` 값으로 Tray/Helper가 해당 세션의 추가 동의 UI 생략을 적용한다. Viewer의 원격 와이어 권한·바인딩·세대 검증은 유지한다.
+.NET SDK 10.0.400, Protocol net10.0, Windows 프로젝트 net10.0-windows10.0.19041.0이다. NuGet은 packages.lock.json과 locked restore, Go는 go.mod/go.sum으로 고정한다. SIPSorcery/SIPSorceryMedia.FFmpeg 10.0.16, Vortice 3.8.3, Microsoft.Extensions 10.0.11, Go 1.27/coder-websocket v1.8.15를 사용한다. Viewer는 정적 ES module이고 Node는 회귀 테스트용이다.
 
-개발 LAN 기능 검증용 시그널링 `RA_MODE=lan-test`는 사설 IP의 HTTPS/WSS만 허용한다. TLS 인증서/키, 정확히 일치하는 Viewer origin, node credential, 감사 저장소를 필수로 하며 코드/PIN·동의·권한 검사는 동일하다. TURN이 준비되지 않은 LAN 직접 연결 시험에서는 TURN 설정을 생략할 수 있지만 relay/NAT 수용으로 세지 않는다. production의 TURN 필수 조건과 development의 평문 loopback 제한은 유지한다. LAN TLS 신뢰는 시험용 인증서로 설정하고 해당 신뢰의 소유/제거를 기록한다. 코드서명과 TLS 신뢰는 별개다.
+## Host 설정 (`host.settings.json`)
 
-[제품 계약](product-contract.md)·[프로토콜](protocol.md)이 지원/수용값과 와이어 기준이다. 실행 완료는 [구현계획](../docs_working/원격제어-구현계획.md)에서만 판정한다.
-
-.NET SDK 10.0.400, Protocol net10.0, Windows 프로젝트 net10.0-windows10.0.19041.0이다. NuGet은 packages.lock.json과 locked restore, Go는 go.mod/go.sum으로 고정한다. SIPSorcery/SIPSorceryMedia.FFmpeg 10.0.16, Vortice 3.8.3, Microsoft.Extensions 10.0.11을 사용한다. Go 1.27/coder-websocket v1.8.15, Viewer는 정적 ES module이고 Node는 회귀용이다. 검증 runner는 Windows PowerShell5.1/PowerShell7을 지원하며 배포 패키징은 PowerShell7을 요구한다.
-
-## 설정과 상한
-
-| Host 설정 | 기본/검사 |
+| 항목 | 기본/검사 |
 |---|---|
-| SignalingUri, AllowLoopbackHttp | http://localhost:25001, false; 운영 HTTPS, 개발은 명시 loopback만 |
+| SignalingUri | 기본 http://localhost:25001. loopback 밖은 HTTPS 필수 |
+| AllowLoopbackHttp | false. true면 loopback http만 허용 |
+| SignalingCertificateBase64 | 선택. 지정하면 그 DER 인증서와 정확히 일치하는 서버만 신뢰(자체 서명 핀 고정). 머신 인증서 저장소는 바꾸지 않는다 |
 | TargetFps / BitrateKbps | 30 / 4000; 1..60 / 100..50000 |
 | MonitorIndex | 0; 시작 시 현재 목록 범위 |
 | PreferredEncoder | null은 허용 후보 순서, 명시는 단일 후보 엄격 실패 |
-| StunServers / ForceRelay | 빈 목록 / false; stun/stuns 검사, relay에는 실제 TURN 필요 |
-| MaxOutputLongEdge / ShortEdge | 1920 /1080, 최대3840/2160, 짝수 축소·확대 없음 |
+| MaxOutputLongEdge / ShortEdge | 1920 / 1080, 최대 3840/2160, 짝수 축소·확대 없음 |
+| StunServers | 무시한다. 이미 배포된 설정에 남아 있어도 읽기만 한다 |
 
-HostRun은 엄격 CLI와 실패 exit를 제공하고 콘솔 화면 승인만 허용한다. CaptureDump는 같은 모니터 backend·PNG/프레임 수·60초 deadline·기존 결과 보존을 적용한다. SessionProbe는 Session/desktop/승격·모니터 정보를 읽을 뿐 입력을 주입하지 않는다. 개발 진단 성공은 제품 경로 수용이 아니다.
+알 수 없는 필드·중복 필드는 거부한다. 지원 ID(`DeviceCode`)는 설정이 아니라 `ProgramData/RemoteAssist/device-id.txt`에서 읽는다.
 
-| 서버 환경 | 정책 |
+## 시그널링 서버 환경
+
+| 환경 변수 | 정책 |
 |---|---|
-| RA_MODE, RA_LISTEN | development/production, 기본127.0.0.1:25001; TCP25001..25199 |
-| RA_SESSION_TTL | 기본10m, 30s..30m |
-| RA_VIEWER_DIR | 운영 필수; 허용된 정적 파일만 |
-| RA_ALLOWED_ORIGINS | 정확한 host:port 목록, wildcard 금지 |
-| RA_TLS_CERT/KEY | 운영 필수, 직접 TLS1.2 이상 |
-| RA_TURN_URLS/SECRET_FILE | 운영 필수, peer별10분 credential, 보호32..128 base64url 키 |
-| RA_OPERATOR_SECRET_FILE / RA_AUDIT_DIR | 운영 node 인증/감사 디렉터리 필수 |
+| RA_MODE | `development`(loopback 평문만), `lan`(사설 IP 또는 0.0.0.0, TLS 필수, 자체 서명 가능), `production`(TLS 필수) |
+| RA_LISTEN | 기본 127.0.0.1:25001; TCP 25001..25199 |
+| RA_TLS_CERT / RA_TLS_KEY | lan·production 필수 |
+| RA_SESSION_TTL | 난수 코드 방의 대기 기간. 기본 10m, 30s..30m. 고정 지원 ID 방은 Host가 연결된 동안 만료되지 않는다 |
+| RA_VIEWER_DIR | 선택. 허용 정적 파일만 제공 |
+| RA_ALLOWED_ORIGINS | 선택. 정확한 host:port 목록, wildcard 금지. 비우면 같은 호스트만 |
+| RA_OPERATOR_SECRET_FILE / RA_AUDIT_DIR | 선택. 지정하면 시작 때 검사하고 /metrics·/audit를 연다 |
 
-운영은 TLS/key/Viewer/TURN/node/audit를 시작 전에 검사한다. 개발 평문은 loopback만 허용한다. static allowlist에는 index/app/style/connection/input/geometry/features/files/sha256/runbooks/favicon만 있다. CSP/frame 차단/nosniff/referrer/HSTS를 적용한다. /healthz는 생존, /readyz는 시작 오류·키·감사 장애·종료 상태이며 실제 allocation PASS가 아니다. /metrics·/audit는 node bearer 인증이다.
+static allowlist: index/app/css/connection/input/geometry/features/files/sha256/runbooks/favicon. CSP·frame 차단·nosniff·referrer·HSTS를 적용한다. /healthz는 생존, /readyz는 시작 오류·감사 장애·종료 상태다.
 
-Host의 세션 발급 HTTP는 redirect를 따르지 않고 2xx만 수락한다. 발급 JSON에도 크기·중복/미등록 필드·필수 필드·난수 식별자 형식을 검사한다. Viewer의 기한/생존/파일 작업은 단조 시계로 계산하고 수신 RTP의 framesPerSecond를 디코딩 FPS로 표시한다. 실제 화면 표시 FPS로 이름을 바꾸지 않는다.
-
-발급은 IP당10회/분, limiter4096, 룸1000, 연결+upgrade예약2000이다. join10초, signaling heartbeat5초/read lease15초, 쓰기5초, peer 이탈3초, HTTP shutdown5초다. 시그널링128KiB/SDP96KiB/ICE8KiB/대기256, JSON depth32와 중복/미지 필드를 거부한다. metadata 감사 event4096bytes, spool4096, journal4MiB×4/7일이다.
+룸 1000, 연결+upgrade 예약 2000, join 10초, heartbeat 5초/read lease 15초, 쓰기 5초, peer 이탈 통지 3초, HTTP shutdown 5초. 시그널링 128KiB/SDP 96KiB/ICE 8KiB, JSON depth 32. 감사 event 4096bytes, journal 4MiB×4/7일.
 
 ## 미디어·데이터
 
-Host UDP27002..27099, coturn TCP25002/25003, relay UDP27100..27199다. 브라우저 동적 소스 포트는 고정할 수 없다. 목적지 allowlist와 실제 TLS/방화벽 정책은 배포 자료를 따른다.
+Host WebRTC는 UDP 27002..27099의 host 후보만 쓴다. STUN/TURN은 없다. 방화벽 규칙은 Helper 실행 파일과 이 포트 범위, 시그널링 TCP(443, 설정 포트)에 한정한다.
 
-모니터 handle/deviceName/geometry·frame generation·BGRA/stride/최대256MiB를 검사한다. WGC resize는 이전 프레임을 폐기하고 같은 RT device를 재사용한다. DXGI는 rotation/커서와 부분 COM 생성 정리를 처리한다. 바뀐 물리 descriptor는 새 동의·capture/scaler/encoder 재구성·IDR/ACK가 필요하다. 제거 시 종료한다.
+캡처는 모니터 handle/deviceName/geometry·BGRA/stride를 검사한다. WGC 우선, 초기화 실패 때 같은 모니터의 DXGI를 한 번 쓴다. 보안 데스크톱은 AdminHelper의 DXGI 경로로 캡처한다. 화면 구성이 바뀌면 같은 모니터(없으면 주 모니터)로 자동으로 다시 맞춘다.
 
-일반 desktop의 자동 캡처 선택은 WGC 미지원뿐 아니라 초기화 실패에도 같은 승인 모니터의 DXGI를 한 번 선택한다. 모니터 identity/handle/geometry가 달라졌거나 권한·동의가 상실된 경우에는 폴백하지 않는다. 실행 중 캡처 상실은 기존 포맷 재승인/종료 경계를 유지한다. 명시한 진단 backend는 조용히 바꾸지 않는다.
+FFmpeg 8.1 ABI의 7개 shared DLL은 고정 SHA256 검사 후 명시 경로에서 로드한다. GPL/nonfree/libx264와 PATH fallback을 금지한다. H.264는 constrained baseline/mode1이며 실제 SPS의 profile/level을 검사한다. 후보 nvenc → qsv → amf → mf → openh264는 실제 Configure·시험 출력 뒤에만 선택한다. h264_amf에는 `constrained_baseline` profile 값을 쓴다(`baseline` 값이 없다). PLI/FIR와 시작·재개·2초 주기 IDR을 보낸다. RTP는 actual monotonic 90kHz sample time, 1200byte NAL/FU-A다.
 
-FFmpeg8.1 ABI의 7개 shared DLL은 고정 archive/DLL SHA256 이후 명시 경로에서 로드한다. GPL/nonfree/libx264와 PATH fallback을 금지한다. 현재 공급본은 LGPLv3이며 source recipe/80개 dependency pin과 전체 소스/고지 준비 도구가 있다. 실제 대응 소스 공개·재빌드·배포 법적 검토는 V02/V36이다.
+파일은 최대 256MiB/청크 16KiB/credit 16/한 건·SHA256·NTFS handle 확정, 수락 30초/무진행 10초/전체 10분. chat 4096자, clipboard 8192자/UTF-8 16KiB와 hash, 2초 응답. 진단 provider 2초 상한. Runbook은 등록 두 작업 + 원격 명령(8192자), 동시 1개, worker 20초, stdout 8192자·stderr 4096자, Job 자식 2개·메모리 제한.
 
-H264는 constrained baseline/mode1, 명시 profile-level-id 제안과 실제 SPS를 검사한다. answer level3.1..5.2의 보수 한도로 출력/FPS/bitrate를 제한한다. 후보 nvenc→qsv→amf→mf→openh264는 실제 Configure/시험 SPS 출력 후에만 선택한다. PLI/FIR는 인증된 해당 video stream에 결합해 소유 인코더 스레드에 합친 요청으로 전달하며 시작/재개/2초 주기 IDR도 보낸다.
+## 개발 진단 도구
 
-RTP는 actual monotonic90kHz sample time, 1200byte NAL/FU-A/마지막 marker다. encoder probe는 synthetic1080p60프레임·모두 decode·처리량30fps·fresh decoder IDR 복구를 별도 검사한다. 이것은 실제 캡처/브라우저 FPS 수용이 아니다. 적응 품질은 통계1초/5초 유지/15초 연속 안정 정책과 재사용 scaler를 사용한다.
-
-input/pointer/control/file/chat/telemetry/runbook은 reliable ordered다. move는 최신1건 합치며 전이는 보존한다. 입력 identity/topology/epoch/sequence/barrier와 일반/특권 최종 권한 검사를 사용한다. 독립 Recovery는 down 전에 예약 ACK한다. peer generation마다 transport/채널 순번을 새로 만들며 permission generation은 같은 승인을 유지한다.
-
-파일은 최대256MiB/청크16KiB/credit16/buffer한도·한 건·건별 수락·NTFS handle/충돌·SHA256·30초 승인/10초 idle/10분 전체 기한이다. chat4096자, clipboard8192자/UTF8 16KiB와 hash/2초 요청이다. 진단 provider와 목록에는 bounded timeout/길이/오류가 있다. Runbook은 고정 두 작업·인자 enum·동시1/최근ID256·승인28초/worker20초/출력4096자/Job 제한이다.
-
-파일 저장 API가 없는 Viewer의 수신은 별도 수락 뒤 최대8MiB만 메모리에 보관하고 size/hash 검증 뒤 명시적 다운로드를 만든다. 취소·세대 교체 뒤 완료된 hash/파일 선택/쓰기 작업은 다른 전송에 적용하지 않는다. 서비스는 시작 감사가 기록된 미완료 전송을 세션 종료 시 stopped로 마감한다. 진단 서비스 목록의 상태 조회 실패는 빈 정상 목록으로 바꾸지 않는다.
-
-실제 media lease는 활성 후15초 첫 전송, 이후3초 정지로 helper Job을 종료한다. Viewer decodedFrames 정지는15초이며 monitor 승인/복구 중에는 감시를 중단한다. local stop은 이 타이머를 기다리지 않는다. managed 정리5초, 무응답 native는 서비스가 소유 프로세스로 격리한다. 설치/업데이트·운영·하네스의 상세는 deploy/와 tests/e2e 문서를 따른다.
-
-로컬 종료는 취소 callback이나 startup/resource lock을 기다리기 전에 현재 일반 Helper·관리자 Helper·Runbook Job부터 차단한다. 업데이트 ACL 명령은 각각30초, 실패 후 소유 명령 종료 대기는2초다. Runbook은 설치 스크립트 읽기에도 실행 기한/32KiB 상한을 적용하고 프로세스 생성 직전에 만료를 재검사한다. 설치/제거/rollback의 모든 서비스 정지는 따옴표로 감싼 `versions/<버전>/RemoteAssist.Host.Service.exe`의 소유 경로를 먼저 검사한다.
+HostRun은 화면만 보내는 개발 진단이다(입력·관리자·파일·Runbook은 서비스 설치본에서만 동작). `--encoder-check`는 화면·네트워크 없이 합성 1080p 60프레임으로 후보별 출력·디코딩·처리량(30fps 이상)·IDR 복구를 검사한다. CaptureDump·SessionProcess 진단·BoundaryProbe·InputTarget은 실제 화면/입력을 쓰므로 계획을 세운 뒤 실행한다.

@@ -11,9 +11,8 @@ public interface IInputBackend
     /// <returns>Count of the actually injected prefix, including partial failures.</returns>
     int Send(IReadOnlyList<InputStroke> strokes);
 }
-public interface IInputPreflight {bool CanPress(InputStroke stroke);}
 
-/// <summary>All validation and native writes are serialized with revocation. Tracks only its own successfully injected transitions.</summary>
+/// <summary>원격 입력을 순서대로 주입하고, 눌린 키·버튼을 추적해 정지·일시 중단 때 모두 뗀다.</summary>
 public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,long topologyGeneration,IInputBackend backend,long connectionGeneration=1)
 {
     readonly object gate=new();
@@ -23,18 +22,19 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
     InputSequenceGuard? sequences;
     bool stopped;
     bool paused;
-    public void SuspendForApproval(){lock(gate){paused=true;Release();}}
-    public void RebindMonitor(MonitorInfo target,long generation,IInputBackend next)
-    {lock(gate){if(!paused||stopped)throw new InvalidOperationException("모니터 전환 전 입력을 중단해야 한다.");monitor=target;topologyGeneration=generation;backend=next;sequences?.RebindMonitor(target.DeviceName,generation);}}
-    public long ResumeLocalPhase()
+    /// <summary>모니터·관리자 모드 전환 중에는 입력을 멈추고 눌린 키를 뗀다.</summary>
+    public void Suspend(){lock(gate){paused=true;Release();}}
+    public void RebindMonitor(MonitorInfo target,long generation)
+    {lock(gate){if(!paused||stopped)throw new InvalidOperationException("모니터 전환 전 입력을 중단해야 한다.");monitor=target;topologyGeneration=generation;sequences?.RebindMonitor(target.DeviceName,generation);}}
+    /// <summary>입력을 다시 받는다. 새 epoch를 돌려주며 Viewer는 이 epoch부터 보낸다.</summary>
+    public long Resume()
     {
         lock(gate)
         {
             var grant=permissions.Current;
-            if(stopped||!paused||grant==null||!permissions.Allows(Capability.Control,grant.Generation))throw new UnauthorizedAccessException("입력 승인 전환 상태 오류다.");
+            if(stopped||!paused||grant==null||!permissions.Allows(Capability.Control,grant.Generation))throw new InvalidOperationException("입력 재개 상태 오류다.");
             sequences??=new(grant.SessionId,connectionGeneration,grant.Generation,monitor.DeviceName,topologyGeneration);
             var epoch=sequences.AdvanceLocalPhase();paused=false;
-            RemoteAssist.Host.Core.Diagnostics.CaseTrace.Write("input-resumed",grant.SessionId,grant.Generation,new {epoch});
             return epoch;
         }
     }
@@ -62,16 +62,7 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
             else if(message.A=="text")
                 foreach(var character in message.Text!){strokes.Add(new(StrokeKind.Unicode,Character:character));strokes.Add(new(StrokeKind.Unicode,Character:character,Up:true));}
             else if(message.A=="down"||keys.Contains((ushort)message.Vk!.Value))strokes.Add(new(StrokeKind.Key,Key:(ushort)message.Vk!.Value,Up:message.A=="up"));
-            return permissions.Execute(Capability.Control,message.PermissionGeneration,()=>
-            {
-                if(backend is IInputPreflight preflight)
-                    foreach(var stroke in strokes.Where(s=>!s.Up&&s.Kind is StrokeKind.Key or StrokeKind.Button or StrokeKind.Unicode))
-                    {
-                        var owned=stroke.Kind switch {StrokeKind.Key=>keys.Contains(stroke.Key),StrokeKind.Button=>buttons.Contains(stroke.Button),_=>unicode.Contains(stroke.Character)};
-                        if(!owned&&!preflight.CanPress(stroke)){stopped=true;throw new IOException("로컬 사용자가 이미 누른 키·버튼과 충돌했다.");}
-                    }
-                Inject(strokes);
-            });
+            return permissions.Execute(Capability.Control,message.PermissionGeneration,()=>Inject(strokes));
         }
     }
     public void Stop()
@@ -94,6 +85,6 @@ public sealed class InputSession(PermissionGate permissions,MonitorInfo monitor,
             if(stroke.Kind==StrokeKind.Button){if(stroke.Up)buttons.Remove(stroke.Button);else buttons.Add(stroke.Button);}
             if(stroke.Kind==StrokeKind.Unicode){if(stroke.Up)unicode.Remove(stroke.Character);else unicode.Add(stroke.Character);}
         }
-        if(count!=strokes.Count){stopped=true;throw new IOException("SendInput 일부 또는 전체 실패다. 보안 경계와 키 복원을 확인해야 한다.");}
+        // 보안 데스크톱 전환 순간처럼 일부만 들어간 입력은 건너뛴다. 세션은 유지한다.
     }
 }

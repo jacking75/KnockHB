@@ -14,7 +14,7 @@ static class FileRegression
         var directory=Path.Combine(Path.GetTempPath(),"remoteassist-files-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
         try
         {
-            var permissions=new PermissionGate();var grant=permissions.Grant("sid","peer",Capability.File,TimeSpan.FromMinutes(1));
+            var permissions=new PermissionGate();var grant=permissions.Grant("sid","peer");
             foreach(var size in new[]{0,FileChunkHeader.MaxPayload+3})
             {
                 var payload=Enumerable.Range(0,size).Select(i=>(byte)i).ToArray();var name="received-"+size+".dat";
@@ -64,8 +64,8 @@ static class FileRegression
                 }
                 using(var candidate=folder.Create("revoked.dat"))
                 using(var incoming=new IncomingFile(offer with {Name="revoked.dat"},permissions,grant.Generation,candidate.Stream,candidate.Commit,candidate.Dispose))
-                {permissions.Revoke();Reject(()=>incoming.Chunk(new FileChunkHeader(Guid.ParseExact(offer.Id,"N"),0,1).Encode([9])));}
-                Check(!File.Exists(Path.Combine(directory,"revoked.dat")),"revoked file committed");
+                {permissions.End();Reject(()=>incoming.Chunk(new FileChunkHeader(Guid.ParseExact(offer.Id,"N"),0,1).Encode([9])));}
+                Check(!File.Exists(Path.Combine(directory,"revoked.dat")),"file committed after the session ended");
                 using var source=folder.Read("received-16387.dat");Check(source.Length==16387,"native input read failed");
                 Reject(()=>new FileStream(Path.Combine(directory,"received-16387.dat"),FileMode.Open,FileAccess.Write,FileShare.ReadWrite));
             }

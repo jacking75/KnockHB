@@ -10,7 +10,7 @@ static class DeploymentRegression
     public static async Task Run()
     {
         using var rsa=RSA.Create(3072);var key=rsa.ExportSubjectPublicKeyInfoPem();
-        var names=new[]{"RemoteAssist.Host.Service.exe","RemoteAssist.Host.Tray.exe","RemoteAssist.Host.Helper.exe","RemoteAssist.Host.AdminHelper.exe","RemoteAssist.Host.Recovery.exe","RemoteAssist.Host.RunbookWorker.exe","RemoteAssist.Update.exe","install.ps1","prepare-host.ps1","prepare-sas.ps1","host.settings.json","runbooks/network-summary.ps1","runbooks/clear-dns-cache.ps1","notices/NOTICE.md"};
+        var names=new[]{"RemoteAssist.Host.Service.exe","RemoteAssist.Host.Tray.exe","RemoteAssist.Host.Helper.exe","RemoteAssist.Host.AdminHelper.exe","RemoteAssist.Host.RunbookWorker.exe","RemoteAssist.Update.exe","install.ps1","prepare-host.ps1","prepare-sas.ps1","host.settings.json","runbooks/network-summary.ps1","runbooks/clear-dns-cache.ps1","notices/NOTICE.md"};
         var empty=Convert.ToHexStringLower(SHA256.HashData(Array.Empty<byte>()));var manifest=new ReleaseManifest("RemoteAssist","windows-x64",1,"1.0.0.0",empty,names.Select(n=>new ReleaseFile(n,0,empty)).ToArray());
         var bytes=JsonSerializer.SerializeToUtf8Bytes(manifest);var signature=rsa.SignData(bytes,HashAlgorithmName.SHA256,RSASignaturePadding.Pss);ReleaseManifest.Verify(bytes,signature,key);
         Reject(()=>(manifest with {Files=manifest.Files.Where(f=>f.Path!="prepare-host.ps1").ToArray()}).Validate());
@@ -23,7 +23,7 @@ static class DeploymentRegression
         foreach(var path in new[]{"../escape.exe","/escape.exe","a\\escape.exe","a:stream","a/../escape.exe","a./b","CON.txt","COM1.dll"})if(ReleaseManifest.SafePath(path))throw new Exception("unsafe ZIP path: "+path);
         var book=RunbookCatalog.Definition("network-summary");var request=new RunbookMessage {T="runbook-request",Id=Guid.NewGuid().ToString("N"),SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,BookId=book.BookId,BookVersion=1,Hash=book.Hash,Args=new(){["detail"]="counts"}};
         RunbookCatalog.Demand(request);Reject(()=>RunbookCatalog.Demand(request with {Hash=new string('a',64)}));Reject(()=>RunbookCatalog.Demand(request with {BookId="cmd.exe"}));Reject(()=>RunbookCatalog.Demand(request with {Args=new(){["detail"]="counts; Start-Process cmd"}}));
-        Reject(()=>new RunbookResult("completed",0,new string('x',4097),"","").Validate());
+        Reject(()=>new RunbookResult("completed",0,new string('x',RunbookResult.MaxStdout+1),"","").Validate());
         var directory=Path.Combine(Path.GetTempPath(),"remoteassist-release-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
         try
         {

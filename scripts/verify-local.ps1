@@ -28,12 +28,12 @@ try{
     Invoke-Check 'go-tests' 'go' @('test','./...') (Join-Path $root 'server/signaling')
     Invoke-Check 'go-vet' 'go' @('vet','./...') (Join-Path $root 'server/signaling')
     Invoke-Check 'viewer-tests' 'node' @('--test','web/viewer/tests/*.test.js') $root
-    Invoke-Check 'installer-contract' 'powershell.exe' @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','tests/e2e/installer-contract.ps1') $root
+    Invoke-Check 'installer-contract' 'powershell.exe' @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','tests/installer-contract.ps1') $root
     if($Race){Invoke-Check 'go-race' 'go' @('test','-race','./...') (Join-Path $root 'server/signaling') 600}
     if($Native){Invoke-Check 'encoders' 'dotnet' @('run','--project','tools/RemoteAssist.HostRun','--no-build','--','--encoder-check','--out',(Join-Path $Output 'encoders')) $root;Invoke-Check 'native-media' 'dotnet' @('run','--project','tools/RemoteAssist.MediaProbe','--no-build') $root}
     $complete=$true
 }finally{
     $sha=(& git -C $root rev-parse HEAD|Out-String).Trim();$dirty=(& git -C $root status --porcelain|Out-String).Trim().Length-gt0
-    [IO.File]::WriteAllText((Join-Path $Output 'result.json'),(@{utc=[DateTimeOffset]::UtcNow.ToString('o');commit=$sha;dirty=$dirty;status=$(if($complete){'PASS'}else{'FAIL'});checks=@($results.ToArray());excluded='interactive UI/UAC, signed installer, TURN/NAT, long-load and two physical PC acceptance'}|ConvertTo-Json -Depth 8),$utf8)
+    [IO.File]::WriteAllText((Join-Path $Output 'result.json'),(@{utc=[DateTimeOffset]::UtcNow.ToString('o');commit=$sha;dirty=$dirty;status=$(if($complete){'PASS'}else{'FAIL'});checks=@($results.ToArray());excluded='interactive UI/UAC, signed installer, long-load and two physical PC acceptance'}|ConvertTo-Json -Depth 8),$utf8)
 }
 Write-Output ('Local verification evidence: '+$Output)

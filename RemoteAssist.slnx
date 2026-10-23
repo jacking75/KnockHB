@@ -5,7 +5,6 @@
     <Project Path="src/RemoteAssist.Host.AdminHelper/RemoteAssist.Host.AdminHelper.csproj" />
     <Project Path="src/RemoteAssist.Host.Core/RemoteAssist.Host.Core.csproj" />
     <Project Path="src/RemoteAssist.Host.Helper/RemoteAssist.Host.Helper.csproj" />
-    <Project Path="src/RemoteAssist.Host.Recovery/RemoteAssist.Host.Recovery.csproj" />
     <Project Path="src/RemoteAssist.Host.Service/RemoteAssist.Host.Service.csproj" />
     <Project Path="src/RemoteAssist.Host.Tray/RemoteAssist.Host.Tray.csproj" />
     <Project Path="src/RemoteAssist.Protocol/RemoteAssist.Protocol.csproj" />

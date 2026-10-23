@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { permissionMask,featureChannels,FeatureSession,textHash,validateSnapshot } from '../features.js';
+import { PERMISSIONS,CHANNELS,FeatureSession,textHash,validateSnapshot } from '../features.js';
 import { ViewerConnection } from '../connection.js';
 import {readFileSync} from 'node:fs';
-test('shared C#/Go/JS permission and channel contract',()=>{for(const fixture of JSON.parse(readFileSync(new URL('../../../tests/fixtures/features.json',import.meta.url),'utf8'))){assert.equal(permissionMask(fixture.permissions),fixture.mask);assert.deepEqual(featureChannels(fixture.permissions),fixture.channels);}});
+test('shared C#/JS full permission and channel contract',()=>{const fixture=JSON.parse(readFileSync(new URL('../../../tests/fixtures/features.json',import.meta.url),'utf8'));assert.deepEqual([...PERMISSIONS],fixture.permissions);assert.deepEqual([...CHANNELS],fixture.channels);});
 const id='0123456789abcdef0123456789abcdef';
 function session(permissions=['clipboard']) {
   const received=[],sent=[],ended=[];
@@ -12,15 +12,6 @@ function session(permissions=['clipboard']) {
   return {features:new FeatureSession(connection),connection,received,sent,ended};
 }
 function envelope(t,seq=1){return {v:1,t,sessionId:'sid',generation:1,permissionGeneration:1,id,seq};}
-test('feature permissions stay canonical and diagnostics ready contains no monitor',()=>{
-  for(const p of [[],['unknown'],['chat','screen'],['control'],['screen','admin'],['clipboard','clipboard']])assert.throws(()=>permissionMask(p));
-  assert.deepEqual(featureChannels(['diagnostics']),['control','telemetry']);assert.deepEqual(featureChannels(['clipboard','chat']),['control','chat']);
-  const socket={readyState:0,close(){},send(){}},viewer=new ViewerConnection({base:'http://localhost:25001',createSocket:()=>socket,setTimer:()=>1,clearTimer(){}});
-  viewer.sessionId='sid';viewer.permissionGeneration=1;viewer.permissions=['diagnostics'];
-  const channel={label:'control',ordered:true,maxRetransmits:null,maxPacketLifeTime:null,readyState:'open',bufferedAmount:0,send(){},close(){}};
-  viewer.acceptChannel(channel);channel.onmessage({data:JSON.stringify({...envelope('data-ready'),permissions:['diagnostics'],channels:['control','telemetry']})});
-  assert.equal(viewer.closed,false);assert.equal(viewer.monitor,null);assert.equal(viewer.canControl(),false);viewer.end();
-});
 test('clipboard responses require the exact pending direction and SHA256 before exposing text',async()=>{
   const s=session();s.features.pending.set(id,{action:'get',at:0});const text='한글😀';
   await assert.rejects(()=>s.features.receive('chat',{...envelope('clipboard-text'),text,hash:'0'.repeat(64)}));assert.equal(s.received.length,0);

@@ -1,14 +1,12 @@
-const permissionNames=Object.freeze(['screen','control','admin','file','clipboard','diagnostics','runbook','chat']);
+// 지원자는 항상 전 권한을 받는다. Host가 data-ready로 같은 목록을 보낸다.
+export const PERMISSIONS=Object.freeze(['screen','control','admin','file','clipboard','diagnostics','runbook','chat']);
+export const CHANNELS=Object.freeze(['control','input','pointer','file','chat','telemetry','runbook']);
 const guid=/^[a-f0-9]{32}$/;
-export function permissionMask(permissions) {
-  if(!Array.isArray(permissions)||!permissions.length||permissions.length>8)throw Error('승인 권한 목록 오류다.');
-  let mask=0,last=-1;
-  for(const name of permissions){const index=permissionNames.indexOf(name);if(index<=last)throw Error('미지·중복·순서 오류 권한이다.');last=index;mask|=1<<index;}
-  if((mask&2)&&!(mask&1)||(mask&4)&&(mask&3)!==3)throw Error('승인 의존성 오류다.');return mask;
-}
-export function featureChannels(permissions) {
-  const mask=permissionMask(permissions),result=['control'];
-  if(mask&2)result.push('input','pointer');if(mask&8)result.push('file');if(mask&144)result.push('chat');if(mask&32)result.push('telemetry');if(mask&64)result.push('runbook');return result;
+/** 보안 컨텍스트가 아니어도 동작하는 GUID(N) 생성. */
+export function randomId() {
+  if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID().replaceAll('-','');
+  const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=bytes[6]&0x0f|0x40;bytes[8]=bytes[8]&0x3f|0x80;
+  return [...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 export function validText(text,max=4096,bytes=32768) {
   return typeof text==='string'&&text.length<=max&&!text.includes('\0')&&text.isWellFormed()&&new TextEncoder().encode(text).length<=bytes;
@@ -42,7 +40,7 @@ export class FeatureSession {
   allowed(permission){const c=this.connection;return c.live()&&!c.recovering&&(c.generation??1)===this.generation&&c.dataReady&&c.permissions?.includes(permission);}
   ready(permission){return this.allowed(permission)&&this.connection.channels.get(permission==='diagnostics'?'telemetry':'chat')?.readyState==='open';}
   quota(type,max){const now=this.connection.now(),old=this.quotas.get(type);if(!old||now-old.start>=1000){this.quotas.set(type,{start:now,count:1});return true;}if(old.count>=max)return false;old.count++;return true;}
-  send(t,fields={},id=globalThis.crypto.randomUUID().replaceAll('-','')) {
+  send(t,fields={},id=randomId()) {
     const permission=t==='chat'?'chat':'clipboard',c=this.connection,ch=c.channels.get('chat');
     if(!this.ready(permission)||!guid.test(id))return false;
     if(!this.quota(permission,permission==='chat'?5:2)){c.onData({t:'feature-status',text:'요청 빈도를 줄여야 한다.'});return false;}
@@ -53,7 +51,7 @@ export class FeatureSession {
   chat(text){return validText(text)&&text.length>0&&this.send('chat',{text});}
   async clipboard(action,text='') {
     if(!this.ready('clipboard')||!['get','set'].includes(action)||this.pending.size>=16||!validText(text,8192,16384))return false;
-    const c=this.connection,id=globalThis.crypto.randomUUID().replaceAll('-',''),hash=action==='set'?await textHash(text):undefined;
+    const c=this.connection,id=randomId(),hash=action==='set'?await textHash(text):undefined;
     if(!this.ready('clipboard')||this.pending.size>=16)return false;
     this.pending.set(id,{action,hash,at:c.now()});
     if(!this.send(`clipboard-${action}`,action==='set'?{text,hash}:{},id)){this.pending.delete(id);return false;}return true;

@@ -5,15 +5,7 @@ using RemoteAssist.Protocol;
 namespace RemoteAssist.Host.Core.Security;
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record AdminConfiguration(AdminApproval Approval,uint WindowsSessionId,string UserSid,MonitorDescriptor Monitor,string Mapping,int TargetFps,int MaxLongEdge,int MaxShortEdge,bool InitialSupport=false)
-{
-    public void ValidateLifetime(DateTimeOffset now)
-    {
-        var maximum=InitialSupport?TimeSpan.FromHours(8):TimeSpan.FromMinutes(2);
-        if(Approval is null||Approval.ExpiresAt<=now||Approval.ExpiresAt-now>maximum)
-            throw new UnauthorizedAccessException("관리자 허가가 만료됐거나 허용된 실행 시간을 초과했다.");
-    }
-}
+public sealed record AdminConfiguration(AdminApproval Approval,uint WindowsSessionId,string UserSid,MonitorDescriptor Monitor,string Mapping,int TargetFps,int MaxLongEdge,int MaxShortEdge);
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record AdminInputBatch(long AdminGeneration,InputStroke[] Strokes);
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

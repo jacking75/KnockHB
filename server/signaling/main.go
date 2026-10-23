@@ -64,7 +64,7 @@ func run() int {
 	listenResult := make(chan error, 1)
 	go func() {
 		log.Info("시그널링 시작", "addr", config.addr, "mode", config.mode)
-		if config.mode == "production" || config.mode == "lan-test" {
+		if config.mode != "development" {
 			listenResult <- httpServer.ListenAndServeTLS(config.cert, config.key)
 		} else {
 			listenResult <- httpServer.ListenAndServe()
@@ -91,6 +91,13 @@ func run() int {
 	log.Info("시그널링 종료")
 	return 0
 }
+
+// loadSettings reads the environment. Modes:
+//   - development: loopback only, plain HTTP.
+//   - lan: trusted private network, TLS (a self-signed certificate is fine; the Host pins it).
+//   - production: TLS.
+//
+// Operator credential and audit directory are optional in every mode.
 func loadSettings() (settings, error) {
 	out := settings{mode: env("RA_MODE", "development"), addr: env("RA_LISTEN", "127.0.0.1:25001"), cert: os.Getenv("RA_TLS_CERT"), key: os.Getenv("RA_TLS_KEY"), viewer: os.Getenv("RA_VIEWER_DIR")}
 	host, portText, err := net.SplitHostPort(out.addr)
@@ -101,13 +108,22 @@ func loadSettings() (settings, error) {
 	if err != nil || port < 25001 || port > 25199 {
 		return out, errors.New("TCP listener는 25001~25199여야 한다")
 	}
-	if out.mode != "development" && out.mode != "production" && out.mode != "lan-test" {
-		return out, errors.New("RA_MODE는 development, lan-test 또는 production이어야 한다")
+	if out.mode != "development" && out.mode != "lan" && out.mode != "production" {
+		return out, errors.New("RA_MODE는 development, lan 또는 production이어야 한다")
 	}
-	if out.mode == "development" {
-		ip := net.ParseIP(host)
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return out, errors.New("개발 평문 서버는 loopback에서만 실행한다")
+	ip := net.ParseIP(host)
+	if out.mode == "development" && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return out, errors.New("개발 평문 서버는 loopback에서만 실행한다")
+	}
+	if out.mode == "lan" && (ip == nil || !(ip.IsPrivate() || ip.IsUnspecified())) {
+		return out, errors.New("lan 모드는 사설 IP 또는 0.0.0.0에서만 실행한다")
+	}
+	if out.mode != "development" {
+		if out.cert == "" || out.key == "" {
+			return out, errors.New("TLS 인증서와 키가 필요하다")
+		}
+		if _, err := tls.LoadX509KeyPair(out.cert, out.key); err != nil {
+			return out, errors.New("TLS 인증서/키 검사 실패")
 		}
 	}
 	ttl, err := time.ParseDuration(env("RA_SESSION_TTL", "10m"))
@@ -116,66 +132,19 @@ func loadSettings() (settings, error) {
 	}
 	out.cfg.SessionTTL = ttl
 	out.cfg.OriginPatterns = envList("RA_ALLOWED_ORIGINS")
-	if out.mode == "lan-test" {
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsPrivate() || len(out.cfg.OriginPatterns) != 1 || out.cfg.OriginPatterns[0] != out.addr {
-			return out, errors.New("LAN 시험은 사설 IP와 정확히 일치하는 단일 Viewer origin이 필요하다")
-		}
-	}
 	for _, origin := range out.cfg.OriginPatterns {
 		if strings.Contains(origin, "*") {
 			return out, errors.New("Origin wildcard는 허용하지 않는다")
 		}
 	}
-	// Peers reach each other directly by their designated IPs, so no STUN/TURN is needed by default.
-	if _, set := os.LookupEnv("RA_STUN_URLS"); set {
-		out.cfg.STUNURLs = envList("RA_STUN_URLS")
-	}
-	for _, url := range out.cfg.STUNURLs {
-		if !strings.HasPrefix(url, "stun:") && !strings.HasPrefix(url, "stuns:") {
-			return out, errors.New("STUN URL scheme 오류")
-		}
-	}
-	out.cfg.TURNURLs = envList("RA_TURN_URLS")
 	out.cfg.OperatorSecretFile = os.Getenv("RA_OPERATOR_SECRET_FILE")
+	if out.cfg.OperatorSecretFile != "" && signaling.ReadSecretFile(out.cfg.OperatorSecretFile) == "" {
+		return out, errors.New("운영 node credential 검사 실패")
+	}
 	out.cfg.AuditDirectory = os.Getenv("RA_AUDIT_DIR")
-	for _, url := range out.cfg.TURNURLs {
-		if !strings.HasPrefix(url, "turn:") && !strings.HasPrefix(url, "turns:") {
-			return out, errors.New("TURN URL scheme 오류")
-		}
-	}
-	if secretPath := os.Getenv("RA_TURN_SECRET_FILE"); secretPath != "" {
-		out.cfg.TURNSecretFile = secretPath
-		secret := signaling.ReadSecretFile(secretPath)
-		if secret == "" {
-			return out, errors.New("TURN secret 파일을 읽을 수 없다")
-		}
-		out.cfg.TURNSecret = secret
-		if len(out.cfg.TURNSecret) < 32 {
-			return out, errors.New("TURN secret은 최소 32바이트여야 한다")
-		}
-	}
-	if out.mode == "production" || out.mode == "lan-test" {
-		if out.cfg.OperatorSecretFile == "" || out.cfg.AuditDirectory == "" {
-			return out, errors.New("운영 node credential과 감사 디렉터리가 필요하다")
-		}
-		if signaling.ReadSecretFile(out.cfg.OperatorSecretFile) == "" {
-			return out, errors.New("운영 node credential 검사 실패")
-		}
+	if out.cfg.AuditDirectory != "" {
 		if _, err := signaling.OpenAuditStore(out.cfg.AuditDirectory); err != nil {
-			return out, errors.New("운영 감사 저장소 검사 실패")
-		}
-		if out.cert == "" || out.key == "" {
-			return out, errors.New("운영 TLS 인증서와 키가 필요하다")
-		}
-		if _, err := tls.LoadX509KeyPair(out.cert, out.key); err != nil {
-			return out, errors.New("운영 TLS 인증서/키 검사 실패")
-		}
-		if out.mode == "lan-test" && (len(out.cfg.TURNURLs) == 0) != (len(out.cfg.TURNSecret) == 0) {
-			return out, errors.New("LAN TURN 설정은 URL과 secret을 함께 지정해야 한다")
-		}
-		if out.viewer == "" {
-			return out, errors.New("운영 Viewer 디렉터리가 필요하다")
+			return out, errors.New("감사 저장소 검사 실패")
 		}
 	}
 	if out.viewer != "" {

@@ -15,8 +15,6 @@ services:
       RA_TLS_CERT: /private/tls/cert.pem
       RA_TLS_KEY: /private/tls/key.pem
       RA_ALLOWED_ORIGINS: ${RA_ALLOWED_ORIGINS:?set exact Viewer origin}
-      RA_TURN_URLS: ${RA_TURN_URLS:?set authenticated turn and turns URLs}
-      RA_TURN_SECRET_FILE: /private/turn.secret
       RA_OPERATOR_SECRET_FILE: /private/node.secret
       RA_AUDIT_DIR: /audit
     volumes:

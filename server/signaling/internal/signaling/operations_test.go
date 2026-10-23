@@ -97,22 +97,6 @@ func TestAuditAuthSchemaAndReadiness(t *testing.T) {
 		t.Fatal("storage failure ready")
 	}
 }
-func TestTURNRotationAndMissingFileFailClosed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "turn.key")
-	os.WriteFile(path, []byte(strings.Repeat("a", 32)), 0600)
-	s := New(Config{TURNSecretFile: path, TURNURLs: []string{"turn:relay.invalid:25002?transport=tcp"}}, nil)
-	now := time.Unix(1000, 0)
-	first := s.iceServers("sid", "peer", now)
-	os.WriteFile(path, []byte(strings.Repeat("b", 32)), 0600)
-	second := s.iceServers("sid", "peer", now)
-	if first[0].Credential == second[0].Credential {
-		t.Fatal("rotation cached old key")
-	}
-	os.Remove(path)
-	if len(s.iceServers("sid", "peer", now)) != 0 {
-		t.Fatal("missing key fell back")
-	}
-}
 func TestBoundedHundredRoomsShutdown(t *testing.T) { runPool(t, time.Second) }
 func TestLongLoad(t *testing.T) {
 	seconds, err := strconv.Atoi(os.Getenv("RA_LONG_LOAD_SECONDS"))

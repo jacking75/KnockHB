@@ -17,9 +17,8 @@
 | 영역 | 선택 | 근거 |
 |---|---|---|
 | Host — 캡처·인코딩·입력·데스크톱 전환 | **C# / .NET 10** | WinRT(`Windows.Graphics.Capture`)를 CsWinRT로, DXGI/D3D11 COM을 `Vortice.Windows`로 바로 다룬다. `SendInput`·`OpenInputDesktop` P/Invoke, Windows 서비스 호스팅, Named Pipe가 모두 표준 제공. Go면 COM vtable을 손으로 짜거나 cgo 셰임이 필요해 **가장 어려운 부분이 더 어려워진다** |
-| Host UI — 트레이·동의 창 | **C# / WPF** | Windows 데스크톱 UI 성숙도. Host 본체와 같은 언어라 IPC 계약을 공유하기 쉽다 |
+| Host UI — 트레이·상태 창 | **C# / WPF** | Windows 데스크톱 UI 성숙도. Host 본체와 같은 언어라 IPC 계약을 공유하기 쉽다 |
 | 시그널링 서버 | **Go** | 하는 일이 "다수 WebSocket을 오래 붙들고 릴레이"뿐. goroutine 동시성, 단일 정적 바이너리, 작은 컨테이너 이미지가 그대로 이점 |
-| TURN | **coturn** | 언어 무관. 직접 구현하지 않는다 |
 | Viewer | **웹 (바닐라 JS)** | 브라우저 내장 WebRTC. 지원자 측 설치 불필요가 최대 도입 이점 |
 
 **두 언어를 쓰는 대가.** 공유 DTO를 코드로 나눌 수 없다. 와이어 포맷의 기준은 코드가 아니라
@@ -35,7 +34,7 @@
 | .NET SDK | **10.0.400** | `Microsoft.WindowsDesktop.App 10.0.11` 동반 확인 (WPF 필요) |
 | Go | **1.27.0** windows/amd64 | |
 | Node.js / npm | **24.18.0** / 11.16.0 | 웹 뷰어용 |
-| Docker | **29.0.1** | coturn·시그널링 컨테이너용 |
+| Docker | **29.0.1** | 시그널링 컨테이너용 |
 | Git | 2.52.0.windows.1 | |
 
 > **미완료:** 테스트 머신 2대(대상 PC / 지원자 PC). LAN P2P·서비스 설치 검증에 필요하다. VM 2대로 대체 가능.
@@ -128,8 +127,9 @@
 | 용도 | 포트 |
 |---|---|
 | 시그널링 서버 (HTTP/WebSocket) | TCP **25001** |
-| coturn STUN/TURN listening | UDP **27001** |
-| coturn 릴레이 포트 범위 | UDP **27100~27199** |
+| Host WebRTC (직접 P2P, host 후보만) | UDP **27002~27099** |
+
+STUN/TURN 서버는 쓰지 않는다. 두 PC는 지정 IP로 항상 직접 연결된다.
 
 ---
 

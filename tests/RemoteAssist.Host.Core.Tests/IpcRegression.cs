@@ -7,16 +7,6 @@ internal static class IpcRegression
 {
     internal static async Task Run()
     {
-        var mark=LocalStopMark.Create();
-        var stop=new LocalIpcMessage {Type="stop",Sequence=1,Body=RemoteAssist.Protocol.ProtocolJson.Element(new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=mark.Frequency})};
-        Require(LocalStopMark.Read(stop)==mark,"local monotonic stop mark lost");
-        foreach(var body in new object?[]{null,"한글",new {requestId="bad",requestedTick=mark.RequestedTick,frequency=mark.Frequency},new {requestId=mark.RequestId,requestedTick=long.MaxValue,frequency=mark.Frequency},new {requestId=mark.RequestId,requestedTick=mark.RequestedTick,frequency=1},new {requestId=mark.RequestId,requestedTick="oops",frequency=mark.Frequency}})
-        {
-            var diagnostic=new LocalIpcMessage {Type="stop",Sequence=1,Body=body is null?null:RemoteAssist.Protocol.ProtocolJson.Element(body)};
-            // Malformed diagnostics remain a stop envelope; they cannot suppress revocation.
-            var parsed=LocalIpcMessage.Parse(RemoteAssist.Protocol.ProtocolJson.Encode(diagnostic));
-            Require(parsed.Type=="stop"&&LocalStopMark.Read(parsed) is null,"invalid metric acquired authority or blocked stop");
-        }
         foreach(var text in new[]{"{\"v\":1,\"t\":\"heartbeat\",\"seq\":1,\"seq\":2}","{\"v\":1,\"t\":\"heartbeat\",\"seq\":1,\"extra\":0}","{\"v\":1,\"t\":\"launch-arbitrary\",\"seq\":1}","{\"v\":1,\"t\":\"start\",\"seq\":1,\"nonce\":\"not-hello\"}"})
             await Reject(()=>Task.FromResult(LocalIpcMessage.Parse(Encoding.UTF8.GetBytes(text))));
         var message=Frame("{\"v\":1,\"t\":\"state\",\"seq\":1,\"id\":\"test\",\"body\":\"한글 😀\"}");

@@ -1,4 +1,4 @@
-import { permissionMask, featureChannels, FeatureSession } from './features.js';
+import { PERMISSIONS, CHANNELS, FeatureSession, randomId } from './features.js';
 import { FileSession } from './files.js';
 import { RunbookSession } from './runbooks.js';
 // Each attempt owns its socket, peer connection, timers and pending ICE.
@@ -26,24 +26,23 @@ function parseEnvelope(text, maxBytes, typeField) {
 }
 export function parseSignal(text){
   const message=parseEnvelope(text,128*1024,'type');
-  const fields=['v','type','sessionId','connectionId','generation','permissionGeneration','permissions','displayName','iceServers','room','role','token','sdp','ice','peerPresent','code','reason'];
+  const fields=['v','type','sessionId','connectionId','generation','displayName','room','role','token','sdp','ice','peerPresent','code','reason'];
   if(Object.keys(message).some(k=>!fields.includes(k)))throw Error('미등록 시그널링 필드다.');
   if(message.ice!==undefined){const ice=message.ice;if(!ice||Object.keys(ice).some(k=>!['candidate','sdpMid','sdpMLineIndex'].includes(k))||typeof ice.candidate!=='string'||ice.candidate.length>8192||ice.sdpMid!=null&&(typeof ice.sdpMid!=='string'||ice.sdpMid.length>256)||ice.sdpMLineIndex!=null&&(!Number.isInteger(ice.sdpMLineIndex)||ice.sdpMLineIndex<0||ice.sdpMLineIndex>65535))throw Error('ICE 필드 오류다.');}
-  if(message.iceServers!==undefined)validateIceServers(message.iceServers);
   return message;
 }
 export const parseData = text => parseEnvelope(text, 32 * 1024, 't');
-function validateIceServers(servers){
-  if(!Array.isArray(servers)||servers.length>8)throw Error('ICE server 상한이다.');
-  for(const s of servers)if(!s||Object.keys(s).some(k=>!['urls','username','credential'].includes(k))||!Array.isArray(s.urls)||s.urls.length<1||s.urls.length>8||s.urls.some(u=>typeof u!=='string'||u.length>1024||!/^(stun|stuns|turn|turns):[^\s]+$/.test(u))||s.username!==undefined&&(typeof s.username!=='string'||s.username.length>256)||s.credential!==undefined&&(typeof s.credential!=='string'||s.credential.length>256))throw Error('ICE server 오류다.');return servers;
-}
 
 export function describeError(message) {
-  return ({ 'not-found': '없는 세션 코드다.', 'expired': '세션이 만료됐다. 새 코드를 요청해야 한다.',
+  return ({ 'not-found': '대상 PC가 아직 지원 대기 중이 아니다.', 'expired': '세션이 만료됐다.',
     'slot-taken': '이미 다른 지원자가 접속했다.',
     'consumed': '대상 PC가 연결을 다시 준비하는 중이다.',
+    'busy': '이전 지원자 연결을 정리하는 중이다.',
+    'replaced': '다른 지원자 화면이 이 PC 접속을 이어받았다.',
     'capacity': '서버 접속 상한에 도달했다.' })[message.code] || '접속 요청이 거부됐다.';
 }
+/** 다시 접속해도 되는 오류다. 'replaced'는 다른 지원자 화면이 이어받은 것이므로 다시 접속하지 않는다. */
+export const retryable = code => code !== 'replaced';
 
 export class ViewerConnection {
   constructor({ base, code, displayName, createSocket = url => new WebSocket(url),
@@ -61,9 +60,10 @@ export class ViewerConnection {
     this.supersededResets=new Map();
     this.setTimer = setTimer; this.clearTimer = clearTimer; this.now = now;
     this.pc = null; this.pendingIce = []; this.closed = false; this.reason = null;
-    this.iceServers = [];
-    this.messageChain = Promise.resolve(); this.timers = []; this.granted = false; this.queuedMessages = 0;
-    this.lastSeen = now(); this.startedAt = now(); this.prePeerDeadline = this.startedAt + 60000; this.consentPendingAt = null; this.remoteReady = false;
+    this.messageChain = Promise.resolve(); this.timers = []; this.queuedMessages = 0;
+    // 지원자는 상호 신뢰 관계라 접속하면 항상 전 권한을 받는다.
+    this.permissions = [...PERMISSIONS]; this.permissionGeneration = 1; this.errorCode = null;
+    this.lastSeen = now(); this.startedAt = now(); this.prePeerDeadline = this.startedAt + 20000; this.remoteReady = false;
     this.ws = createSocket(base.replace(/^http/, 'ws') + '/ws');
     const socket = this.ws;
     socket.onopen = () => {
@@ -80,7 +80,7 @@ export class ViewerConnection {
         // Termination and lease replies must not wait behind pending SDP work.
         if (message.type === 'ping') { this.send({ type: 'pong' }); return; }
         if (message.type === 'pong') return;
-        if (message.type === 'error') { this.end(describeError(message), true); return; }
+        if (message.type === 'error') { this.errorCode = message.code ?? null; this.end(describeError(message), true); return; }
         if (message.type === 'peer-left' || message.type === 'bye') { this.end('대상 PC와의 연결이 종료됐다.'); return; }
         if (this.queuedMessages >= 128) throw Error('시그널링 처리 큐 상한이다.');
         this.queuedMessages++;
@@ -92,7 +92,7 @@ export class ViewerConnection {
     this.timers.push(setTimer(() => {
       if (!this.live()) return;
       if (now() - this.lastSeen >= 15000) this.end('시그널링 생존 확인 시간 초과다.', true);
-      else if (!this.pc && now() >= this.prePeerDeadline) this.end('참가 또는 동의 대기 시간 초과다.', true);
+      else if (!this.pc && now() >= this.prePeerDeadline) this.end('대상 PC의 연결 제안 대기 시간 초과다.', true);
       else if (socket.readyState === 1) this.send({ type: 'ping' });
     }, 5000));
     onState('대상 PC에 접속하는 중이다.');
@@ -109,26 +109,8 @@ export class ViewerConnection {
       case 'joined':
         if (this.sessionId || !message.sessionId || !message.connectionId || message.role!==undefined&&message.role!=='viewer') throw Error('잘못된 ACK다.');
         this.sessionId = message.sessionId; this.connectionId = message.connectionId;
-        if (message.iceServers !== undefined) {
-          if (!Array.isArray(message.iceServers) || message.iceServers.length > 8) throw Error('ICE server 상한이다.');
-          for (const server of message.iceServers) {
-            if (!Array.isArray(server.urls) || server.urls.length > 8 || server.urls.some(url => typeof url !== 'string' || !/^(stun|stuns|turn|turns):/.test(url))) throw Error('잘못된 ICE server다.');
-          }
-          this.iceServers = message.iceServers;
-        }
-        this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
-      case 'peer-joined': this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
-      case 'consent-pending':
-        if (this.consentPendingAt === null && !this.granted) {
-          this.consentPendingAt = this.now(); this.prePeerDeadline = this.consentPendingAt + 125000;
-        }
-        this.onState('대상자의 명시적 동의를 기다리는 중이다.'); break;
-      case 'consent':
-        if (!Array.isArray(message.permissions) || !Number.isSafeInteger(message.permissionGeneration) || message.permissionGeneration < 1) throw Error('잘못된 승인 통지다.');
-        if(this.granted||(permissionMask(message.permissions)&~255)!==0)throw Error('중복 또는 미지원 승인 통지다.');
-        this.granted = true; this.prePeerDeadline = this.now() + 10000; this.permissionGeneration = message.permissionGeneration; this.permissions = [...message.permissions];
-        this.onState('대상자가 승인한 기능을 연결하는 중이다.'); break;
-      case 'consent-denied': this.end('대상자가 동의를 거절했다.'); break;
+        this.onState('대상 PC에 연결하는 중이다.'); break;
+      case 'peer-joined': this.onState('대상 PC에 연결하는 중이다.'); break;
       case 'ice':
         if (!message.ice || typeof message.ice.candidate !== 'string' || message.ice.candidate.length > 8192) throw Error('잘못된 ICE다.');
         if (!this.remoteReady) {
@@ -136,7 +118,6 @@ export class ViewerConnection {
           this.pendingIce.push(message.ice);
         } else await this.pc.addIceCandidate(message.ice);
         break;
-      case 'turn-credentials': this.iceServers=validateIceServers(message.iceServers??[]); break;
       case 'offer': await this.offer(message.sdp,message.generation??1); break;
       default: throw Error('알 수 없는 메시지다.');
     }
@@ -144,14 +125,15 @@ export class ViewerConnection {
   async offer(sdp,generation=1) {
     if(this.pc&&generation===this.generation+1){this.generation=generation;this.clearTransport();}
     else if(generation!==this.generation)throw Error('협상 세대 오류다.');
-    if (this.pc || !this.granted || typeof sdp !== 'string' || sdp.length > 96 * 1024) throw Error('승인 없는/중복 offer다.');
-    const pc = this.createPeer({ iceServers: this.iceServers, iceTransportPolicy: 'all' }); this.pc = pc; this.negotiatedAt = this.now();
+    if (this.pc || typeof sdp !== 'string' || sdp.length > 96 * 1024) throw Error('중복 또는 잘못된 offer다.');
+    // Direct connection to the designated host address: no STUN/TURN servers.
+    const pc = this.createPeer({ iceServers: [], iceTransportPolicy: 'all' }); this.pc = pc; this.negotiatedAt = this.now();
     // SDP promises can themselves stall. This deadline must exist before awaiting them.
     this.timers.push(this.setTimer(() => {
       if (this.live() && this.pc===pc && this.now() - this.negotiatedAt >= 30000 && pc.connectionState !== 'connected')
         this.end('WebRTC 협상 시간 초과다.', true);
     }, 1000));
-    pc.ontrack = event => { if (this.live() && this.pc === pc) {if(!this.permissions.includes('screen'))this.end('승인하지 않은 화면 트랙이다.',true);else this.onTrack(event);} };
+    pc.ontrack = event => { if (this.live() && this.pc === pc) this.onTrack(event); };
     pc.ondatachannel = event => { if (this.live() && this.pc === pc) this.acceptChannel(event.channel); else event.channel.close(); };
     pc.onicecandidate = event => {
       if (this.live() && this.pc === pc && event.candidate?.candidate)
@@ -175,7 +157,7 @@ export class ViewerConnection {
     let busy = false; let lastBytes = 0; let lastTime = 0;let lastLost=0,lastPackets=0,lastDecoded=0,lastDecodeTime=0,lastVideoAt=this.now(),watchVideo=false;
     this.timers.push(this.setTimer(()=>{
       if(!this.live()||this.pc!==pc)return;
-      const enabled=this.dataReady&&this.permissions.includes('screen')&&pc.connectionState==='connected'&&!this.recovering&&this.localApprovalKind!=='monitor'&&!this.adminRequestId;
+      const enabled=this.dataReady&&this.permissions.includes('screen')&&pc.connectionState==='connected'&&!this.recovering&&!this.adminRequestId;
       if(!enabled||!watchVideo)lastVideoAt=this.now();watchVideo=enabled;
       if(enabled&&this.now()-lastVideoAt>=15000)this.end('영상 디코딩 진행이 멈춰 지원 세션을 종료한다.',true);
     },500));
@@ -202,18 +184,18 @@ export class ViewerConnection {
           if (entry.type === 'transport' && entry.selectedCandidatePairId) {
             const pair = report.get(entry.selectedCandidatePairId);
             const local = report.get(pair?.localCandidateId); const remote = report.get(pair?.remoteCandidateId);
-            if (local && remote) line.push(local.candidateType === 'relay' || remote.candidateType === 'relay' ? '경로: Relay' : '경로: P2P');
+            if (local && remote) line.push(`경로: ${remote.address ?? remote.ip ?? '대상'}:${remote.port ?? ''}`);
             if(Number.isFinite(pair?.currentRoundTripTime))rtt=pair.currentRoundTripTime*1000;
           }
         }
         this.onStats(line.join(' · '));
-        if(sample&&rtt!==null&&this.dataReady&&this.permissions.includes('screen')&&pc.connectionState==='connected'){sample.rttMs=Math.min(10000,rtt);sample.decodeMs=Math.min(10000,sample.decodeMs);this.controlCommand('quality-report',{sample},crypto.randomUUID().replaceAll('-',''));}
+        if(sample&&rtt!==null&&this.dataReady&&this.permissions.includes('screen')&&pc.connectionState==='connected'){sample.rttMs=Math.min(10000,rtt);sample.decodeMs=Math.min(10000,sample.decodeMs);this.controlCommand('quality-report',{sample},randomId());}
       } catch { if (this.live()&&this.pc===pc) this.onStats('통계 조회 실패다.'); }
       finally { busy = false; }
     }, 1000));
   }
   acceptChannel(channel) {
-    if (!(featureChannels(this.permissions).includes(channel.label)) || this.channels.has(channel.label) || channel.ordered !== true
+    if (!CHANNELS.includes(channel.label) || this.channels.has(channel.label) || channel.ordered !== true
         || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) { channel.close(); this.end('미지원 또는 중복 기능 채널이다.', true); return; }
     this.channels.set(channel.label, channel);
     channel.onclose = () => { if (this.live()&&this.channels.get(channel.label)===channel&&!this.recovering) this.end('기능 채널이 종료됐다.', true); };
@@ -249,10 +231,10 @@ export class ViewerConnection {
             || !Number.isSafeInteger(message.seq) || message.seq !== this.dataReceived + 1 || typeof message.id !== 'string' || message.id.length < 1 || message.id.length > 64)
           throw Error('다른 기능 채널 바인딩이다.');
         this.dataReceived = message.seq;
-        const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'monitor-list'?['monitors']:message.t==='monitor-state'?['monitor']:message.t==='quality-state'?['quality']:message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : message.t==='local-approval'?['kind','state','inputEpoch']:[])];
+        const allowed = ['v','t','sessionId','generation','permissionGeneration','id','seq', ...(message.t === 'monitor-list'?['monitors']:message.t==='monitor-state'?['monitor','inputEpoch']:message.t==='quality-state'?['quality']:message.t === 'data-ready' ? ['channels','permissions','monitor'] : message.t === 'input-reset-ack' ? ['inputEpoch'] : message.t === 'admin-state' ? ['state','adminGeneration','inputEpoch'] : [])];
         if (Object.keys(message).some(key => !allowed.includes(key))) throw Error('알 수 없는 제어 필드다.');
         if (message.t === 'data-ready') {
-          if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(featureChannels(this.permissions))
+          if (this.dataReady || JSON.stringify(message.channels) !== JSON.stringify(CHANNELS)
               || JSON.stringify(message.permissions) !== JSON.stringify(this.permissions)) throw Error('기능 채널 준비 오류다.');
           const m = message.monitor;
           if (this.permissions.includes('screen')?(!m || typeof m.identity !== 'string' || m.identity.length < 1 || m.identity.length > 128 || (!Number.isSafeInteger(m.topologyGeneration)||m.topologyGeneration<1)
@@ -264,23 +246,16 @@ export class ViewerConnection {
             if (!this.live()||this.channels.get('control')!==channel) return;
             if(this.recovering){if(this.now()-this.recoverAt>=30000)this.end('연결 복구 시간 초과다.',true);return;}
             this.features.expire();this.files.expire();this.runbooks.expire();if(!this.live())return;
-            if (this.pendingReset && !this.localApprovalId && !this.adminRequestId && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
+            if (this.pendingReset && !this.adminRequestId && this.now() - this.pendingReset.at >= 1000) this.end('입력 해제 응답 시간 초과다.', true);
             else if (this.now() - this.lastPong >= 2000) this.end('기능 채널 생존 확인 시간 초과다.', true); else this.ping();
           }, 500));
           this.timers.push(this.setTimer(() => {if(this.channels.get('control')===channel)this.flushPointer();}, 16));
         } else if(message.t==='monitor-list'){
           if(!this.permissions.includes('screen')||!Array.isArray(message.monitors)||message.monitors.length<1||message.monitors.length>16)throw Error('모니터 목록 오류다.');for(const m of message.monitors)this.validateMonitor(m);this.monitors=message.monitors;
         } else if(message.t==='monitor-state'){
-          this.validateMonitor(message.monitor);if(!this.permissions.includes('screen')||message.monitor.topologyGeneration<this.monitor.topologyGeneration||message.monitor.topologyGeneration>this.monitor.topologyGeneration+1)throw Error('모니터 세대 오류다.');this.monitor=Object.freeze({...message.monitor});this.pendingPointer=null;
+          this.validateMonitor(message.monitor);if(!this.permissions.includes('screen')||message.monitor.topologyGeneration<this.monitor.topologyGeneration||message.monitor.topologyGeneration>this.monitor.topologyGeneration+1)throw Error('모니터 세대 오류다.');this.resumeEpoch(message.inputEpoch);this.pointerSequence=0;this.monitor=Object.freeze({...message.monitor});this.pendingPointer=null;
         } else if(message.t==='quality-state'){
           const q=message.quality;if(!this.permissions.includes('screen')||!q||Object.keys(q).some(k=>!['fps','bitrateKbps','longEdge','shortEdge','mode'].includes(k))||!Number.isInteger(q.fps)||q.fps<1||q.fps>60||!Number.isInteger(q.bitrateKbps)||q.bitrateKbps<100||q.bitrateKbps>50000||!Number.isInteger(q.longEdge)||q.longEdge<2||q.longEdge>3840||!Number.isInteger(q.shortEdge)||q.shortEdge<2||q.shortEdge>2160||q.shortEdge>q.longEdge||!['auto','detail','motion'].includes(q.mode))throw Error('품질 설정 오류다.');
-        } else if(message.t==='local-approval') {
-          if(!['file','runbook','monitor'].includes(message.kind)||!this.permissions.includes(message.kind==='monitor'?'screen':message.kind)||!['pending','resumed'].includes(message.state)||!/^[a-f0-9]{32}$/.test(message.id))throw Error('로컬 승인 응답 오류다.');
-          if(message.state==='pending'){if(this.localApprovalId||this.adminRequestId||message.inputEpoch!==undefined)throw Error('승인 UI 중복이다.');this.localApprovalId=message.id;this.localApprovalKind=message.kind;this.pendingPointer=null;}
-          else {
-            if(this.localApprovalId!==message.id||this.localApprovalKind!==message.kind||!this.permissions.includes('control')&&message.inputEpoch!==undefined)throw Error('로컬 승인 epoch·바인딩 오류다.');
-            if(this.permissions.includes('control'))this.resumeEpoch(message.inputEpoch);this.pointerSequence=0;this.pendingPointer=null;this.localApprovalId=this.localApprovalKind=null;
-          }
         } else if(message.t === 'admin-state') {
           if(!this.permissions.includes('admin')||message.id!==this.adminRequestId||!['pending','denied','active'].includes(message.state))throw Error('예상하지 않은 관리자 응답이다.');
           if(message.state === 'pending') {if(message.adminGeneration!==undefined||message.inputEpoch!==undefined)throw Error('잘못된 관리자 대기 응답이다.');}
@@ -301,7 +276,7 @@ export class ViewerConnection {
     };
   }
   resumeEpoch(epoch) {
-    if(!Number.isSafeInteger(epoch)||(epoch!==this.inputEpoch+1&&!(this.pendingReset&&epoch===this.inputEpoch)))throw Error('로컬 승인 입력 epoch 오류다.');
+    if(!Number.isSafeInteger(epoch)||(epoch!==this.inputEpoch+1&&!(this.pendingReset&&epoch===this.inputEpoch)))throw Error('입력 epoch 오류다.');
     if(this.pendingReset){this.supersededResets.set(this.pendingReset.id,this.inputEpoch);if(this.supersededResets.size>16)this.supersededResets.delete(this.supersededResets.keys().next().value);this.pendingReset=null;}
     this.inputEpoch=epoch;
   }
@@ -312,9 +287,9 @@ export class ViewerConnection {
     try { channel.send(JSON.stringify({ v: 1, t: 'data-ping', sessionId: this.sessionId, generation: this.generation, permissionGeneration: this.permissionGeneration, id: this.pingId, seq: ++this.dataSent })); }
     catch { this.end('기능 채널 송신 실패다.', true); }
   }
-  canControl() { return this.live() && !this.recovering && !this.pendingReset && !this.adminRequestId && !this.localApprovalId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
+  canControl() { return this.live() && !this.recovering && !this.pendingReset && !this.adminRequestId && this.dataReady && this.permissions?.includes('control') && ['input','pointer'].every(label => this.channels.get(label)?.readyState === 'open'); }
   controlCommand(t,fields={},id) {
-    if(t==='monitor-select'&&(this.adminGeneration||this.adminRequestId))return false;
+    if(t==='monitor-select'&&this.adminRequestId)return false; // 관리자 모드 전환 중에만 막는다.
     const channel=this.channels.get('control');
     if(!this.live()||channel?.readyState!=='open'||channel.bufferedAmount>256*1024){this.end('기능 제어 송신 상태 오류다.',true);return false;}
     try{channel.send(JSON.stringify({...fields,v:1,t,sessionId:this.sessionId,generation:this.generation,permissionGeneration:this.permissionGeneration,id,seq:++this.dataSent}));return true;}
@@ -326,14 +301,14 @@ export class ViewerConnection {
     this.initialAdminAttempted=true;
     return this.requestAdmin();
   }
-  requestAdmin(id=globalThis.crypto.randomUUID().replaceAll('-','')) {
+  requestAdmin(id=randomId()) {
     if(!this.canControl()||!this.permissions.includes('admin')||this.adminGeneration)return false;
     this.initialAdminAttempted=true;
     this.adminRequestId=id;this.onData({t:'input-paused'});return this.controlCommand('admin-request',{},id);
   }
   adminAction(t) {
     if(!this.canControl()||!this.adminGeneration||!['admin-sas','admin-revoke'].includes(t))return false;
-    return this.controlCommand(t,{adminGeneration:this.adminGeneration},globalThis.crypto.randomUUID().replaceAll('-',''));
+    return this.controlCommand(t,{adminGeneration:this.adminGeneration},randomId());
   }
   input(payload, pointer = false) {
     if (!this.canControl()) return false;
@@ -366,7 +341,7 @@ export class ViewerConnection {
     for(const timer of this.timers.splice(1))this.clearTimer(timer);
     this.files.clear();this.features.clear();this.runbooks.clear();this.files=new FileSession(this);this.features=new FeatureSession(this);this.runbooks=new RunbookSession(this);
     this.dataReceived=this.dataSent=this.inputSequence=this.pointerSequence=0;this.inputEpoch=1;this.remoteReady=false;this.pendingIce.length=0;
-    this.pendingPointer=this.pendingReset=this.adminRequestId=this.localApprovalId=this.localApprovalKind=null;this.supersededResets.clear();this.onData({t:'input-paused'});
+    this.pendingPointer=this.pendingReset=this.adminRequestId=null;this.supersededResets.clear();this.onData({t:'input-paused'});
   }
   end(reason = '세션을 종료했다.', error = false) {
     if (this.closed || this.ending) return; this.ending = true;

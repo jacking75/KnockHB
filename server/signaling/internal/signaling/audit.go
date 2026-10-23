@@ -45,7 +45,7 @@ func (e AuditEvent) validate() error {
 		return errors.New("audit envelope")
 	}
 	if o := e.Operation; o != nil {
-		if !auditGuid.MatchString(o.ID) || o.BookID != nil && (*o.BookID != "network-summary" && *o.BookID != "clear-dns-cache") || o.Hash != nil && !auditHash.MatchString(*o.Hash) || o.Direction != nil && (*o.Direction != "from-host" && *o.Direction != "to-host") || o.Size != nil && (*o.Size < 0 || *o.Size > 268435456) {
+		if !auditGuid.MatchString(o.ID) || o.BookID != nil && (*o.BookID != "network-summary" && *o.BookID != "clear-dns-cache" && *o.BookID != "command") || o.Hash != nil && !auditHash.MatchString(*o.Hash) || o.Direction != nil && (*o.Direction != "from-host" && *o.Direction != "to-host") || o.Size != nil && (*o.Size < 0 || *o.Size > 268435456) {
 			return errors.New("audit operation")
 		}
 	}
@@ -261,9 +261,36 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	peers, pending, stopping := len(s.connections), s.pending, s.stopping
 	s.mu.Unlock()
 	ready := 1
-	if stopping || s.startupError != nil || !s.audit.Healthy() || len(s.cfg.TURNURLs) > 0 && len(s.turnSecret()) < 32 {
+	if stopping || s.startupError != nil || !s.audit.Healthy() {
 		ready = 0
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	fmt.Fprintf(w, "remoteassist_rooms %d\nremoteassist_connections %d\nremoteassist_pending %d\nremoteassist_goroutines %d\nremoteassist_ready %d\nremoteassist_rejected_total %d\n", s.rooms.Count(), peers, pending, runtime.NumGoroutine(), ready, s.failures.Load())
+}
+
+// ReadSecretFile reads a small bearer secret. An unreadable or malformed file yields "".
+func ReadSecretFile(path string) string {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 256 || runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
+		return ""
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	buffer, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil || len(buffer) > 4096 {
+		return ""
+	}
+	value := strings.TrimSpace(string(buffer))
+	if len(value) < 32 || len(value) > 128 {
+		return ""
+	}
+	for _, c := range value {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return ""
+		}
+	}
+	return value
 }

@@ -12,21 +12,11 @@ public static class StartupPreparation
         WriteStatus("checking", "installation-and-firewall", null);
         try
         {
-            foreach (var role in new[] { "Service", "Tray", "Helper", "AdminHelper", "Recovery", "RunbookWorker" })
+            foreach (var role in new[] { "Service", "Tray", "Helper", "AdminHelper", "RunbookWorker" })
                 _ = ProtectedInstallation.ResolveExecutable($"RemoteAssist.Host.{role}.exe");
             var script = Path.Combine(AppContext.BaseDirectory, "prepare-host.ps1");
             InstallationState.DemandProtected(script);
-            var devRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemoteAssist-Dev");
-            var development = string.Equals(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory), devRoot, StringComparison.OrdinalIgnoreCase);
-            if (development)
-            {
-                var marker = Path.Combine(devRoot, "dev-owner.json");
-                InstallationState.DemandProtected(marker);
-                using var owner = JsonDocument.Parse(File.ReadAllBytes(marker));
-                if (owner.RootElement.GetProperty("kind").GetString() != "UNSIGNED_DEVELOPMENT_NOT_RELEASE" || owner.RootElement.GetProperty("root").GetString() != devRoot)
-                    throw new UnauthorizedAccessException("개발 설치 소유 정보가 일치하지 않는다.");
-            }
-            else
+            if (!InstallationState.Development)
             {
                 InstallationState.DemandProtected(Path.Combine(AppContext.BaseDirectory, "release.json"));
                 InstallationState.CheckDirectory(AppContext.BaseDirectory);
@@ -57,6 +47,11 @@ public static class StartupPreparation
                 throw;
             }
             WriteStatus("checking", "interactive-session", null);
+        }
+        catch (Exception error) when (InstallationState.Development && !cancellation.IsCancellationRequested)
+        {
+            // 개발 실행은 방화벽 준비가 없어도 시작한다. 직접 연결이 막히면 prepare-host.ps1로 준비한다.
+            WriteStatus("warning", "installation-and-firewall", error.Message);
         }
         catch (Exception error)
         {

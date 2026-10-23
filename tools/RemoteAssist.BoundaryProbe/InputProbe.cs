@@ -54,7 +54,7 @@ internal static class InputProbe
             if(!GetWindowRect(window,out var rect))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             var x=(rect.Left+rect.Right)/2;var y=(rect.Top+rect.Bottom)/2;
             var monitor=Monitors.Enumerate().Single(m=>x>=m.X&&x<m.X+m.Width&&y>=m.Y&&y<m.Y+m.Height);
-            var permissions=new PermissionGate();permissions.Grant("local-input-probe","owned-test-window",Capability.Screen|Capability.Control,TimeSpan.FromMinutes(1));
+            var permissions=new PermissionGate();permissions.Grant("local-input-probe","owned-test-window");
             var measured=new MeasuredBackend();remoteInput=new InputSession(permissions,monitor,1,measured);
             var move=new InputMsg {T="mouse",A="move",SessionId="local-input-probe",Id="probe",Generation=1,PermissionGeneration=1,Sequence=1,
                 TopologyGeneration=1,InputEpoch=1,MonitorIdentity=monitor.DeviceName,X=(x-monitor.X)/(double)(monitor.Width-1),Y=(y-monitor.Y)/(double)(monitor.Height-1)};

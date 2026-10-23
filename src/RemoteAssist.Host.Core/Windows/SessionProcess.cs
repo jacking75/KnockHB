@@ -8,7 +8,7 @@ using RemoteAssist.Host.Core.Security;
 
 namespace RemoteAssist.Host.Core.Windows;
 
-public enum HostChildRole {Tray,Helper,AdminHelper,Recovery,RunbookWorker,AdminRunbookWorker}
+public enum HostChildRole {Tray,Helper,AdminHelper,RunbookWorker,AdminRunbookWorker}
 
 /// <summary>SYSTEM supervisor only. Fixed protected executables, no arbitrary command or inherited handles.</summary>
 public sealed class SessionProcess : IDisposable
@@ -83,7 +83,7 @@ public sealed class SessionProcess : IDisposable
         }
         finally{foreach(var privilege in privileges)Enable(privilege,false);}
     }
-    public static string RecoveryConsoleUserSid(uint session)
+    public static string CurrentConsoleUserSid(uint session)
     {
         using var current=WindowsIdentity.GetCurrent();
         if(!current.IsSystem||Process.GetCurrentProcess().SessionId!=session||!IsInteractiveConsole(session))throw new UnauthorizedAccessException("현재 복원 SYSTEM 세션이 필요하다.");
@@ -91,18 +91,16 @@ public sealed class SessionProcess : IDisposable
         try
         {
             Check(WTSQueryUserToken(session,out var token));
-            using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))return identity.User?.Value??throw new UnauthorizedAccessException("복원 사용자 SID 누락");
+            using(token)using(var identity=new WindowsIdentity(token.DangerousGetHandle()))return identity.User?.Value??throw new UnauthorizedAccessException("콘솔 사용자 SID 누락");
         }
         finally{Enable("SeTcbPrivilege",false);}
     }
-    public static SessionProcess Start(HostChildRole role,uint session,string pipe,string nonce,PermissionSnapshot? adminGrant=null)
+    public static SessionProcess Start(HostChildRole role,uint session,string pipe,string nonce)
     {
         DemandSupervisor(session);
         if(!Enum.IsDefined(role)||!Guid.TryParseExact(pipe,"N",out _)||nonce.Length!=64||!nonce.All(Uri.IsHexDigit))throw new ArgumentException("헬퍼 bootstrap 설정 오류다.");
-        var system=role is HostChildRole.AdminHelper or HostChildRole.Recovery or HostChildRole.AdminRunbookWorker;
-        if(role==HostChildRole.AdminRunbookWorker&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin|Capability.Runbook)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 건별 관리자 Runbook 승인이 필요하다.");
-        if(role==HostChildRole.AdminHelper&&(adminGrant is null||!adminGrant.Capabilities.HasFlag(Capability.Admin)||adminGrant.ExpiresAt<=DateTimeOffset.UtcNow))throw new UnauthorizedAccessException("현재 독립 관리자 승인이 필요하다.");
-        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.Recovery=>"RemoteAssist.Host.Recovery.exe",HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker=>"RemoteAssist.Host.RunbookWorker.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
+        var system=role is HostChildRole.AdminHelper or HostChildRole.AdminRunbookWorker;
+        var exe=ProtectedInstallation.ResolveExecutable(role switch {HostChildRole.Tray=>"RemoteAssist.Host.Tray.exe",HostChildRole.Helper=>"RemoteAssist.Host.Helper.exe",HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker=>"RemoteAssist.Host.RunbookWorker.exe",_=>"RemoteAssist.Host.AdminHelper.exe"});
         Enable("SeTcbPrivilege");Enable("SeIncreaseQuotaPrivilege");Enable("SeAssignPrimaryTokenPrivilege");
         KernelHandle original;
         if(system)Check(OpenProcessToken(GetCurrentProcess(),0xB,out original));else Check(WTSQueryUserToken(session,out original));
@@ -119,7 +117,7 @@ public sealed class SessionProcess : IDisposable
                 {
                     using var candidateJob=CreateJobObject(0,null);if(candidateJob.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error());
                     var limits=new JobLimits {Basic=new BasicJobLimits {Flags=0x2000}};
-                    if(role is HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker){limits.Basic.Flags|=0x308;limits.Basic.ActiveProcesses=2;limits.ProcessMemory=512*1024*1024;limits.JobMemory=1024*1024*1024;}
+                    if(role is HostChildRole.RunbookWorker or HostChildRole.AdminRunbookWorker){limits.Basic.Flags|=0x308;limits.Basic.ActiveProcesses=64;limits.ProcessMemory=1024*1024*1024;limits.JobMemory=(nuint)(2048L*1024*1024);/* 원격 명령이 자식 프로세스를 만들 수 있다. */}
                     var size=Marshal.SizeOf<JobLimits>();var ptr=Marshal.AllocHGlobal(size);
                     try{Marshal.StructureToPtr(limits,ptr,false);Check(SetInformationJobObject(candidateJob,9,ptr,(uint)size));}finally{Marshal.FreeHGlobal(ptr);}
                     var startup=new StartupInfo {Size=Marshal.SizeOf<StartupInfo>(),Desktop="winsta0\\default"};
@@ -128,8 +126,7 @@ public sealed class SessionProcess : IDisposable
                     using var thread=new KernelHandle(info.Thread);var child=new KernelHandle(info.Process);
                     try
                     {
-                        // Recovery outlives service/ordinary-helper Job termination to restore only owned ups.
-                        if(role!=HostChildRole.Recovery)Check(AssignProcessToJobObject(candidateJob,child));DemandSupervisor(session);
+                        Check(AssignProcessToJobObject(candidateJob,child));DemandSupervisor(session);
                         if(ResumeThread(thread)==uint.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
                         var ownedJob=new KernelHandle(candidateJob.DangerousGetHandle());candidateJob.SetHandleAsInvalid();
                         return new((int)info.Pid,session,sid,role,child,ownedJob);

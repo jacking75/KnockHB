@@ -8,16 +8,15 @@ internal static class AdminRegression
 {
     public static Task Run()
     {
-        var time=new Clock();var binding=new PermissionSnapshot("session","viewer",1,Capability.Screen|Capability.Control|Capability.Admin,time.GetUtcNow().AddHours(1));
-        var admin=new AdminAuthorization(binding,time);var id=Guid.NewGuid().ToString("N");
-        if(admin.Allows(1))throw new Exception("initial toggle granted privilege");
-        admin.Request(id);Reject(()=>admin.RespondLocally(Guid.NewGuid().ToString("N"),true));
-        var approval=admin.RespondLocally(id,true)!;
-        if(!admin.Allows(approval.AdminGeneration)||admin.ProcessGrant(approval).ExpiresAt>time.GetUtcNow().AddMinutes(2))throw new Exception("local lease not bound");
-        Reject(()=>admin.RespondLocally(id,true));admin.Revoke();Reject(()=>admin.ProcessGrant(approval));
-        admin.Request(Guid.NewGuid().ToString("N"));admin.End();Reject(()=>admin.Request(Guid.NewGuid().ToString("N")));
-        var expired=new AdminAuthorization(binding,time);expired.Request(id);time.Now=time.Now.AddSeconds(30);Reject(()=>expired.RespondLocally(id,true));
-        var denied=new AdminAuthorization(binding with {Capabilities=Capability.Screen|Capability.Control},time);Reject(()=>denied.Request(id));
+        // 관리자 세대: 끝난 세션이나 이전 세대의 관리자 입력은 받지 않는다.
+        var binding=new PermissionSnapshot("session","viewer",1,Capability.All);
+        var admin=new AdminAuthorization(binding);var id=Guid.NewGuid().ToString("N");
+        if(admin.Allows(1))throw new Exception("admin generation before request");
+        var approval=admin.Authorize(id);
+        if(!admin.Allows(approval.AdminGeneration)||admin.Allows(approval.AdminGeneration+1)||approval.SessionId!="session"||approval.ConnectionId!="viewer")throw new Exception("admin generation not bound");
+        Reject(()=>admin.Authorize(Guid.NewGuid().ToString("N")));
+        admin.End();if(admin.Allows(approval.AdminGeneration))throw new Exception("ended session kept admin input");
+        Reject(()=>admin.Authorize(Guid.NewGuid().ToString("N")));
         var control=new ControlMessage {T="admin-state",SessionId="session",Generation=1,PermissionGeneration=1,Sequence=1,Id=id,State="active",AdminGeneration=1,InputEpoch=2};
         _=ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(control));
         Reject(()=>ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(control with {InputEpoch=null})));
@@ -39,6 +38,4 @@ internal static class AdminRegression
     }
     static void Reject(Action action)
     {try{action();}catch(Exception ex)when(ex is UnauthorizedAccessException or InvalidOperationException or InvalidDataException){return;}throw new Exception("invalid admin/mapping accepted");}
-    sealed class Clock:TimeProvider
-    {public DateTimeOffset Now=new(2026,10,8,0,0,0,TimeSpan.Zero);public override DateTimeOffset GetUtcNow()=>Now;}
 }

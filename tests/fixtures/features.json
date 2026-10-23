@@ -1,8 +1,4 @@
-[
-  {"mask":1,"permissions":["screen"],"channels":["control"]},
-  {"mask":3,"permissions":["screen","control"],"channels":["control","input","pointer"]},
-  {"mask":32,"permissions":["diagnostics"],"channels":["control","telemetry"]},
-  {"mask":64,"permissions":["runbook"],"channels":["control","runbook"]},
-  {"mask":144,"permissions":["clipboard","chat"],"channels":["control","chat"]},
-  {"mask":255,"permissions":["screen","control","admin","file","clipboard","diagnostics","runbook","chat"],"channels":["control","input","pointer","file","chat","telemetry","runbook"]}
-]
+{
+  "permissions": ["screen","control","admin","file","clipboard","diagnostics","runbook","chat"],
+  "channels": ["control","input","pointer","file","chat","telemetry","runbook"]
+}

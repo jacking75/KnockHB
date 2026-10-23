@@ -1,50 +1,43 @@
 namespace RemoteAssist.Host.Core.Security;
 
 [Flags]
-public enum Capability { None=0, Screen=1, Control=2, Admin=4, File=8, Clipboard=16, Diagnostics=32, Runbook=64, Chat=128 }
+public enum Capability { None=0, Screen=1, Control=2, Admin=4, File=8, Clipboard=16, Diagnostics=32, Runbook=64, Chat=128, All=255 }
 public sealed record SupporterIdentity(string ConnectionId, string DisplayName);
-public sealed record PermissionSnapshot(string SessionId, string ConnectionId, long Generation,
-    Capability Capabilities, DateTimeOffset ExpiresAt);
+public sealed record PermissionSnapshot(string SessionId, string ConnectionId, long Generation, Capability Capabilities);
 
-/// <summary>로컬 승인만 기록한다. Viewer DTO를 이 객체로 역직렬화하지 않는다.</summary>
-public sealed class PermissionGate(TimeProvider? time = null)
+/// <summary>
+/// 지원자와 대상 PC는 서로 신뢰한다. 연결된 지원자는 항상 전 권한을 받는다.
+/// 이 게이트는 권한을 고르지 않고, 세션이 끝난 뒤의 입력·송신만 막는다.
+/// </summary>
+public sealed class PermissionGate
 {
-    private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly object _gate = new();
     private PermissionSnapshot? _grant;
-    private long _generation;
     private bool _ended;
-    private string? _sessionId, _connectionId;
 
-    public PermissionSnapshot Grant(string sessionId, string connectionId, Capability capabilities, TimeSpan lease)
+    public PermissionSnapshot Grant(string sessionId, string connectionId)
     {
-        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(connectionId)) throw new ArgumentException("승인 주체가 필요하다.");
-        if (lease <= TimeSpan.Zero || lease > TimeSpan.FromHours(8)) throw new ArgumentOutOfRangeException(nameof(lease));
-        if ((capabilities & ~((Capability)255)) != 0||capabilities.HasFlag(Capability.Admin)&&!capabilities.HasFlag(Capability.Control)) throw new ArgumentException("알 수 없거나 의존 권한이 없는 권한이다.");
-        if (capabilities.HasFlag(Capability.Control) && !capabilities.HasFlag(Capability.Screen)) throw new ArgumentException("제어에는 화면 승인이 필요하다.");
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(connectionId)) throw new ArgumentException("세션과 지원자 연결 ID가 필요하다.");
         lock (_gate)
         {
-            if (_ended) throw new InvalidOperationException("종료한 세션은 다시 승인할 수 없다.");
-            if (_sessionId is not null && (_sessionId != sessionId || _connectionId != connectionId))
-                throw new InvalidOperationException("다른 지원자가 기존 승인을 승계할 수 없다.");
-            _sessionId = sessionId; _connectionId = connectionId;
-            return _grant = new(sessionId, connectionId, ++_generation, capabilities, _time.GetUtcNow().Add(lease));
+            if (_ended) throw new InvalidOperationException("종료한 세션이다.");
+            if (_grant is not null) throw new InvalidOperationException("한 세션은 한 지원자만 연결한다.");
+            return _grant = new(sessionId, connectionId, 1, Capability.All);
         }
     }
     public PermissionSnapshot? Current { get { lock (_gate) return _grant; } }
     public bool Allows(Capability capability, long generation)
     {
-        lock (_gate) return !_ended && _grant is { } grant && generation == grant.Generation &&
-            _time.GetUtcNow() < grant.ExpiresAt && (grant.Capabilities & capability) == capability && capability != Capability.None;
+        lock (_gate) return !_ended && _grant is { } grant && generation == grant.Generation && capability != Capability.None;
     }
-    public bool Execute(Capability capability,long generation,Action action)
+    /// <summary>세션 종료와 경합하지 않도록 동작을 게이트 안에서 실행한다.</summary>
+    public bool Execute(Capability capability, long generation, Action action)
     {
-        lock(_gate)
+        lock (_gate)
         {
-            if(!Allows(capability,generation))return false;
-            action();return true;
+            if (!Allows(capability, generation)) return false;
+            action(); return true;
         }
     }
-    public void End() { lock (_gate) { _ended = true; _grant = null; ++_generation; } }
-    public void Revoke() { lock (_gate) { _grant = null; ++_generation; } }
+    public void End() { lock (_gate) { _ended = true; _grant = null; } }
 }

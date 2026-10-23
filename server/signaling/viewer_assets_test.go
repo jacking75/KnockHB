@@ -7,7 +7,7 @@ import (
 )
 
 func TestViewerMissingInputModuleFailsBeforeListening(t *testing.T) {
-	for _, key := range []string{"RA_MODE", "RA_LISTEN", "RA_SESSION_TTL", "RA_TLS_CERT", "RA_TLS_KEY", "RA_TURN_URLS", "RA_TURN_SECRET_FILE", "RA_ALLOWED_ORIGINS"} {
+	for _, key := range []string{"RA_MODE", "RA_LISTEN", "RA_SESSION_TTL", "RA_TLS_CERT", "RA_TLS_KEY", "RA_ALLOWED_ORIGINS", "RA_OPERATOR_SECRET_FILE", "RA_AUDIT_DIR"} {
 		t.Setenv(key, "")
 	}
 	directory := t.TempDir()

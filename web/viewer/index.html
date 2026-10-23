@@ -11,13 +11,13 @@
 
   <main id="join">
     <h1>RemoteAssist</h1>
-    <p class="lead">대상 PC의 지원 ID(9자리)를 입력하세요. 연결이 끊기면 자동으로 다시 접속합니다.</p>
+    <p class="lead">대상 PC의 지원 ID(9자리)를 입력하세요. 대상자 승인 없이 바로 연결되고, 끊기면 자동으로 다시 접속합니다.</p>
 
     <form id="join-form" autocomplete="off">
-      <label for="name">지원자 이름</label>
-      <input id="name" maxlength="80" required>
       <label for="code">지원 ID</label>
-      <input id="code" inputmode="numeric" placeholder="418-207-935" maxlength="11">
+      <input id="code" inputmode="numeric" placeholder="418-207-935" maxlength="11" required>
+      <label for="name">지원자 이름 (대상 PC에 표시)</label>
+      <input id="name" maxlength="80" placeholder="PC 관리 담당">
 
       <button type="submit">접속</button>
     </form>
@@ -29,41 +29,48 @@
     <header class="bar">
       <span class="badge">● 원격 지원 · E2E 암호화</span>
       <span id="stats"></span>
-      <button id="admin-request" type="button" disabled>관리자 모드 시작</button>
+      <span id="reconnect-status"></span>
+      <button id="admin-request" type="button" disabled>관리자 모드 다시 시도</button>
       <button id="admin-sas" type="button" disabled>Ctrl+Alt+Del</button>
-      <button id="admin-revoke" type="button" disabled>관리자 지원 해제</button>
       <button id="hangup" type="button">세션 종료</button>
     </header>
     <p id="session-status" role="status"></p>
-    <div id="media-controls" hidden><button id="monitor-list" type="button">모니터 목록</button><select id="monitor-choice" aria-label="공유 모니터"></select><button id="monitor-select" type="button">모니터 전환 요청</button><select id="quality-mode" aria-label="영상 품질"><option value="auto">자동</option><option value="detail">글자 우선</option><option value="motion">움직임 우선</option></select><span id="quality-status"></span></div>
+    <div id="media-controls"><button id="monitor-list" type="button">모니터 목록</button><select id="monitor-choice" aria-label="공유 모니터"></select><button id="monitor-select" type="button">모니터 전환</button><select id="quality-mode" aria-label="영상 품질"><option value="auto">자동</option><option value="detail">글자 우선</option><option value="motion">움직임 우선</option></select><span id="quality-status"></span></div>
 
-    <video id="screen" autoplay playsinline muted tabindex="0" aria-label="대상 화면과 승인된 원격 입력"></video>
+    <video id="screen" autoplay playsinline muted tabindex="0" aria-label="대상 화면과 원격 입력"></video>
     <footer class="input-bar">
-      <span id="input-status">화면 보기</span>
+      <span id="input-status">연결 중</span>
       <input id="remote-text" maxlength="4096" placeholder="IME 확정 문자는 자동 입력하며 다른 문자는 버튼으로 보낸다" aria-label="대상 PC에 입력할 문자" disabled>
       <button id="send-text" type="button" disabled>문자 입력</button>
     </footer>
     <div class="features">
-      <section id="file-panel" hidden>
-        <h2>파일 전송</h2><input id="file-source" type="file"><button id="file-send" type="button" disabled>선택 파일 전송</button>
-        <p id="file-status" role="status">파일 전송 대기다.</p><button id="file-accept" type="button" disabled>수신 파일 저장 승인</button><button id="file-reject" type="button" disabled>거부</button><button id="file-cancel" type="button" disabled>전송 취소</button>
+      <section id="command-panel">
+        <h2>원격 명령 (PowerShell)</h2>
+        <label for="command-text">대상 PC에서 실행할 명령</label><textarea id="command-text" maxlength="8192" placeholder="Get-Process | Sort-Object CPU -Descending | Select-Object -First 10"></textarea>
+        <label class="inline"><input id="command-admin" type="checkbox" checked> 관리자(SYSTEM) 권한으로 실행</label>
+        <button id="command-send" type="button" disabled>명령 실행</button><button id="command-cancel" type="button" disabled>실행 취소</button>
+        <pre id="command-result" role="status"></pre>
       </section>
-      <section id="chat-panel" hidden>
+      <section id="file-panel">
+        <h2>파일 전송</h2><input id="file-source" type="file"><button id="file-send" type="button" disabled>대상 PC로 보내기</button>
+        <p id="file-status" role="status">대상 PC의 다운로드\RemoteAssist 폴더에 저장된다.</p><button id="file-accept" type="button" disabled>받은 파일 저장</button><button id="file-reject" type="button" disabled>거부</button><button id="file-cancel" type="button" disabled>전송 취소</button>
+      </section>
+      <section id="chat-panel">
         <h2>채팅</h2><pre id="chat-history" aria-live="polite"></pre>
         <label for="chat-text">대상자에게 보낼 메시지</label><textarea id="chat-text" maxlength="4096"></textarea><button id="chat-send" type="button" disabled>메시지 보내기</button>
       </section>
-      <section id="clipboard-panel" hidden>
+      <section id="clipboard-panel">
         <h2>텍스트 클립보드</h2><p>여기에 붙여넣은 텍스트만 전송한다. 자동 동기화하지 않는다.</p>
         <label for="clipboard-text">전송하거나 읽은 텍스트</label><textarea id="clipboard-text" maxlength="8192"></textarea>
         <button id="clipboard-send" type="button" disabled>대상 PC에 전송</button><button id="clipboard-get" type="button" disabled>대상 PC에서 읽기</button><button id="clipboard-copy" type="button" disabled>읽은 텍스트 복사</button>
         <p id="feature-status" role="status"></p>
       </section>
-      <section id="runbook-panel" hidden>
+      <section id="runbook-panel">
         <h2>등록된 Runbook</h2><select id="runbook-choice" aria-label="등록 작업"></select><select id="runbook-detail" aria-label="출력 상세"><option value="summary">요약</option><option value="counts">개수</option></select>
         <pre id="runbook-preview"></pre><button id="runbook-send" type="button" disabled>작업 실행</button><button id="runbook-cancel" type="button" disabled>작업 취소</button><pre id="runbook-result" role="status"></pre>
       </section>
-      <section id="diagnostics-panel" hidden>
-        <h2>읽기 전용 시스템 진단</h2><p id="diagnostics-status">수신 대기 중이다.</p><pre id="diagnostics-content"></pre>
+      <section id="diagnostics-panel">
+        <h2>시스템 진단</h2><p id="diagnostics-status">수신 대기 중이다.</p><pre id="diagnostics-content"></pre>
       </section>
     </div>
   </section>

@@ -1,4 +1,4 @@
-// Package room owns atomic one-use pairing. Lock order: manager then room.
+// Package room owns one Host/Viewer pairing per support ID. Lock order: manager then room.
 // Network I/O never occurs under either lock.
 package room
 
@@ -36,19 +36,20 @@ type Conn interface {
 type Peer struct {
 	ID, Role, DisplayName string
 	Conn                  Conn
-	ready                 bool
+	// Kick 은 이 연결을 끊는다. 새 Viewer가 접속을 이어받을 때 쓴다.
+	Kick  func()
+	ready bool
 }
 type Room struct {
 	Code, HostToken, SessionID string
-	CreatedAt, ExpiresAt            time.Time
-	mu                              sync.Mutex
-	host, viewer                    *Peer
-	consumed, hostUsed, ended       bool
-	negotiation                     int
-	lastRefresh                     time.Time
+	CreatedAt, ExpiresAt       time.Time
+	mu                         sync.Mutex
+	host, viewer               *Peer
+	consumed, hostUsed, ended  bool
+	negotiation                int
 }
 
-// Negotiation never changes the one-use pairing identity or consumes another PIN.
+// Negotiation tracks the Host's offer generation. Only the Host advances it.
 func (r *Room) Negotiation(role, kind string, generation int) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -70,16 +71,6 @@ func (r *Room) Negotiation(role, kind string, generation int) (int, bool) {
 	}
 	return r.negotiation, generation == r.negotiation
 }
-func (r *Room) Refresh(role string, now time.Time) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.ended || role != RoleHost || r.host == nil || r.viewer == nil || !r.host.ready || !r.viewer.ready || now.Sub(r.lastRefresh) < 5*time.Second {
-		return false
-	}
-	r.lastRefresh = now
-	return true
-}
-
 func (r *Room) otherLocked(p *Peer) *Peer {
 	var other *Peer
 	if r.host == p {
@@ -115,6 +106,7 @@ func NewManagerWithEntropy(ttl time.Duration, entropy io.Reader) *Manager {
 func (m *Manager) SetClock(now func() time.Time) { m.mu.Lock(); defer m.mu.Unlock(); m.now = now }
 func (m *Manager) SetLimit(limit int)            { m.mu.Lock(); defer m.mu.Unlock(); m.maxRooms = limit }
 func (m *Manager) TTL() time.Duration            { return m.ttl }
+
 // Create makes a room. A non-empty fixedCode is the Host's stable device ID: it is
 // reused across restarts, and a room whose pairing already ended is replaced.
 func (m *Manager) Create(fixedCode string) (*Room, error) {
@@ -239,7 +231,7 @@ func (m *Manager) Activate(r *Room, p *Peer) (*Peer, error) {
 	return r.otherLocked(p), nil
 }
 
-// Any departure invalidates approval. A replacement peer never inherits it.
+// Any departure ends the pairing. The Host then opens a fresh room under the same support ID.
 func (m *Manager) Leave(r *Room, p *Peer) *Peer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -258,6 +250,19 @@ func (m *Manager) Leave(r *Room, p *Peer) *Peer {
 		delete(m.rooms, r.Code)
 	}
 	return other
+}
+
+// Viewer returns the viewer currently holding the room's viewer slot.
+func (m *Manager) Viewer(code string) *Peer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.rooms[code]
+	if !ok {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.viewer
 }
 func (m *Manager) Count() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.rooms) }
 func (m *Manager) Sweep() int {

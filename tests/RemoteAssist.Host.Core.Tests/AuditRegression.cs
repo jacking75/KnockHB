@@ -9,10 +9,10 @@ internal static class AuditRegression
         try
         {
             var checkedPaths=new List<string>();var journal=new AuditJournal(directory,validatePath:checkedPaths.Add);
-            var entry=journal.Append(AuditKind.ConsentGranted,AuditResult.Allowed,"session","connection",1);
+            var entry=journal.Append(AuditKind.SupporterConnected,AuditResult.Allowed,"session","connection",1);
             var path=Path.Combine(directory,"audit.ndjson");var text=File.ReadAllText(path);
             if(JsonSerializer.Deserialize<AuditEvent>(text)!=entry||!checkedPaths.Contains(path))throw new Exception("durable bound audit missing");
-            Reject(()=>journal.Append(AuditKind.ConsentGranted,AuditResult.Allowed,"secret\nPIN","connection",1));
+            Reject(()=>journal.Append(AuditKind.SupporterConnected,AuditResult.Allowed,"secret\nPIN","connection",1));
             Reject(()=>journal.Append((AuditKind)999,AuditResult.Allowed,"session","connection",1));
             using(var file=new FileStream(path,FileMode.Open,FileAccess.Write)){file.SetLength(AuditJournal.MaxFileBytes);}
             journal.Append(AuditKind.AdminRevoked,AuditResult.Stopped,"session","connection",1);
@@ -33,9 +33,6 @@ internal static class AuditRegression
         try
         {
             var journal=new AuditJournal(directory,_=>{});var second=new AuditJournal(directory,_=>{});
-            if(CrashSessionAudit.Record("alive","c",()=>false,()=>throw new Exception("alive service must not audit")))throw new Exception("pipe loss became crash");
-            if(CrashSessionAudit.Record(null,"c",()=>true,()=>throw new Exception("unbound service must not audit")))throw new Exception("unbound crash audit");
-            if(!CrashSessionAudit.Record("dead","c",()=>true,()=>journal))throw new Exception("service handle death lost");
             var service=journal.AppendSessionEndedOnce("session","connection");
             if(second.AppendSessionEndedOnce("session","connection")!=service)throw new Exception("normal/recovery duplicate");
             var recovery=second.AppendSessionEndedOnce("reverse","connection");

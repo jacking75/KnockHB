@@ -10,12 +10,12 @@ namespace RemoteAssist.Host.Service;
 internal sealed class RunbookScope:IDisposable
 {
     readonly object gate=new();SessionProcess? child;bool disposed;
-    public async Task<RunbookResult> Run(RunbookMessage request,uint session,string sid,PermissionSnapshot? grant,CancellationToken ct)
+    public async Task<RunbookResult> Run(RunbookMessage request,uint session,string sid,CancellationToken ct)
     {
         var book=RunbookCatalog.Demand(request);var name=Guid.NewGuid().ToString("N");var nonce=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(25));
         using var cancel=timeout.Token.Register(Dispose);using var pipe=LocalIpcEndpoint.CreateServer(name,sid);
-        lock(gate){if(disposed)throw new OperationCanceledException(ct);child=SessionProcess.Start(book.RequiresAdmin?HostChildRole.AdminRunbookWorker:HostChildRole.RunbookWorker,session,name,nonce,grant);}
+        lock(gate){if(disposed)throw new OperationCanceledException(ct);child=SessionProcess.Start(book.RequiresAdmin?HostChildRole.AdminRunbookWorker:HostChildRole.RunbookWorker,session,name,nonce);}
         await using var channel=await LocalIpcEndpoint.AcceptAsync(pipe,child,nonce,timeout.Token);
         var done=new TaskCompletionSource<RunbookResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer=new IpcPeerSession(channel,(message,_)=>

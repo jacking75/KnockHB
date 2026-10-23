@@ -1,6 +1,6 @@
 [
  {"name":"joined","valid":true,"message":{"v":1,"type":"joined","sessionId":"audit-session","connectionId":"peer-1","generation":1,"peerPresent":false}},
- {"name":"consent","valid":true,"message":{"v":1,"type":"consent","sessionId":"audit-session","generation":1,"permissionGeneration":1,"permissions":["screen"]}},
+ {"name":"offer","valid":true,"message":{"v":1,"type":"offer","sessionId":"audit-session","generation":2,"room":"123456789","sdp":"v=0"}},
  {"name":"unicode","valid":true,"message":{"v":1,"type":"error","code":"bad-request","reason":"한글 😀"}},
  {"name":"old-version","valid":false,"message":{"v":0,"type":"join"}},
  {"name":"missing-version","valid":false,"message":{"type":"join"}},

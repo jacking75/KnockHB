@@ -11,13 +11,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
 
-func TestLANRequiresTLSOriginCredentialsAndPrivateAddress(t *testing.T) {
-	for _, key := range []string{"RA_SESSION_TTL", "RA_TURN_URLS", "RA_TURN_SECRET_FILE"} {
+func TestLANRequiresTLSAndPrivateAddressOnly(t *testing.T) {
+	for _, key := range []string{"RA_SESSION_TTL", "RA_ALLOWED_ORIGINS", "RA_OPERATOR_SECRET_FILE", "RA_AUDIT_DIR", "RA_VIEWER_DIR"} {
 		t.Setenv(key, "")
 	}
 	dir := t.TempDir()
@@ -41,21 +40,15 @@ func TestLANRequiresTLSOriginCredentialsAndPrivateAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("RA_MODE", "lan-test")
+	t.Setenv("RA_MODE", "lan")
 	t.Setenv("RA_LISTEN", "192.168.0.61:25001")
-	t.Setenv("RA_ALLOWED_ORIGINS", "192.168.0.61:25001")
 	t.Setenv("RA_TLS_CERT", write("cert.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))
 	t.Setenv("RA_TLS_KEY", write("key.pem", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: priv})))
-	t.Setenv("RA_OPERATOR_SECRET_FILE", write("node.secret", []byte(strings.Repeat("a", 48))))
-	t.Setenv("RA_AUDIT_DIR", filepath.Join(dir, "audit"))
-	t.Setenv("RA_VIEWER_DIR", dir)
-	for name := range viewerAssets {
-		write(name, []byte("fixture"))
-	}
+	// Operator credential, audit directory, origins and viewer directory are optional.
 	if _, err := loadSettings(); err != nil {
-		t.Fatal("valid encrypted LAN configuration rejected", err)
+		t.Fatal("minimal LAN configuration rejected", err)
 	}
-	for _, bad := range []struct{ key, value string }{{"RA_LISTEN", "0.0.0.0:25001"}, {"RA_LISTEN", "8.8.8.8:25001"}, {"RA_ALLOWED_ORIGINS", ""}, {"RA_ALLOWED_ORIGINS", "other:25001"}, {"RA_TLS_CERT", ""}, {"RA_TLS_KEY", ""}, {"RA_OPERATOR_SECRET_FILE", ""}, {"RA_AUDIT_DIR", ""}, {"RA_TURN_URLS", "turn:192.168.0.61:25002?transport=tcp"}} {
+	for _, bad := range []struct{ key, value string }{{"RA_LISTEN", "8.8.8.8:25001"}, {"RA_TLS_CERT", ""}, {"RA_TLS_KEY", ""}, {"RA_OPERATOR_SECRET_FILE", filepath.Join(dir, "missing.secret")}} {
 		t.Run(bad.key+bad.value, func(t *testing.T) {
 			t.Setenv(bad.key, bad.value)
 			if _, err := loadSettings(); err == nil {

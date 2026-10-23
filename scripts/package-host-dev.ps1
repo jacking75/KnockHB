@@ -34,7 +34,7 @@ try{
         Copy-Item -LiteralPath $sourcePath -Destination $target
     }
     $sourceHashes=@($sourceFiles|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $source $_)).Hash}})
-    foreach($name in @('Service','Tray','Helper','AdminHelper','Recovery','RunbookWorker')){
+    foreach($name in @('Service','Tray','Helper','AdminHelper','RunbookWorker')){
         $project=Join-Path $source ('src/RemoteAssist.Host.'+$name+'/RemoteAssist.Host.'+$name+'.csproj')
         & dotnet $msbuild $project /restore /t:Publish /p:Configuration=Release /p:RuntimeIdentifier=win-x64 /p:SelfContained=true /p:PublishSingleFile=false /p:RestoreLockedMode=false (('/p:PublishDir='+$payload+'\')) /v:minimal /nologo
         if($LASTEXITCODE-ne0){throw ('개발 publish 실패: '+$name)}

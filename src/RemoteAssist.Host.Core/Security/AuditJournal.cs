@@ -5,12 +5,13 @@ using System.Text.Json.Serialization;
 
 namespace RemoteAssist.Host.Core.Security;
 
-public enum AuditKind {SessionCreated,ConsentGranted,ConsentDenied,SessionEnded,AdminGranted,AdminDenied,AdminRevoked,FileStarted,FileFinished,RunbookStarted,RunbookFinished,SasRequested}
+// 숫자 값은 시그널링 감사 저장소와 공유한다. ConsentDenied·AdminDenied는 옛 기록 호환용으로 자리만 남긴다.
+public enum AuditKind {SessionCreated,SupporterConnected,ConsentDenied,SessionEnded,AdminGranted,AdminDenied,AdminRevoked,FileStarted,FileFinished,RunbookStarted,RunbookFinished,SasRequested}
 public enum AuditResult {Allowed,Denied,Stopped,Completed,Failed}
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record AuditOperation(string Id,string? BookId=null,string? Hash=null,string? Direction=null,long? Size=null)
 {
-    public void Validate(){if(!Guid.TryParseExact(Id,"N",out var id)||id.ToString("N")!=Id||BookId!=null&&BookId is not ("network-summary" or "clear-dns-cache")||Hash!=null&&!Deployment.ReleaseManifest.Hash(Hash)||Direction!=null&&Direction is not ("from-host" or "to-host")||Size is <0 or >268435456)throw new InvalidDataException("감사 동작 메타데이터 오류다.");}
+    public void Validate(){if(!Guid.TryParseExact(Id,"N",out var id)||id.ToString("N")!=Id||BookId!=null&&BookId is not ("network-summary" or "clear-dns-cache" or "command")||Hash!=null&&!Deployment.ReleaseManifest.Hash(Hash)||Direction!=null&&Direction is not ("from-host" or "to-host")||Size is <0 or >268435456)throw new InvalidDataException("감사 동작 메타데이터 오류다.");}
 }
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record AuditEvent(string EventId,DateTimeOffset Utc,AuditKind Kind,AuditResult Result,string SessionId,string ConnectionId,long PermissionGeneration,AuditOperation? Operation=null);

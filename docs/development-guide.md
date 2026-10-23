@@ -1,37 +1,52 @@
 # 실행·로컬 검증 가이드
 
-E 전체 구현/코드 리뷰·Gate I 뒤에 V를 실행하고 V/Gate A 뒤에 두 PC F를 별도로 수행한다. 진행 상태는 [구현계획](../docs_working/원격제어-구현계획.md) 하나다. CI와 대화형 화면 시험을 자동 추가하지 않는다.
+진행 상태는 [구현계획](../docs_working/구현계획-1.md) 하나에서 관리한다. CI와 대화형 화면 시험을 자동 추가하지 않는다.
 
-## 비대화형 준비·검사
+## 비대화형 검사
 
-Windows x64, global.json의 .NET10 SDK/WindowsDesktop, Go1.27, Node22 이상을 준비한다. runner는 Windows PowerShell5.1/7이고 서명 패키징은7이다. Viewer npm 설치/번들 단계는 없다. lock restore에 필요한 네트워크/캐시가 필요하다.
+Windows x64, global.json의 .NET 10 SDK/WindowsDesktop, Go 1.27, Node 22 이상을 준비한다.
 
 ```powershell
 dotnet restore RemoteAssist.slnx --locked-mode
 dotnet build RemoteAssist.slnx --no-restore
-pwsh -NoProfile -File scripts/verify-local.ps1
+dotnet run --project tests/RemoteAssist.Host.Core.Tests --no-build
+cd server/signaling; go vet ./...; go test ./...; cd ../..
+node --test web/viewer/tests/*.test.js
+pwsh -NoProfile -File scripts/verify-local.ps1   # 위 검사 묶음 + 설치 계약 검사, 결과를 .artifacts에 기록
 ```
 
-runner는 새 ignored artifact에 후보 commit/dirty·명령/시간/deadline/exit/output을 기록하며 실패·출력 상한·timeout은 비정상 종료다. core tests는 순수 계약/파일 handle 등 로컬 검사이고 실제 UI/UAC 수용과 구분한다. Go long load는 기본 skip이며 별도 600..7200초 화면 없는 묶음으로 실행한다. -Race는 C compiler 준비, -Native는 FFmpeg 준비와 synthetic encode/decode 목적의 별도 실행 계획 뒤에 사용한다.
+`tests/test-startup-preparation.ps1`, `tests/test-startup-sas.ps1`, `tests/test-support-installer.ps1`, `tests/installer-contract.ps1`은 방화벽/SAS/설치 스크립트의 함수만 불러 검사하며 시스템을 바꾸지 않는다.
 
-모든 PowerShell 준비/설치 스크립트는 ParseFile 문법 검사와 경로·삭제·PID·ACL·정리 리뷰를 먼저 한다. git diff --check와 후보 hash를 보존한다. 테스트 실패를 skip로 바꾸거나 기존 산출물을 지워 통과시키지 않는다.
+인코더 장치 검증은 화면·네트워크 없이 실행한다.
 
-## 공급·개발 진단
+```powershell
+dotnet run --project tools/RemoteAssist.HostRun -c Release -- --encoder-check --out .artifacts/encoders/<새 폴더>
+```
 
-prepare-ffmpeg.ps1은 고정 archive/SHA/buildconf/7DLL hash/ABI를 검사해 새 경로에 배치한다. prepare-ffmpeg-sources.ps1은 대응 recipe·고정 dependency source/submodule·전체 license 파일을 모으고 rebuild-ffmpeg.sh는 격리 Linux/Docker 재빌드 자료를 기록한다. supplier와 toolchain 차이 때문에 bit-identical을 가정하지 않으며 V02에서 비교한다.
+## 개발 설치
 
-prepare-managed-notices.ps1은 lock/contentHash·전체 NuGet license/notice·런타임 고지를 수집한다. 패키지에 전체 전문이 없으면 검토한 SPDX LicenseDirectory를 제공해야 한다. 누락 inventory는 패키징을 차단한다. [설치 가이드](../deploy/installation.md)의 인증서/PSS/source 공개 조건을 충족한 뒤 package-host.ps1을 사용한다. 실제 서명/새 VM 설치를 SDK 개발 빌드로 대체하지 않는다.
+1. 시그널링 TLS 인증서를 준비한다. 사설망은 `python scripts/prepare-e2e-tls.py --directory <새 폴더> --ip <서버 IP>`로 7일짜리 자체 서명 인증서(`server-cert.pem`, `server-key.pem`, DER `lan-test.cer`)를 만들 수 있다. 지원자 브라우저에는 이 인증서를 신뢰시키거나 첫 접속 때 예외를 허용한다.
+2. 시그널링 서버를 띄운다.
+   ```powershell
+   cd server/signaling
+   $env:RA_MODE='lan'; $env:RA_LISTEN='0.0.0.0:25001'; $env:RA_TLS_CERT='<폴더>/server-cert.pem'; $env:RA_TLS_KEY='<폴더>/server-key.pem'; $env:RA_VIEWER_DIR='../../web/viewer'
+   go run .
+   ```
+3. Host 후보를 만든다. 자체 서명이면 DER 인증서를 핀 고정한다.
+   ```powershell
+   pwsh scripts/package-host-dev.ps1 -SignalingUri https://<서버 IP>:25001/ -SignalingCertificate <폴더>/lan-test.cer -SdkDirectory <.NET 10 SDK 폴더> -Output .artifacts/<새 폴더>
+   ```
+4. 대상 PC의 관리자 PowerShell에서 설치한다: `scripts/install-host-dev.ps1 -Action Install -Package .artifacts/<폴더>`.
+5. 대상 사용자가 `Program Files\RemoteAssist-Dev\RemoteAssist.Update.exe`를 관리자 권한으로 실행한다. Tray에 지원 ID가 뜬다.
+6. 지원자 PC 브라우저에서 `https://<서버 IP>:25001/`을 열고 지원 ID로 접속한다.
+7. 제거: `scripts/install-host-dev.ps1 -Action Remove`.
 
-HostRun의 --encoder-check는 화면/네트워크가 없는 synthetic 출력·decode 검사다. 화면 공유 HostRun은 --dev-loopback과 콘솔 '화면 승인'이 필요하다. 제품 화면/입력 동의는 서비스/Tray에서 수행하며 HostRun으로 제품 권한을 자동 부여하지 않는다. CaptureDump/BoundaryProbe/InputTarget의 실제 화면/입력/UAC 실행도 사전 계획이 필요하다.
+개발 설치와 빌드 출력 실행은 개발 모드다. 보호 경로 ACL·릴리스 manifest 검사를 생략하므로 시험 PC에서만 쓴다.
 
-## 제품 묶음과 중단
+## 실연결 시험
 
-현재 product-e2e-harness의 Arm과 invoke-product-local의 직접 실행은 차단됐다. [30분 재리뷰](../docs_working/e2e-30-minute-review-2026-10-08.md)에서 확인한 전역 deadline/독립 watchdog·SCM/정리 timeout·실제 복귀 증거를 [R30 태스크](../docs_working/원격제어-구현계획.md)에 따라 먼저 완료한다. 아래 Arm 절차는 이 gate 재마감 이후에만 사용한다. 파일 검사기 check-e2e-readiness.cjs는 현재 BLOCKED/exit2를 반환하며 제품 실행이나 준비 완료를 허가하지 않는다.
+두 PC 실연결 시험은 화면·입력을 점유한다. AGENTS.md 지침대로 실행 계획(목적·단계·판정·증거·중단/정리 절차)을 먼저 문서화하고, 사용자에게 시험 여부를 묻고 승인받은 뒤에만 실행한다. 원인과 준비가 바뀌지 않은 같은 시험은 반복하지 않는다. 화면 점유 시간과 결과는 실측값으로 기록한다.
 
-[하네스 계약](../tests/e2e/README.md)·[준비표](../docs_working/e2e-test-preparation.md)·scenarios.json에서 한 묶음을 선택한다. build/publish/hash·인증서/포트·계정/Session/desktop·실제 대상 창/좌표/foreground·로그·복귀/소유 정리를 먼저 준비한다.
+## 공급·고지
 
-product-e2e-harness.ps1 Prepare는 화면 없는 준비다. Arm은 reviewed readiness JSON과 후보 hash/실제 Tray 준비를 확인한다. 화면 점유 목적·예상240초/최대300초·실패 중단을 실행 직전 알린다. 대상자 직접 승인 뒤 기능 관찰을 기록한다. 첫 실패/신호 누락/timeout은 Abort→Collect 정리 판정이며 화면 점유 중 수정/탐색/추가 시나리오를 하지 않는다.
-
-Collect는 actualSeconds·실제 evidence 없는 결과를 BLOCKED로 남긴다. 서비스 기동/ready/SSH 성공은 기능 PASS가 아니다. 입력 target·브라우저·방화벽 규칙은 확인한 소유 PID/경로만 정리한다. UAC/잠금은 현장 복귀 담당자와 물리 키보드 종료 수단을 준비한다. 정리 실패는 일반 작업 복구부터 해결한다.
-
-원인/준비가 바뀌지 않은 동일 시험은 반복하지 않는다. 수집한 증거로 결함을 좁히고 변경/판정/정리를 리뷰한 새 Prepare만 허용한다. 두 물리 PC·GPU·다른 NAT·운영 TLS/TURN·정식 서명·전원 차단/HA 환경이 없으면 대응 V/F를 BLOCKED로 남긴다.
+`prepare-ffmpeg.ps1`은 고정 archive/SHA/buildconf/7DLL hash/ABI를 검사해 배치한다. `prepare-ffmpeg-sources.ps1`·`rebuild-ffmpeg.sh`는 LGPL 대응 소스 자료를 만든다. `prepare-managed-notices.ps1`은 NuGet 라이선스 고지를 모은다. 정식 패키징은 [설치 가이드](../deploy/installation.md)를 따른다.

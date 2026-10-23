@@ -2,9 +2,6 @@ package signaling
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -50,51 +47,8 @@ func TestGoldenFixtures(t *testing.T) {
 		})
 	}
 }
-func TestSharedFeatures(t *testing.T) {
-	data, err := os.ReadFile("../../../../tests/fixtures/features.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixtures []struct {
-		Mask        int
-		Permissions []string
-	}
-	if json.Unmarshal(data, &fixtures) != nil {
-		t.Fatal("feature fixture")
-	}
-	for _, f := range fixtures {
-		if mask, ok := permissionMask(f.Permissions); !ok || mask != f.Mask {
-			t.Fatal("permission drift")
-		}
-	}
-}
-func TestTURNHMACExpiryAndBinding(t *testing.T) {
-	secret := strings.Repeat("s", 32)
-	s := New(Config{TURNSecret: secret, TURNURLs: []string{"turn:example.invalid:25010"}}, nil)
-	now := time.Unix(1000, 0)
-	first := s.iceServers("session1", "peer1", now)[0]
-	second := s.iceServers("session2", "peer1", now)[0]
-	if first.Username != "1600:session1:peer1" || first.Credential == second.Credential {
-		t.Fatal("credential not bound to session or expiry")
-	}
-	mac := hmac.New(sha1.New, []byte(secret))
-	_, _ = mac.Write([]byte(first.Username))
-	if first.Credential != base64.StdEncoding.EncodeToString(mac.Sum(nil)) {
-		t.Fatal("HMAC mismatch")
-	}
-}
-func TestIssuanceRateAndOrigin(t *testing.T) {
-	s, ts := newTestServer(t)
-	s.issuance = newLimiter(1, time.Minute, 4096)
-	createSession(t, ts)
-	response, err := http.Post(ts.URL+"/session", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 429 {
-		t.Fatal("rate limit failed")
-	}
+func TestCrossOriginSessionCreationRejected(t *testing.T) {
+	_, ts := newTestServer(t)
 	request, _ := http.NewRequest("POST", ts.URL+"/session", nil)
 	request.Header.Set("Origin", "https://attacker.invalid")
 	response2, err := http.DefaultClient.Do(request)

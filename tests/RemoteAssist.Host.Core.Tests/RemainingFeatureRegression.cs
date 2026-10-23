@@ -48,24 +48,16 @@ static class RemainingFeatureRegression
         await Task.WhenAll(writing,ending).WaitAsync(TimeSpan.FromSeconds(3));
         Check(ordered.SequenceEqual(new[]{"started","finished"}),"stop overtook durable start");
     }
-    public static Task RunbookDismissal()
+    public static Task RemoteCommand()
     {
-        var book=RunbookCatalog.Definition("network-summary");
-        var request=new RunbookMessage {T="runbook-request",Id=Guid.NewGuid().ToString("N"),SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,BookId=book.BookId,BookVersion=book.BookVersion,Hash=book.Hash,Args=new(){["detail"]="summary"}};
-        var clock=new Clock();var approval=new RunbookApproval(clock);approval.Begin(request);
-        Reject(()=>approval.Begin(request));Reject(()=>approval.Dismissed(request.Id));
-        Check(approval.Cancel(request.Id)&&approval.IsBusy,"cancel released the dialog before dismissal");
-        Check(approval.Respond(request.Id)==null,"racing approval started a cancelled Runbook");
-        Reject(()=>approval.Dismissed(Guid.NewGuid().ToString("N")));
-        Check(approval.Dismissed(request.Id)==request&&!approval.IsBusy,"matching dismissal did not release approval");
-        Reject(()=>approval.Respond(request.Id));
-        approval.Begin(request);approval.Cancel(request.Id);clock.Tick=2000;
-        Check(approval.Expired,"missing dismissal ACK had no deadline");Reject(()=>approval.Dismissed(request.Id));
-        var normal=new RunbookApproval(clock);normal.Begin(request);Check(normal.Respond(request.Id)==request,"normal local decision lost");
-        normal.Begin(request);Check(normal.Respond(request.Id,true)==request&&normal.IsBusy,"approved execution was not reserved");
-        Check(!normal.Cancel(request.Id)&&normal.ExecutionCancelled(request.Id),"cancel between approval and worker launch was lost");
-        Reject(()=>normal.Begin(request));normal.CompleteExecution(request.Id);Check(!normal.IsBusy,"completed execution retained its reservation");
-        normal.Begin(request);clock.Tick+=30000;Check(normal.Expired,"consent wait unbounded");Reject(()=>normal.Respond(request.Id));
+        var script="Get-Service | Select-Object -First 3";
+        var request=new RunbookMessage {T="runbook-request",Id=Guid.NewGuid().ToString("N"),SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,BookId=RunbookMessage.CommandBook,BookVersion=1,Hash=RunbookMessage.ScriptHash(script),Args=new(){["script"]=script,["admin"]="true"}};
+        var parsed=RunbookMessage.Parse(ProtocolJson.Encode(request));
+        Check(parsed.IsCommand&&parsed.CommandAsAdmin,"remote command lost its target account");
+        var book=RunbookCatalog.Demand(parsed);Check(book.Source==script&&book.RequiresAdmin,"remote command definition drift");
+        Check(!Encoding.UTF8.GetString(ProtocolJson.Encode(request)).Contains("IsCommand"),"computed property leaked to the wire");
+        foreach(var invalid in new[]{request with {Hash=new string('0',64)},request with {Args=new(){["script"]=script}},request with {Args=new(){["script"]="",["admin"]="false"},Hash=RunbookMessage.ScriptHash("")},request with {Args=new(){["script"]=script,["admin"]="yes"}}})
+            Reject(()=>RunbookMessage.Parse(ProtocolJson.Encode(invalid)));
         return Task.CompletedTask;
     }
     public static Task StrictCredentials()
@@ -81,5 +73,4 @@ static class RemainingFeatureRegression
     }
     sealed class FakeCapture(MonitorInfo monitor):IScreenCapture
     {public bool Disposed;public MonitorInfo Monitor=>monitor;public bool TryGetFrame(TimeSpan timeout,out CapturedFrame frame){frame=default;return false;}public void Dispose()=>Disposed=true;}
-    sealed class Clock:TimeProvider {public long Tick;public override long GetTimestamp()=>Tick;public override long TimestampFrequency=>1000;}
 }

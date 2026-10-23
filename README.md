@@ -1,6 +1,8 @@
 # KnockHB / RemoteAssist
 
-대상자의 동의를 기반으로 Windows PC를 지원하기 위한 원격 지원 도구다. 현재는 C# HostRun과 Go 시그널링 서버, 웹 Viewer를 연결하는 **화면 공유 PoC**를 구현했다. 원격 입력·동의 UI·서비스 연동·TURN은 후속 구현 대상이다.
+사내 PC 관리 운영 부서가 쓰는 Windows 원격 지원 도구다. 지원을 요청한 사람이 프로그램을 받아 관리자 권한으로 한 번 실행하면, 지원자가 고정 9자리 지원 ID로 접속해 화면·입력·관리자(UAC)·파일·클립보드·진단·원격 명령을 모두 쓴다. 대상자의 추가 승인은 없고 연결이 끊기면 자동으로 다시 접속한다.
+
+구성: SYSTEM 서비스 + 일반 권한 WPF Tray/Helper(C# .NET 10), Go 시그널링 서버(TLS), 웹 Viewer(바닐라 JS). 두 PC는 STUN/TURN 없이 직접 P2P로 연결한다.
 
 처음 보는 개발자는 [개발자 문서 안내](docs/README.md)부터 읽는다.
 
@@ -8,9 +10,9 @@
 
 | 문서 | 내용 |
 |---|---|
-| [아키텍처](docs/architecture.md) | 현재 실행 구조, 프로젝트 의존성, 목표 권한 경계 |
-| [기술 사양](docs/technical-specification.md) | 스택, 설정, API, 미디어·배포 제약 |
-| [주요 로직](docs/core-logic.md) | 코드 탐색, 세션·캡처·인코딩·릴레이 로직 |
-| [기능별 워크플로우](docs/workflows.md) | 현재 기능과 예정 기능의 Mermaid 흐름도 |
-| [실행·검증 가이드](docs/development-guide.md) | 로컬 PoC 실행, 두 머신 검증, 문제 해결 |
+| [아키텍처](docs/architecture.md) | 실행 구조, 허가·세션 수명, 권한 경계 |
+| [기술 사양](docs/technical-specification.md) | 스택, 설정, 상한 |
+| [주요 로직](docs/core-logic.md) | 코드 소유권 |
+| [기능별 워크플로우](docs/workflows.md) | 시작·연결·기능·재접속 흐름 |
+| [실행·검증 가이드](docs/development-guide.md) | 로컬 검사, 개발 설치, 실연결 시험 |
 | [프로토콜](docs/protocol.md) | 와이어 포맷의 단일 기준 |

@@ -12,7 +12,8 @@ public sealed record ScreenShareOptions
     public int TargetFps { get; init; } = 30;
     public int BitrateKbps { get; init; } = 4000;
     public string? PreferredEncoder { get; init; }
-    public string[] StunServers { get; init; } = [];
+    /// <summary>Ignored. Kept so an already deployed host.settings.json that still lists STUN servers loads.</summary>
+    public string[]? StunServers { get; init; }
     /// <summary>Stable 9-digit support ID the supporter types. Null asks the server for a random one.</summary>
     public string? DeviceCode { get; init; }
     public int MaxOutputLongEdge { get; init; } = 1920;
@@ -31,9 +32,6 @@ public sealed record ScreenShareOptions
         if (PreferredEncoder is not null && !FFmpegH264Encoder.AllowedEncoders.Contains(PreferredEncoder))
             throw new ArgumentException("허용하지 않는 인코더다.", nameof(PreferredEncoder));
         if (DeviceCode is not null && (DeviceCode.Length != 9 || !DeviceCode.All(char.IsAsciiDigit))) throw new ArgumentException("지원 ID는 숫자 9자리다.");
-        foreach (var url in StunServers)
-            if (!url.StartsWith("stun:", StringComparison.Ordinal) && !url.StartsWith("stuns:", StringComparison.Ordinal))
-                throw new ArgumentException("잘못된 STUN 주소다.");
     }
     public static void ValidateEndpoint(Uri uri,bool allowLoopbackHttp)
     {

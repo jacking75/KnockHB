@@ -19,17 +19,15 @@ internal sealed class AdminScope:IDisposable
     bool disposed;
     public bool HasExited {get{lock(gate)return disposed||child?.HasExited==true||peer?.Token.IsCancellationRequested==true;}}
     public string Mapping {get{lock(gate)return mapping?.Name??throw new InvalidOperationException("관리자 mapping이 없다.");}}
-    public async Task Start(AdminConfiguration configuration,PermissionSnapshot processGrant,RecoveryScope recovery,CancellationToken ct,Action<string> failed)
+    public async Task Start(AdminConfiguration configuration,CancellationToken ct,Action<string> failed)
     {
         var name=Guid.NewGuid().ToString("N");var nonce=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         lock(gate)
         {
             if(disposed)throw new OperationCanceledException(ct);
             mapping=SharedFrameMap.Create(configuration.UserSid);server=LocalIpcEndpoint.CreateServer(name,configuration.UserSid);
-            child=SessionProcess.Start(HostChildRole.AdminHelper,configuration.WindowsSessionId,name,nonce,processGrant);
+            child=SessionProcess.Start(HostChildRole.AdminHelper,configuration.WindowsSessionId,name,nonce);
         }
-        // Pin the additional producer before any privileged input or capture is enabled.
-        await recovery.AttachAdmin(child.Pid,ct);
         var channel=await LocalIpcEndpoint.AcceptAsync(server,child,nonce,ct);
         lock(gate)
         {
@@ -40,14 +38,15 @@ internal sealed class AdminScope:IDisposable
                 {if(message.Id!=configuration.Approval.RequestId||message.Body!=null||!ready.TrySetResult())throw new InvalidDataException("오래되거나 중복 관리자 준비 ACK다.");}
                 else inputs.Accept(message);
                 return Task.CompletedTask;
-            },ct,_=>failed("대상자가 관리자 지원을 종료했다."),failed);
+            },ct,_=>failed("관리자 헬퍼가 종료됐다."),failed);
             peer.Start();peer.Post("admin-config",configuration with {Mapping=mapping.Name});
         }
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5),ct);
     }
     public Task<int> Input(AdminInputBatch batch,CancellationToken ct)
     {lock(gate){if(disposed||peer is null||!ready.Task.IsCompletedSuccessfully)throw new UnauthorizedAccessException("관리자 입력 준비가 없다.");return inputs.Request(peer,batch,ct);}}
-    public void Lease(){lock(gate){if(disposed||peer is null)throw new IOException("관리자 lease 경로 상실이다.");peer.Post("admin-lease");}}
+    /// <summary>관리자 모드 중 공유 모니터를 바꾼다.</summary>
+    public void Monitor(RemoteAssist.Protocol.MonitorDescriptor monitor){lock(gate){if(disposed||peer is null)throw new IOException("관리자 헬퍼 연결이 없다.");peer.Post("admin-monitor",monitor);}}
     public void Fence()=>Volatile.Read(ref child)?.Dispose();
     public void Dispose()
     {

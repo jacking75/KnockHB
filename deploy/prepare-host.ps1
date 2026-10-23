@@ -13,7 +13,7 @@ function Get-RAFirewallPlan([string]$Root,[int]$SignalingPort) {
     $rootPath=[IO.Path]::GetFullPath($Root).TrimEnd('\')
     $sha=[Security.Cryptography.SHA256]::Create()
     try{$tag=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($rootPath.ToLowerInvariant())))).Replace('-','').Substring(0,24)}finally{$sha.Dispose()}
-    $tcpPorts=(@(443,25002,25003,$SignalingPort)|Sort-Object -Unique)-join','
+    $tcpPorts=(@(443,$SignalingPort)|Sort-Object -Unique)-join','
     @(
         @{Suffix='MediaIn';File='RemoteAssist.Host.Helper.exe';Direction='Inbound';Protocol='UDP';LocalPort='27002-27099';RemotePort='Any'},
         @{Suffix='MediaOut';File='RemoteAssist.Host.Helper.exe';Direction='Outbound';Protocol='UDP';LocalPort='27002-27099';RemotePort='Any'},
@@ -106,7 +106,7 @@ if($root-ne$dev-and!$root.StartsWith($versions,[StringComparison]::OrdinalIgnore
 for($item=Get-Item -LiteralPath $root -Force;$item-and$item.FullName-ne$env:ProgramFiles;$item=$item.Parent){
     if($item.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse installation refused'}
 }
-foreach($name in @('Service','Tray','Helper','AdminHelper','Recovery','RunbookWorker')){
+foreach($name in @('Service','Tray','Helper','AdminHelper','RunbookWorker')){
     $exe=Get-Item -LiteralPath (Join-Path $root "RemoteAssist.Host.$name.exe") -Force
     if($exe.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Reparse helper refused'}
 }

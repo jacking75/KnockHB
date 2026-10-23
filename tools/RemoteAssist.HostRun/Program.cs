@@ -28,14 +28,15 @@ try
     if (parsed.ContainsKey("--encoder-check")) return EncoderCheck(options.PreferredEncoder, parsed.GetValueOrDefault("--out"), log);
 
     await using var session = new ScreenShareSession(options, loggerFactory);
-    session.RequestLocalConsent = async (identity, ct) =>
-    {
-        Console.WriteLine($"지원자: {identity.DisplayName} (자기 신고, 별도 경로 확인 필요)");
-        Console.WriteLine($"승인할 모니터: {session.Monitor}");
-        Console.WriteLine("화면 보기를 승인하려면 '화면 승인'을 입력한다. 다른 입력·timeout은 거절이다.");
-        var line = await Console.In.ReadLineAsync(ct);
-        return line == "화면 승인" ? Capability.Screen : Capability.None;
-    };
+    // 진단 도구는 화면만 보낸다. 입력·관리자·파일·Runbook은 서비스 설치본에서만 동작한다.
+    session.SupporterJoined = supporter => Console.WriteLine($"지원자 접속: {supporter.DisplayName}");
+    session.CreateInputBackend = _ => new IgnoredInput();
+    session.AdminCommand = command => { if (command.T == "admin-request") session.DenyAdmin(command.Id); };
+    session.ChatReceived = chat => Console.WriteLine($"지원자 채팅: {chat.Text}");
+    session.ClipboardOperation = (request, _) => Task.FromResult(request with { T = "clipboard-rejected", Text = null, Hash = null, Code = "unavailable" });
+    session.IncomingFileFolder = (_, _) => Task.FromResult<string?>(null);
+    session.AuditFile = (_, _) => Task.CompletedTask;
+    session.RunbookOperation = (_, _) => Task.FromResult(new RemoteAssist.Protocol.RunbookResult("denied", null, "", "HostRun 진단 도구는 Runbook을 실행하지 않는다.", ""));
     session.StateChanged += state => Console.WriteLine($"상태: {state}");
     var stop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; session.EndSession(); stop.TrySetResult(); };
@@ -107,7 +108,7 @@ static Dictionary<string,string?> Parse(string[] args)
     for(var i=0;i<args.Length;i++)
     {
         var name=args[i];if(!result.TryAdd(name,null))throw new ArgumentException("중복 CLI 옵션이다: "+name);
-        if(name is "--encoder-check" or "--dev-loopback" or "--relay")continue;
+        if(name is "--encoder-check" or "--dev-loopback")continue;
         if(name is not ("--encoder" or "--fps" or "--monitor" or "--bitrate" or "--signaling" or "--out"))throw new ArgumentException("알 수 없는 CLI 옵션이다: "+name);
         if(++i>=args.Length||args[i].StartsWith("--",StringComparison.Ordinal))throw new ArgumentException("CLI 값이 필요하다: "+name);
         result[name]=args[i];
@@ -116,3 +117,8 @@ static Dictionary<string,string?> Parse(string[] args)
 }
 static int Number(Dictionary<string,string?> options,string name,int fallback) => !options.TryGetValue(name,out var value)?fallback:int.TryParse(value,out var number)?number:throw new ArgumentException("정수 CLI 값이 필요하다: "+name);
 [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(nint value);
+
+sealed class IgnoredInput : RemoteAssist.Host.Core.Input.IInputBackend
+{
+    public int Send(IReadOnlyList<RemoteAssist.Host.Core.Input.InputStroke> strokes) => strokes.Count;
+}

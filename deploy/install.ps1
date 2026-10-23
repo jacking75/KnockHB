@@ -81,7 +81,7 @@ try{
         $owned=OwnedService;if(!$owned){throw 'Installed Host service required'}
         $image=ServiceImage $owned.PathName;$directory=Split-Path $image -Parent
         if([IO.Path]::GetFullPath($Package).TrimEnd('\')-ne$directory){throw 'Support launcher must belong to active installation'}
-        # The elevated launcher owns session.gate and issued the one-use interactive grant.
+        # The elevated launcher wrote the support grant. The service re-reads it after every restart.
         $ticket=Join-Path $state 'initial-support.json';if(!(Test-Path -LiteralPath $ticket)){throw 'Interactive launch authorization required'}
         StopOwned
         try{PrepareHost $directory 'Rollback';PrepareHost $directory 'Prepare';PrepareHost $directory 'Verify';Remove-Item -LiteralPath (Join-Path $state 'ready.json') -Force -ErrorAction SilentlyContinue;Start-Service $serviceName;WaitReady $image;PrepareHost $directory 'Commit'}
@@ -90,6 +90,7 @@ try{
     }
     if($Action-eq'Remove'){
         SupportShortcut -Remove
+        Remove-Item -LiteralPath (Join-Path $state 'initial-support.json') -Force -ErrorAction SilentlyContinue
         StopOwned;if(Get-Service -Name $serviceName -ErrorAction SilentlyContinue){Native "$env:SystemRoot\System32\sc.exe" @('delete',$serviceName)};foreach($name in @('RemoteAssist.Update','RemoteAssist.Recover')){Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue};$versions=Join-Path $root 'versions';SafeTree $versions;if(Test-Path -LiteralPath $versions){foreach($version in Get-ChildItem -LiteralPath $versions -Directory){if(Test-Path (Join-Path $version.FullName 'prepare-host.ps1')){PrepareHost $version.FullName 'Remove'}};Remove-Item -LiteralPath $versions -Recurse -Force}
         Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class RemoteAssistRemoval{[DllImport("kernel32.dll",EntryPoint="MoveFileExW",CharSet=CharSet.Unicode,SetLastError=true)]public static extern bool Schedule(string path,string target,uint flags);}'
         foreach($name in @('RemoteAssist.Update.exe','install.ps1','update.policy.json','trusted-public.pem','highest.version','transaction.json','update.notice.json')){$owned=Join-Path $root $name;if(Test-Path -LiteralPath $owned){try{Remove-Item -LiteralPath $owned -Force -ErrorAction Stop}catch{if(![RemoteAssistRemoval]::Schedule($owned,$null,4)){throw 'Owned uninstall file could not be scheduled for reboot cleanup'}}}};exit 0

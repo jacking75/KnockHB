@@ -19,7 +19,7 @@ static class FileChannelRegression
         {
             var bytes=Enumerable.Range(0,size).Select(i=>(byte)i).ToArray();var sourcePath=Path.Combine(from,"file.dat");await File.WriteAllBytesAsync(sourcePath,bytes);
             var sourceGate=new PermissionGate();var targetGate=new PermissionGate();
-            var sourceGrant=sourceGate.Grant("sid","peer",Capability.File,TimeSpan.FromMinutes(1));var targetGrant=targetGate.Grant("sid","peer",Capability.File,TimeSpan.FromMinutes(1));
+            var sourceGrant=sourceGate.Grant("sid","peer");var targetGrant=targetGate.Grant("sid","peer");
             var failures=new ConcurrentQueue<string>();var audits=new ConcurrentQueue<FileAuditNotice>();
             var sourceDone=new TaskCompletionSource<FileTransferState>(TaskCreationOptions.RunContinuationsAsynchronously);var targetDone=new TaskCompletionSource<FileTransferState>(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var a=new Wire();await using var b=new Wire();

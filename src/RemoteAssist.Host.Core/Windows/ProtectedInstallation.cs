@@ -7,9 +7,16 @@ public static class ProtectedInstallation
 {
     public static string ResolveExecutable(string fileName)
     {
-        if(fileName is not ("RemoteAssist.Host.RunbookWorker.exe" or "RemoteAssist.Host.Service.exe" or "RemoteAssist.Host.Tray.exe" or "RemoteAssist.Host.Helper.exe" or "RemoteAssist.Host.AdminHelper.exe" or "RemoteAssist.Host.Recovery.exe"))
+        if(fileName is not ("RemoteAssist.Host.RunbookWorker.exe" or "RemoteAssist.Host.Service.exe" or "RemoteAssist.Host.Tray.exe" or "RemoteAssist.Host.Helper.exe" or "RemoteAssist.Host.AdminHelper.exe"))
             throw new ArgumentException("고정된 Host 실행 파일만 허용한다.");
         var root=Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        if(Deployment.InstallationState.Development)
+        {
+            // 개발 실행: 같은 폴더의 고정 실행 파일만 쓴다. 경로 ACL은 검사하지 않는다.
+            var local=Path.Combine(root,fileName);
+            if(!File.Exists(local))throw new FileNotFoundException("Host 실행 파일이 없다.",local);
+            return local;
+        }
         var programFiles=Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).TrimEnd(Path.DirectorySeparatorChar);
         if(!root.StartsWith(programFiles+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Host 헬퍼는 보호된 설치 경로가 필요하다.");
         for(var directory=new DirectoryInfo(root);directory is not null&&directory.FullName!=programFiles;directory=directory.Parent)

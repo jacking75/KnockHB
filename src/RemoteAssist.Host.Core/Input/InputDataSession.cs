@@ -11,9 +11,9 @@ internal sealed class InputDataSession(InputSession input,CancellationToken ct,A
     readonly object gate=new();
     byte[]? pointer;
     public Task Completion {get;private set;}=Task.CompletedTask;
-    public void SuspendForApproval(){input.SuspendForApproval();lock(gate)pointer=null;}
-    public long ResumeLocalPhase()=>input.ResumeLocalPhase();
-    public void RebindMonitor(RemoteAssist.Host.Core.Capture.MonitorInfo monitor,long generation,IInputBackend backend)=>input.RebindMonitor(monitor,generation,backend);
+    public void Suspend(){input.Suspend();lock(gate)pointer=null;}
+    public long Resume()=>input.Resume();
+    public void RebindMonitor(RemoteAssist.Host.Core.Capture.MonitorInfo monitor,long generation)=>input.RebindMonitor(monitor,generation);
     public void Start()=>Completion=Run();
     public void Attach(RTCDataChannel channel)
     {
@@ -55,7 +55,6 @@ internal sealed class InputDataSession(InputSession input,CancellationToken ct,A
         catch{fail("원격 입력 처리 실패다.");}
         finally
         {
-            // Independent recovery still restores reserved ups if this thread or native call is killed.
             try{input.Stop();}catch{fail("원격 입력 해제 실패다.");}
             lock(gate)pointer=null;while(reliable.Reader.TryRead(out _)){}
         }

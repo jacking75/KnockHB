@@ -145,3 +145,8 @@ button:disabled {opacity:.45;cursor:default;}
 .features textarea {width:100%;min-height:5rem;font:inherit;resize:vertical;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;}
 .features button {margin:.4rem .3rem 0 0;font-size:.8rem;}
 .features pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:12rem;overflow:auto;font:inherit;font-size:.82rem;}
+
+label.inline { display: flex; gap: .4rem; align-items: center; font-weight: normal; }
+#command-text { min-height: 5rem; font-family: ui-monospace, Consolas, monospace; }
+#command-result { max-height: 18rem; overflow: auto; white-space: pre-wrap; }
+#reconnect-status { color: var(--muted); }

@@ -9,7 +9,7 @@ if(!$certificate.HasPrivateKey-or$certificate.NotAfter-lt(Get-Date)){throw 'Usab
 $dest=[IO.Path]::GetFullPath($Output);if(Test-Path -LiteralPath $dest){throw 'Use a new release output directory'}
 $stage=Join-Path $dest 'payload';New-Item -ItemType Directory -Path $stage -Force|Out-Null
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-foreach($name in @('Service','Tray','Helper','AdminHelper','Recovery','RunbookWorker')){
+foreach($name in @('Service','Tray','Helper','AdminHelper','RunbookWorker')){
     $project=Join-Path $repo "src/RemoteAssist.Host.$name/RemoteAssist.Host.$name.csproj"
     & dotnet publish $project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=$Version -o $stage
     if($LASTEXITCODE-ne0){throw "Publish failed: $name"}

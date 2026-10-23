@@ -1,4 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>$(WindowsTfm)</TargetFramework><OutputType>Exe</OutputType><AssemblyName>ScmFixture</AssemblyName><RestorePackagesWithLockFile>false</RestorePackagesWithLockFile></PropertyGroup>
-  <ItemGroup><Compile Include="../ScmFixture.cs" Link="ScmFixture.cs"/><PackageReference Include="System.ServiceProcess.ServiceController"/></ItemGroup>
-</Project>

@@ -11,14 +11,6 @@ static class FeatureRegression
     static void Reject(Action action){try{action();}catch{return;}throw new Exception("expected rejection did not occur");}
     public static async Task Run()
     {
-        var approvals=new LocalApprovalGate();var request=Guid.NewGuid().ToString("N");Check(approvals.TryBegin(request,"file")&&!approvals.TryBegin(Guid.NewGuid().ToString("N"),"admin"),"approval dialogs overlapped");Reject(()=>approvals.Complete(Guid.NewGuid().ToString("N"),"file"));Check(approvals.Complete(request,"file"),"current local approval not consumed");approvals.End();Check(!approvals.TryBegin(request,"file")&&!approvals.Complete(request,"file"),"ended approval reopened");
-        foreach(var invalid in new[]{0,2,4,5,256})Reject(()=>FeatureContract.Permissions(invalid));
-        foreach(var invalid in new[]{new[]{"chat","screen"},new[]{"diagnostics","diagnostics"},new[]{"unknown"}})Reject(()=>FeatureContract.ParsePermissions(invalid));
-        Check(FeatureContract.Channels(32).SequenceEqual(new[]{"control","telemetry"}),"diagnostics only demanded input/video");
-        Check(FeatureContract.Channels(144).SequenceEqual(new[]{"control","chat"}),"duplicate clipboard/chat channel");
-        var ready=new ControlMessage {T="data-ready",Id="ready",SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,Permissions=["diagnostics"],Channels=["control","telemetry"]};
-        Check(ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(ready)).Monitor is null,"screen-free ready failed");
-        Reject(()=>ControlMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(ready with {Monitor=new("DISPLAY",1,0,0,1920,1080)})));
         var clip=new FeatureMessage {T="clipboard-set",Id=Guid.NewGuid().ToString("N"),SessionId="sid",Generation=1,PermissionGeneration=1,Sequence=1,Text="한글😀",Hash=FeatureMessage.TextHash("한글😀")};
         Check(FeatureMessage.Parse(JsonSerializer.SerializeToUtf8Bytes(clip)).Text==clip.Text,"clipboard Unicode lost");
         var get=clip with {T="clipboard-get",Text=null,Hash=null};
@@ -32,14 +24,13 @@ static class FeatureRegression
         var json=Encoding.UTF8.GetString(JsonSerializer.SerializeToUtf8Bytes(message));Check(json.Contains("\"cpuPercent\":null")&&json.Contains("\"eventId\":70000")&&!json.Contains("TotalBytes"),"diagnostics wire casing or event ID drift");
         foreach(var invalid in new[]{snapshot with {CpuPercent=double.NaN},snapshot with {Services=[new("C:\\secret","Running")]},snapshot with {Memory=new(9007199254740992L,1)},snapshot with {Disks=[null!]}})Reject(invalid.Validate);
         var clock=new Clock();var quota=new FeatureQuota(2,clock);Check(quota.Allow()&&quota.Allow()&&!quota.Allow(),"clipboard quota overflow");clock.Ticks=TimeSpan.TicksPerSecond;Check(quota.Allow(),"quota failed to reopen");
-        var permissions=new PermissionGate();var grant=permissions.Grant("sid","peer",Capability.Diagnostics,TimeSpan.FromMinutes(1));
-        Check(!permissions.Allows(Capability.Screen,grant.Generation)&&!permissions.Allows(Capability.Clipboard,grant.Generation),"diagnostics implied privilege");
+        var permissions=new PermissionGate();var grant=permissions.Grant("sid","peer");
         using var started=new ManualResetEventSlim();using var release=new ManualResetEventSlim();int calls=0,sends=0;
         var provider=new Provider(()=>{Interlocked.Increment(ref calls);started.Set();release.Wait();return snapshot;});
         var collecting=DiagnosticsLoop.CollectOnce(provider,permissions,grant,_=>sends++,CancellationToken.None);
-        try{Check(started.Wait(TimeSpan.FromSeconds(1)),"provider never started");permissions.Revoke();}finally{release.Set();}
-        Check(!await collecting&&sends==0&&calls==1,"revoked diagnostics escaped");
-        Check(!await DiagnosticsLoop.CollectOnce(provider,permissions,grant,_=>sends++,CancellationToken.None)&&calls==1,"revoked provider collected again");
+        try{Check(started.Wait(TimeSpan.FromSeconds(1)),"provider never started");permissions.End();}finally{release.Set();}
+        Check(!await collecting&&sends==0&&calls==1,"diagnostics sent after the session ended");
+        Check(!await DiagnosticsLoop.CollectOnce(provider,permissions,grant,_=>sends++,CancellationToken.None)&&calls==1,"ended session collected again");
         using var cancel=new CancellationTokenSource();cancel.Cancel();
         try{await DiagnosticsLoop.CollectOnce(provider,permissions,grant,_=>sends++,cancel.Token);throw new Exception("cancel allowed provider");}catch(OperationCanceledException){}
     }

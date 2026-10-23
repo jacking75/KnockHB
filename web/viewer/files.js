@@ -1,4 +1,5 @@
 import { Sha256 } from './sha256.js';
+import { randomId } from './features.js';
 const max=256*1024*1024,chunk=16384,guid=/^[a-f0-9]{32}$/,hash=/^[a-f0-9]{64}$/;
 export const maxDownloadBytes=8*1024*1024;
 function bounded(operation,ms=10000){let timer;return Promise.race([operation,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('파일 I/O 시간 초과다.')),ms);})]).finally(()=>clearTimeout(timer));}
@@ -26,7 +27,7 @@ export class FileSession {
   abort(owner){if(!owner.writer)return Promise.resolve();return bounded(Promise.resolve(owner.io).catch(()=>{}).then(()=>{if(!owner.committed)return owner.writer.abort();}),2000);}
   async wait(owner,predicate,ms=10000){const until=this.c.now()+ms;while(!predicate()){if(!this.live(owner))throw Error('파일 전송 취소다.');if(this.c.now()>=until)throw Error('파일 응답 시간 초과다.');await new Promise(resolve=>setTimeout(resolve,10));}if(!this.live(owner))throw Error('파일 전송 취소다.');}
   async offer(file){if(!this.ready()||this.current||!safeFileName(file.name)||!Number.isSafeInteger(file.size)||file.size<0||file.size>max)return false;
-    const owner={id:crypto.randomUUID().replaceAll('-',''),name:file.name,size:file.size,outgoing:true,phase:'hash',at:this.c.now(),started:this.c.now(),sentChunks:0,ack:0};this.remember(owner.id);this.current=owner;
+    const owner={id:randomId(),name:file.name,size:file.size,outgoing:true,phase:'hash',at:this.c.now(),started:this.c.now(),sentChunks:0,ack:0};this.remember(owner.id);this.current=owner;
     try{const h=new Sha256();for(let at=0;at<file.size;at+=chunk){if(!this.live(owner))throw Error('취소다.');const bytes=new Uint8Array(await bounded(file.slice(at,at+chunk).arrayBuffer()));if(!this.live(owner))throw Error('취소다.');h.update(bytes);owner.at=this.c.now();}if(!this.live(owner))throw Error('취소다.');owner.hash=h.hex();owner.phase='offered';owner.at=this.c.now();this.send('file-offer',{name:owner.name,size:owner.size,hash:owner.hash});this.status(owner,'대상 PC의 수신 준비를 기다린다.');await this.wait(owner,()=>owner.phase==='sending',30000);
       for(let at=0;at<file.size;at+=chunk){await this.wait(owner,()=>this.c.channels.get('file').bufferedAmount<65536&&owner.sentChunks-owner.ack<16);const bytes=new Uint8Array(await bounded(file.slice(at,at+chunk).arrayBuffer()));if(!this.live(owner))throw Error('취소다.');const packet=new Uint8Array(32+bytes.length),view=new DataView(packet.buffer);packet.set([82,65,70,84]);view.setUint16(4,1,true);packet.set(owner.id.match(/../g).map(x=>parseInt(x,16)),8);view.setUint32(24,owner.sentChunks++,true);view.setUint32(28,bytes.length,true);packet.set(bytes,32);this.c.channels.get('file').send(packet.buffer);owner.at=this.c.now();}
       await this.wait(owner,()=>this.c.channels.get('file').bufferedAmount<65536);owner.phase='receipt';this.send('file-complete',{size:owner.size,hash:owner.hash});await this.wait(owner,()=>owner.phase==='completed');this.finish(owner,'전송 완료다.');

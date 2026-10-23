@@ -21,7 +21,6 @@ import (
 func newTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	s := New(Config{SessionTTL: time.Minute}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.issuance = newLimiter(1000, time.Minute, 4096)
 	ts := httptest.NewServer(s.Routes())
 	t.Cleanup(ts.Close)
 	return s, ts

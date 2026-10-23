@@ -51,7 +51,26 @@ func TestMalformedFramesRejected(t *testing.T) {
 		})
 	}
 }
-func TestViewerCannotGrantConsent(t *testing.T) {
+func TestNewViewerTakesOverAndOldViewerStopsRetrying(t *testing.T) {
+	_, ts := newTestServer(t)
+	sess := createSession(t, ts)
+	h := dial(t, ts)
+	joinHost(t, h, sess)
+	first := dial(t, ts)
+	joinViewer(t, first, sess)
+	read(t, h) // peer-joined
+	second := dial(t, ts)
+	if m := joinViewer(t, second, sess); m.Type != "error" || m.Code != "busy" {
+		t.Fatal("second viewer must retry after takeover", m)
+	}
+	if m := read(t, first); m.Type != "error" || m.Code != "replaced" {
+		t.Fatal("replaced viewer was not told to stop", m)
+	}
+	if m := read(t, h); m.Type != "peer-left" {
+		t.Fatal("host did not see the replaced viewer leave", m)
+	}
+}
+func TestViewerCannotSendOffer(t *testing.T) {
 	_, ts := newTestServer(t)
 	sess := createSession(t, ts)
 	h := dial(t, ts)
@@ -59,9 +78,9 @@ func TestViewerCannotGrantConsent(t *testing.T) {
 	v := dial(t, ts)
 	joinViewer(t, v, sess)
 	read(t, h)
-	write(t, v, Msg{Type: "consent", Permissions: []string{"screen", "admin"}})
+	write(t, v, Msg{Type: "offer", SDP: "v=0"})
 	if msg := read(t, h); msg.Type != "peer-left" {
-		t.Fatal("viewer grant relayed", msg)
+		t.Fatal("viewer offer relayed", msg)
 	}
 }
 func TestShutdownClosesHijackedSockets(t *testing.T) {
@@ -125,17 +144,5 @@ func TestBinaryAndInvalidUTF8AreRejected(t *testing.T) {
 			t.Fatal("invalid transport accepted")
 		}
 		cancel()
-	}
-}
-func TestDisplayNameUsesUTF16UnitsAndRejectsControls(t *testing.T) {
-	for _, valid := range []string{"지원자", strings.Repeat("가", 80), strings.Repeat("😀", 40)} {
-		if !validDisplayName(valid) {
-			t.Fatal("valid Unicode name rejected")
-		}
-	}
-	for _, invalid := range []string{"", " ", " a", "a\n", strings.Repeat("가", 81), strings.Repeat("😀", 41)} {
-		if validDisplayName(invalid) {
-			t.Fatal("invalid name accepted")
-		}
 	}
 }

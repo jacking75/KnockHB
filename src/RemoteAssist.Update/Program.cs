@@ -28,18 +28,19 @@ static class UpdateProgram
             if(Directory.Exists(data))InstallationState.DemandProtected(data);
             if(args is ["support-dev"])
             {
-                using var idle=TrySessionGate();if(idle==null)throw new InvalidOperationException("End the current support session before starting a new one.");
                 await DevSupportLauncher.Run();
                 return 0;
             }
             if(args.Length==1&&args[0] is "update" or "support"){var forwarded=await ForwardToActive(args);if(forwarded.HasValue)return forwarded.Value;}
             if(args is ["support"])
             {
-                using var idle=TrySessionGate();if(idle==null)throw new InvalidOperationException("현재 지원 세션을 먼저 종료해야 한다.");
+                // 다시 실행하면 허가를 새로 쓰고 서비스를 다시 시작한다. 진행 중인 지원은 다시 접속한다.
                 InstallationState.CheckDirectory(AppContext.BaseDirectory);
                 DemandRecoveredInstall();
                 initialGrant=InitialSupportLaunch.Issue();
-                return await Installer("Support",AppContext.BaseDirectory);
+                var supported=await Installer("Support",AppContext.BaseDirectory);
+                if(supported==0)initialGrant=null; // 성공한 허가는 서비스가 계속 쓴다.
+                return supported;
             }
             if(args.Length==1&&args[0]=="recover")return await Installer("Recover",root);
             if(args.Length==1&&args[0]=="remove")return await Installer("Remove",root);
@@ -72,10 +73,12 @@ static class UpdateProgram
             await release.Extract(archive,staging,deadline.Token);await File.WriteAllBytesAsync(Path.Combine(staging,"release.json"),raw,deadline.Token);await File.WriteAllBytesAsync(Path.Combine(staging,"release.sig"),await File.ReadAllBytesAsync(signature,deadline.Token),deadline.Token);await File.WriteAllTextAsync(Path.Combine(staging,"trusted-public.pem"),key,deadline.Token);
             ProtectDirectory(staging);
             if(initialLaunch){DemandRecoveredInstall();initialGrant=InitialSupportLaunch.Issue();}
-            return await Installer("Install",staging);
+            var installed=await Installer("Install",staging);
+            if(installed==0)initialGrant=null;
+            return installed;
         }
         catch(Exception ex){Console.Error.WriteLine("업데이트/설치 실패: "+ex.Message);return 1;}
-        finally{if(initialGrant!=null){try{InitialSupportLaunch.Cancel(initialGrant.Id);}catch{Console.Error.WriteLine("최초 실행 허가 정리가 보류됐다. 다시 실행하기 전에 보호된 상태를 점검해야 한다.");}}foreach(var path in new[]{ownedDownload,ownedStage})if(path!=null&&Directory.Exists(path)){try{InstallationState.DemandProtected(path);Directory.Delete(path,true);}catch{Console.Error.WriteLine("보호된 업데이트 임시 디렉터리 정리가 보류됐다.");}}}
+        finally{if(initialGrant!=null){try{InitialSupportLaunch.Revoke(initialGrant.Id);}catch{Console.Error.WriteLine("실패한 실행의 지원 허가를 지우지 못했다.");}}foreach(var path in new[]{ownedDownload,ownedStage})if(path!=null&&Directory.Exists(path)){try{InstallationState.DemandProtected(path);Directory.Delete(path,true);}catch{Console.Error.WriteLine("보호된 업데이트 임시 디렉터리 정리가 보류됐다.");}}}
     }
     static void DemandRecoveredInstall()
     {

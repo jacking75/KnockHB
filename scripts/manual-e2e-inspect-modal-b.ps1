@@ -1,2 +1,0 @@
-$ErrorActionPreference='Stop'
-@{utc=[DateTime]::UtcNow.ToString('o');processes=@(Get-CimInstance Win32_Process | Where-Object {$_.Name-match'^(consent|rundll32|dllhost|SecurityHealthHost|CredentialUIBroker|RemoteAssist.*|powershell|mshta)\.exe$'} | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CreationDate);windows=@(Get-Process | Where-Object {$_.MainWindowTitle} | Select-Object Id,ProcessName,MainWindowTitle);service=(Get-Service RemoteAssistHost).Status.ToString()}|ConvertTo-Json -Depth 6

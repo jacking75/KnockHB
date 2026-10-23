@@ -16,7 +16,6 @@ public static class HostSettings
         var fields=new HashSet<string>(StringComparer.Ordinal);
         foreach(var field in document.RootElement.EnumerateObject())if(!fields.Add(field.Name))throw new InvalidDataException("중복 Host 설정이다.");
         var result=JsonSerializer.Deserialize<ScreenShareOptions>(text,new JsonSerializerOptions {UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow})??throw new InvalidDataException("Host 설정 오류다.");
-        if(result.StunServers is null)throw new InvalidDataException("STUN 설정이 null이다.");
         result.Validate(256);return result;
     }
 }

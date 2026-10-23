@@ -91,10 +91,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "stopping", http.StatusServiceUnavailable)
 		return
 	}
-	if len(s.cfg.TURNURLs) > 0 && len(s.turnSecret()) < 32 {
-		http.Error(w, "TURN key unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	if s.cfg.OperatorSecretFile != "" && ReadSecretFile(s.cfg.OperatorSecretFile) == "" {
 		http.Error(w, "node key unavailable", http.StatusServiceUnavailable)
 		return

@@ -4,8 +4,8 @@
 //  1. 세션 코드 발급 (POST /session). Host가 고정 device code를 지정할 수 있다
 //  2. 같은 룸의 두 피어 사이에서 SDP/ICE를 그대로 옮겨 주기 (GET /ws)
 //
-// 미디어는 여기를 거치지 않는다. 협상이 끝나면 Host와 Viewer가 직접(또는 TURN 경유로)
-// 연결하고, 서버는 더 이상 관여하지 않는다.
+// 미디어는 여기를 거치지 않는다. 협상이 끝나면 Host와 Viewer가 지정 IP로 직접 연결하고,
+// 서버는 더 이상 관여하지 않는다. STUN/TURN 서버는 쓰지 않는다.
 //
 // 와이어 포맷의 기준은 docs/protocol.md 다. 이 파일이 아니다.
 package signaling
@@ -48,17 +48,14 @@ const (
 
 // Msg 는 시그널링 메시지다. 필드명 기준은 docs/protocol.md.
 type Msg struct {
-	ICEServers           []ICEServer `json:"iceServers,omitempty"`
-	Version              int         `json:"v"`
-	SessionID            string      `json:"sessionId,omitempty"`
-	ConnectionID         string      `json:"connectionId,omitempty"`
-	Generation           int         `json:"generation,omitempty"`
-	PermissionGeneration int         `json:"permissionGeneration,omitempty"`
-	Permissions          []string    `json:"permissions,omitempty"`
-	DisplayName          string      `json:"displayName,omitempty"`
-	Type                 string      `json:"type"`
-	Room                 string      `json:"room,omitempty"`
-	Role                 string      `json:"role,omitempty"`
+	Version      int    `json:"v"`
+	SessionID    string `json:"sessionId,omitempty"`
+	ConnectionID string `json:"connectionId,omitempty"`
+	Generation   int    `json:"generation,omitempty"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Type         string `json:"type"`
+	Room         string `json:"room,omitempty"`
+	Role         string `json:"role,omitempty"`
 
 	// 참가 인증용. 절대 반대편으로 릴레이하지 않는다.
 	Token string `json:"token,omitempty"`
@@ -85,11 +82,8 @@ type Config struct {
 	// SessionTTL 은 세션 코드로 참가할 수 있는 기간이다.
 	SessionTTL time.Duration
 	// OriginPatterns 는 브라우저 뷰어의 허용 Origin이다. 비우면 동일 호스트만 허용된다.
-	OriginPatterns     []string
-	STUNURLs           []string
-	TURNURLs           []string
-	TURNSecret        string
-	TURNSecretFile     string
+	OriginPatterns []string
+	// 선택 사항. 비우면 /audit·/metrics를 쓰지 않는다.
 	OperatorSecretFile string
 	AuditDirectory     string
 }
@@ -103,7 +97,6 @@ type Server struct {
 	connections       map[*websocket.Conn]struct{}
 	stopping          bool
 	pending           int
-	issuance          *requestLimiter
 	beforeACK         func(*room.Peer) // deterministic barrier, nil outside tests
 	readLease         time.Duration
 	heartbeatInterval time.Duration
@@ -128,7 +121,6 @@ func New(cfg Config, log *slog.Logger) *Server {
 		cfg:               cfg,
 		log:               log,
 		connections:       make(map[*websocket.Conn]struct{}),
-		issuance:          newLimiter(60, time.Minute, 4096),
 		readLease:         15 * time.Second,
 		heartbeatInterval: 5 * time.Second,
 	}
@@ -183,16 +175,11 @@ func readFixedCode(r *http.Request) (string, error) {
 	return body.Code, nil
 }
 
-// handleCreateSession 은 Host 앱이 "세션 시작"을 눌렀을 때 호출한다.
-//
-// Out-of-band pairing is the selected identity model; issuance is bounded per source IP.
+// handleCreateSession 은 Host 헬퍼가 지원 대기를 시작할 때 호출한다.
+// Host는 고정 지원 ID를 보내 같은 방 번호를 계속 쓴다.
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		http.Error(w, "Origin 거부", http.StatusForbidden)
-		return
-	}
-	if !s.issuance.Allow(remoteIP(r)) {
-		http.Error(w, "발급 요청 상한", http.StatusTooManyRequests)
 		return
 	}
 	fixedCode, err := readFixedCode(r)
@@ -307,13 +294,25 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2) 룸 확인과 참가 인증.
-	if !decimalField(first.Room, 9) || (first.Role == room.RoleViewer && !validDisplayName(first.DisplayName)) {
+	// 2) 룸 확인. Host만 토큰으로 자기 방을 증명한다. Viewer는 지원 ID만으로 들어온다.
+	if !decimalField(first.Room, 9) {
 		s.reject(ctx, conn, c, "bad-request", "참가 필드 오류")
 		return
 	}
-	peer := &room.Peer{ID: peerID(r), Role: first.Role, DisplayName: first.DisplayName, Conn: conn}
+	peer := &room.Peer{ID: peerID(r), Role: first.Role, DisplayName: displayName(first.DisplayName), Conn: conn,
+		Kick: func() {
+			_ = conn.WriteJSON(context.Background(), errMsg("replaced", "다른 지원자 화면이 접속을 이어받았다"))
+			_ = c.CloseNow()
+		}}
 	rm, err := s.rooms.Reserve(first.Room, first.Role, first.Token, peer)
+	if errors.Is(err, room.ErrSlotTaken) && first.Role == room.RoleViewer {
+		// 새 Viewer가 접속을 이어받는다. 기존 Viewer를 내보내면 Host가 새 지원 대기를 다시 연다.
+		if old := s.rooms.Viewer(first.Room); old != nil && old.Kick != nil {
+			old.Kick()
+		}
+		s.reject(ctx, conn, c, "busy", "이전 연결을 정리하는 중이다")
+		return
+	}
 	if err != nil {
 		s.reject(ctx, conn, c, errCode(err), err.Error())
 		return
@@ -321,11 +320,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer s.leave(rm, peer)
 
 	// 3) 참가 알림.
-	iceServers := s.iceServers(rm.SessionID, peer.ID, time.Now())
-	if len(s.cfg.TURNURLs) > 0 && len(iceServers) == 0 {
-		s.reject(ctx, conn, c, "unavailable", "TURN key unavailable")
-		return
-	}
 	other := rm.Other(peer)
 	present := other != nil
 	if s.beforeACK != nil {
@@ -334,7 +328,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err := conn.WriteJSON(ctx, Msg{
 		Type: "joined", Room: rm.Code, Role: peer.Role, PeerPresent: &present,
 		SessionID: rm.SessionID, ConnectionID: peer.ID, Generation: 1,
-		ICEServers: iceServers,
 	}); err != nil {
 		return
 	}
@@ -384,35 +377,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch m.Type {
-		case "turn-refresh":
-			if !rm.Refresh(peer.Role, time.Now()) {
-				return
-			}
-			p := rm.Other(peer)
-			if p == nil {
-				return
-			}
-			local := s.iceServers(rm.SessionID, peer.ID, time.Now())
-			remote := s.iceServers(rm.SessionID, p.ID, time.Now())
-			if len(s.cfg.TURNURLs) > 0 && (len(local) == 0 || len(remote) == 0) {
-				return
-			}
-			gen, ok := rm.Negotiation(peer.Role, "ice", m.Generation)
-			if !ok {
-				return
-			}
-			if err := p.Conn.WriteJSON(ctx, Msg{Type: "turn-credentials", SessionID: rm.SessionID, Generation: gen, ICEServers: remote}); err != nil {
-				return
-			}
-			if err := conn.WriteJSON(ctx, Msg{Type: "turn-credentials", SessionID: rm.SessionID, Generation: gen, ICEServers: local}); err != nil {
-				return
-			}
 		case "ping":
 			if err := conn.WriteJSON(ctx, Msg{Type: "pong"}); err != nil {
 				return
 			}
 		case "pong":
-		case "offer", "answer", "ice", "bye", "consent", "consent-pending", "consent-denied":
+		case "offer", "answer", "ice", "bye":
 			generation, valid := rm.Negotiation(peer.Role, m.Type, m.Generation)
 			if !valid {
 				if m.Generation < generation {
@@ -420,28 +390,20 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			if (m.Type == "offer" || m.Type == "consent" || m.Type == "consent-pending" || m.Type == "consent-denied") && peer.Role != room.RoleHost {
+			if m.Type == "offer" && peer.Role != room.RoleHost || m.Type == "answer" && peer.Role != room.RoleViewer {
 				return
-			}
-			if m.Type == "answer" && peer.Role != room.RoleViewer {
-				return
-			}
-			if m.Type == "consent" {
-				if _, ok := permissionMask(m.Permissions); !ok || m.PermissionGeneration != 1 {
-					return
-				}
 			}
 			if len(m.SDP) > 96<<10 || (m.ICE != nil && len(m.ICE.Candidate) > 8192) {
 				return
 			}
 			if p := rm.Other(peer); p != nil {
-				// 인증 필드(pin/token)를 떼고 필요한 것만 넘긴다.
+				// 인증 필드(token)를 떼고 필요한 것만 넘긴다.
 				if err := p.Conn.WriteJSON(ctx, Msg{
 					Type:      m.Type,
 					Room:      rm.Code,
 					SDP:       m.SDP,
 					ICE:       m.ICE,
-					SessionID: rm.SessionID, Generation: generation, PermissionGeneration: m.PermissionGeneration, Permissions: m.Permissions,
+					SessionID: rm.SessionID, Generation: generation,
 				}); err != nil {
 					return
 				}
@@ -469,16 +431,23 @@ func decimalField(value string, size int) bool {
 	}
 	return true
 }
-func validDisplayName(value string) bool {
-	if strings.TrimSpace(value) != value || value == "" || len(utf16.Encode([]rune(value))) > 80 {
-		return false
-	}
-	for _, character := range value {
+
+// displayName 은 표시용 이름을 다듬는다. 이름은 신원 확인에 쓰지 않으므로 거부하지 않는다.
+func displayName(value string) string {
+	var out []rune
+	for _, character := range strings.TrimSpace(value) {
 		if unicode.IsControl(character) {
-			return false
+			continue
 		}
+		if len(utf16.Encode(append(out, character))) > 80 {
+			break
+		}
+		out = append(out, character)
 	}
-	return true
+	if len(out) == 0 {
+		return "지원자"
+	}
+	return string(out)
 }
 
 // leave 는 피어를 룸에서 빼고, 남은 쪽에 알리고, 빈 룸을 지운다.
