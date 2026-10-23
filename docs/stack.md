@@ -1,12 +1,6 @@
 # 기술 스택 · 버전 고정
 
-> **확인일 2026-08-24.** 아래 버전은 이날 실제로 조회·빌드해 확인한 값이다.
-> 버전을 올릴 때는 이 문서와 `Directory.Packages.props`를 함께 고친다.
-
-> **기록의 범위 (2026-10-07 보충):** 아래 설치·측정·배치 완료 표는 2026-08-24 환경의 기록이다.
-> 현재 checkout의 도구 설치나 FFmpeg 바이너리 존재, 다른 GPU의 인코딩 성공을 보증하지 않는다.
-> 현재 사양은 [기술 사양](technical-specification.md), 준비 절차는 [실행 가이드](development-guide.md)를 따른다.
-> 특히 인코더별 “사용 가능”과 전체 DoD는 리뷰 R01/R17/G06에 따라 재검증해야 한다.
+> 버전을 올릴 때는 이 문서와 `Directory.Packages.props`를 함께 고친다. 현재 설정·상한은 [기술 사양](technical-specification.md)이 기준이다.
 
 ---
 
@@ -37,7 +31,6 @@
 | Docker | **29.0.1** | 터널링 서버 컨테이너용 |
 | Git | 2.52.0.windows.1 | |
 
-> **미완료:** 테스트 머신 2대(대상 PC / 지원자 PC). LAN P2P·서비스 설치 검증에 필요하다. VM 2대로 대체 가능.
 
 ---
 
@@ -70,7 +63,6 @@
 | 모듈 | 버전 | 용도 | 상태 |
 |---|---|---|---|
 | `github.com/coder/websocket` | **v1.8.15** | 터널링 서버 WebSocket | ✅ 적용됨 (T1.1). 유일한 외부 의존성 |
-| `github.com/gorilla/websocket` | v1.5.3 | 대안 | 위가 안 맞을 때만 |
 
 ---
 
@@ -87,7 +79,7 @@
 | H.264 인코더 | `h264_nvenc` → `h264_qsv` → `h264_amf` → `h264_mf`, 없으면 `libopenh264` |
 | 링크 | 동적 링크, 별도 DLL 유지. **단일 실행파일로 합치지 않는다** |
 
-### 배치 완료 (2026-08-24)
+### 동봉 빌드
 
 | 항목 | 값 |
 |---|---|
@@ -97,9 +89,7 @@
 | 검증 | `--enable-gpl` 없음, `--disable-libx264` 확인 |
 | H.264 인코더 | `libopenh264`, `h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_mf`, `h264_d3d12va`, `h264_vaapi`, `h264_vulkan` |
 
-> **설치본 용량 주의.** DLL만 137MB다. 필요 없는 코덱을 뺀 최소 빌드를 T6.1에서 검토한다.
-> 참고로 이 개발 머신에 `winget`으로 깔려 있던 FFmpeg는 `--enable-gpl --enable-libx264` + static 이라
-> **동봉하면 안 되는 빌드의 전형**이었다. 시스템 FFmpeg에 의존하지 않는 이유가 이것이다.
+> 시스템 PATH의 FFmpeg(대개 GPL·libx264 포함 빌드)는 쓰지 않는다. 동봉 DLL만 명시 경로에서 로드한다.
 
 ---
 
@@ -131,22 +121,3 @@
 
 STUN/TURN 서버는 쓰지 않는다. 두 PC는 지정 IP로 항상 직접 연결된다.
 
----
-
-## 8. 검증 상태
-
-| 항목 | 결과 |
-|---|---|
-| `dotnet build RemoteAssist.slnx` | ✅ 성공 — 경고 0, 오류 0 |
-| SIPSorcery 10.0.16 on `net10.0-windows` | ✅ 복원·컴파일 확인 (.NET 10 지원 실증) |
-| `go build ./...` (`server/tunnel`) | ✅ 성공 |
-| `go vet ./...` · `gofmt -l` | ✅ 지적사항 없음 |
-| `go test ./...` | ✅ 10개 통과 (터널링 서버 릴레이·룸 정리·인증·고루틴 누수) |
-| 터널링 서버 실동작 | ✅ TCP 25001에서 `/healthz`·`POST /session` 확인 |
-| 화면 캡처 (WGC) | ✅ 1920x1080 PNG 덤프 확인 (`tools/RemoteAssist.CaptureDump`) |
-| 화면 캡처 (DXGI) | ❌ **이 개발 머신에서 미지원** — 하이브리드 GPU(Intel UHD + NVIDIA GTX 1660 Ti Max-Q)에서 `DXGI_ERROR_UNSUPPORTED`. 폴백 경로로만 유지하며, 단일 GPU 머신에서 별도 검증 필요 |
-| H.264 인코딩 | ✅ 1080p **97.8fps**, 출력 지연 0프레임 (`h264_nvenc`). 5개 인코더 모두 사용 가능, libx264는 선택 불가 |
-| WebRTC 종단간 | ✅ Host → 브라우저 뷰어 1920x1080 표시, 경로 **P2P**, ~17fps / 1.2~3.2Mbps |
-| 파이프라인 처리량 | ⚠️ 목표 20fps 대비 **실측 ~17fps**. 인코더는 97fps를 내므로 병목은 BGRA→I420 변환과 프레임당 8MB CPU 복사다. T6.3에서 다룬다 |
-| 다중 머신 검증 | ❌ **미실시** — 지금까지 전부 한 대에서 루프백. LAN P2P·NAT 통과는 T0.1의 머신 2대 확보 후 |
-| `go test -race` | ⚠️ **미실행** — 이 머신에 gcc가 없어 cgo가 안 된다. CI(리눅스) 또는 golang 도커 이미지에서 돌려야 한다 |

@@ -30,7 +30,7 @@ dotnet run --project tools/RemoteAssist.HostRun -c Release -- --encoder-check --
    ```powershell
    cd server/tunnel
    $env:RA_MODE='lan'; $env:RA_LISTEN='0.0.0.0:25001'; $env:RA_TLS_CERT='<폴더>/server-cert.pem'; $env:RA_TLS_KEY='<폴더>/server-key.pem'; $env:RA_VIEWER_DIR='../../web/viewer'
-   go run .
+   go build -o ../../.artifacts/tunnel.exe . ; ../../.artifacts/tunnel.exe   # go run의 임시 exe는 실행마다 방화벽 확인 창을 띄운다
    ```
 3. Host 후보를 만든다. 자체 서명이면 DER 인증서를 핀 고정한다.
    ```powershell
@@ -39,7 +39,9 @@ dotnet run --project tools/RemoteAssist.HostRun -c Release -- --encoder-check --
 4. 대상 PC의 관리자 PowerShell에서 설치한다: `scripts/install-host-dev.ps1 -Action Install -Package .artifacts/<폴더>`.
 5. 대상 사용자가 `Program Files\RemoteAssist-Dev\RemoteAssist.Update.exe`를 관리자 권한으로 실행한다. Tray에 지원 ID가 뜬다.
 6. 지원자 PC 브라우저에서 `https://<서버 IP>:25001/`을 열고 지원 ID로 접속한다.
-7. 제거: `scripts/install-host-dev.ps1 -Action Remove`.
+7. 제거: `scripts/install-host-dev.ps1 -Action Remove`(서비스·설치 폴더·방화벽 규칙·GPU 지정·지원 허가를 지운다).
+
+두 PC 시험에서는 1~4단계를 `scripts/e2e-prepare.ps1`이 대신한다([두 PC 실연결 시험](live-e2e-test.md)).
 
 개발 설치와 빌드 출력 실행은 개발 모드다. 보호 경로 ACL·릴리스 manifest 검사를 생략하므로 시험 PC에서만 쓴다.
 
