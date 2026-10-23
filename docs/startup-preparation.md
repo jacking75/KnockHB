@@ -26,7 +26,7 @@
 
 ## 관리자 헬퍼 GPU 지정
 
-하이브리드 GPU 노트북(내장 + 외장)은 DXGI 앱을 외장 GPU에 배정한다. 그러면 내장 GPU가 구동하는 패널 출력을 Desktop Duplication으로 복제할 수 없다(`DuplicateOutput` → `0x887A0004` DXGI_ERROR_UNSUPPORTED, 2026-10-23 Intel UHD + GTX 1660 Ti에서 실측). Prepare는 SYSTEM 하이브(`HKU\S-1-5-18\Software\Microsoft\DirectX\UserGpuPreferences`)에 버전 경로의 `RemoteAssist.Host.AdminHelper.exe`를 `GpuPreference=1;`(절전 GPU)로 등록하고 Rollback·Remove에서 지운다. 단일 GPU·일반 다중 GPU PC에서는 출력을 가진 어댑터로 장치를 만들기 때문에 영향이 없다. 하이브리드 노트북에서 외장 GPU에 직결된 외부 모니터는 여전히 관리자 캡처가 안 될 수 있다. 이때는 관리자 모드만 거부되고 일반 지원은 계속된다. 필수 조건이 아니므로 Verify는 이 값을 검사하지 않는다.
+일부 하이브리드 GPU 노트북(내장 + 외장)에서는 DXGI 앱이 외장 GPU에 배정되어, 내장 GPU가 구동하는 패널 출력을 Desktop Duplication으로 복제할 수 없다(`DuplicateOutput` → `0x887A0004` DXGI_ERROR_UNSUPPORTED, 2026-10-23 Intel UHD + GTX 1660 Ti에서 실측). Prepare는 SYSTEM 하이브(`HKU\S-1-5-18\Software\Microsoft\DirectX\UserGpuPreferences`)에 버전 경로의 `RemoteAssist.Host.AdminHelper.exe`를 `GpuPreference=1;`(절전 GPU)로 등록하고 Rollback·Remove에서 지운다. 단일 GPU·일반 다중 GPU PC에서는 출력을 가진 어댑터로 장치를 만들기 때문에 영향이 없다. 하이브리드 노트북에서 외장 GPU에 직결된 외부 모니터는 여전히 관리자 캡처가 안 될 수 있다. 이때는 관리자 모드만 거부되고 일반 지원은 계속된다. 필수 조건이 아니므로 Verify는 이 값을 검사하지 않는다.
 
 ## SAS 사전 준비
 

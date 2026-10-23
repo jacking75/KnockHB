@@ -54,7 +54,6 @@ node --test web/viewer/tests/*.test.js
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/loopback-check.ps1
 ```
 
-- 개발 설치(대상 PC에 직접 설치)는 [실행·검증 가이드](docs/development-guide.md)를 따른다.
 - 두 PC 실연결 시험은 [두 PC 실연결 시험](docs/live-e2e-test.md)을 따른다.
 
 ## 저장소 구조
@@ -83,11 +82,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/loopback-check.ps1
 | [기술 사양](docs/technical-specification.md) | 설정, 상한, 의존성 |
 | [프로토콜](docs/protocol.md) | 와이어 포맷의 단일 기준 |
 | [워크플로우](docs/workflows.md) | 시작·연결·기능·재접속 흐름 |
-| [주요 로직](docs/core-logic.md) | 코드 책임과 소유권 |
 | [최초 관리자 실행](docs/startup-preparation.md) | 지원 허가, 방화벽·SAS·GPU 준비 |
-| [실행·검증 가이드](docs/development-guide.md) | 로컬 검사, 개발 설치 |
 | [두 PC 실연결 시험](docs/live-e2e-test.md) | E2E 방법, 현재 상태, 남은 과제 |
-| [스택](docs/stack.md) | 언어 선택, 버전 고정, 포트 |
 | [설치/업데이트](deploy/installation.md) | 서명·보호 설치·롤백 |
 | [터널링 서버 운영](deploy/tunnel/README.md) | TLS·감사·컨테이너 |
 

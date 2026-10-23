@@ -8,11 +8,11 @@
 
 ## 터널링 서버
 
-모든 메시지는 정수 `v:1`이 필요하다. 누락·다른 버전·중복 JSON 필드·잘못된 타입·128KiB 초과·binary는 거부하고 연결을 끊는다. 미등록 필드도 거부한다.
+WebSocket 메시지는 정수 `v:1`이 필요하다. 누락·다른 버전·중복 JSON 필드·잘못된 타입·128KiB 초과·binary는 거부하고 연결을 끊는다. 미등록 필드도 거부한다. HTTP `POST /session` 본문에는 `v` 필드가 없다.
 
 ### 방 열기
 
-`POST /session`은 선택적 본문 `{"code":"<9자리>"}`로 Host의 고정 지원 ID 방을 연다. 같은 코드의 방에 Host가 연결 중이면 409, 이전 방이 끝났으면 교체한다. 코드가 없으면 서버가 난수 코드를 발급한다. 응답은 `{sessionId, code, hostToken, expiresIn}`다. sessionId·hostToken은 난수 24바이트의 padding 없는 URL-safe Base64다. code는 선행 0을 보존한 숫자 9자리 문자열이다. Host가 연결된 방은 만료되지 않고 Host가 나가면 끝난다. 발급 속도 제한은 없다.
+`POST /session`은 선택적 본문 `{"code":"<9자리>"}`로 Host의 고정 지원 ID 방을 연다. 같은 코드의 방에 Host가 연결 중이면 409, 이전 방이 끝났거나 Host가 아직 참가하지 않은 방이면 교체한다. 코드가 없으면 서버가 난수 코드를 발급한다. 응답은 `{sessionId, code, hostToken, expiresIn}`다. sessionId·hostToken은 난수 24바이트의 padding 없는 URL-safe Base64다. code는 선행 0을 보존한 숫자 9자리 문자열이다. Host가 연결된 방은 만료되지 않고 Host가 나가면 끝난다. 발급 속도 제한은 없다.
 
 ### 참가
 
@@ -31,9 +31,9 @@ Viewer가 이미 있는 방에 다른 Viewer가 들어오면 서버는 기존 Vi
 | 타입 | 발신 | 의미 |
 |---|---|---|
 | peer-joined / peer-left | 서버 | 상대 참가·이탈(peer-joined에 displayName, connectionId) |
-| offer | Host | SDP offer. 현재 세대 또는 정확히 다음 세대 |
-| answer | Viewer | SDP answer. 현재 세대 |
-| ice | 양쪽 | candidate/sdpMid/sdpMLineIndex. 현재 세대 |
+| offer | Host | `sdp` 문자열, `generation`. 현재 세대 또는 정확히 다음 세대 |
+| answer | Viewer | `sdp` 문자열, `generation`. 현재 세대 |
+| ice | 양쪽 | `ice:{candidate,sdpMid?,sdpMLineIndex?}`, `generation`. 현재 세대 |
 | ping / pong | 양쪽·서버 | 5초 간격, 15초 무응답 종료 |
 | bye | 양쪽 | 종료 |
 | error | 서버 | 참가·프로토콜 오류 |
@@ -48,7 +48,7 @@ Viewer는 joined 뒤 20초 안에 offer가 없으면 끊고 다시 접속한다.
 
 ### H.264 수신 level
 
-Host offer는 `packetization-mode=1;profile-level-id=42e034;level-asymmetry-allowed=1`이고, answer의 level을 Viewer가 받을 수 있는 상한으로 쓴다(3.1 → 1280×720, 4.x → 1920×1080, 5.x → 그 이상). Chrome은 실제 디코딩 능력과 관계없이 answer에 3.1(`42e01f`)을 적으므로, Viewer는 브라우저에는 원래 answer를 적용하고 터널링 서버로 보내는 사본에서만 `level-asymmetry-allowed=1`인 H264 fmtp의 level이 4.2(`2a`)보다 낮으면 4.2로 올린다. 그래서 브라우저 Viewer는 1080p60까지 받는다.
+Host offer는 `packetization-mode=1;profile-level-id=42e034;level-asymmetry-allowed=1`이고, answer의 level을 Viewer가 받을 수 있는 상한으로 쓴다(3.1 → 1280×720, 4.x → 1920×1080, 5.x → 그 이상). Chrome은 실제 디코딩 능력과 관계없이 answer에 3.1(`42e01f`)을 적으므로, Viewer는 브라우저에는 원래 answer를 적용하고 터널링 서버로 보내는 사본에서만 `level-asymmetry-allowed=1`인 H264 fmtp의 level이 4.2(`2a`)보다 낮으면 4.2로 올린다. 이는 Host에 1080p60 수신 상한을 알리는 정책이며 실제 디코딩·표시 성능을 보장하지 않는다.
 
 ### 전송 재구성 세대
 
@@ -75,10 +75,10 @@ Host의 첫 `data-ready`는 `channels`, `permissions`(위 고정 목록)와 `mon
 | monitor-select | V→H | `monitorIdentity` |
 | monitor-state | H→V | `monitor`(증가한 topologyGeneration), `inputEpoch` |
 | quality-report | V→H | `sample:{rttMs,lossPercent,decodeMs,receivedKbps}` 최대 1건/초 |
-| quality-mode | V→H | `mode: auto|detail|motion` |
+| quality-mode | V→H | `mode: auto\|detail\|motion` |
 | quality-state | H→V | `quality:{fps,bitrateKbps,longEdge,shortEdge,mode}` |
 | admin-request | V→H | GUID N id만 |
-| admin-state | H→V | `state: pending|denied|active`, active에 `adminGeneration`, denied/active에 `inputEpoch` |
+| admin-state | H→V | `state: pending\|denied\|active`, active에 `adminGeneration`, denied/active에 `inputEpoch` |
 | admin-sas | V→H | `adminGeneration` |
 | admin-revoke | V→H | `adminGeneration`. 세션 종료 |
 | input-reset-ack | H→V | reset 입력과 같은 id, `inputEpoch` |
@@ -90,6 +90,19 @@ Host의 첫 `data-ready`는 `channels`, `permissions`(위 고정 목록)와 `mon
 품질: 자동 정책은 5초 이상 유지하며 혼잡 때 낮추고 15초 안정 뒤 단계적으로 회복한다. 수치는 유한한 0 이상의 값이며 RTT/decode 10000ms, loss 100%, bitrate 100000kbps가 상한이다.
 
 ## input / pointer
+
+공통 필드 외에 `monitorIdentity`, `topologyGeneration`, `inputEpoch`가 필요하다. 동작은 `t`와 `a`로 구분한다.
+
+| 채널 | t / a | 동작 필드 |
+|---|---|---|
+| pointer | `mouse` / `move` | `x`, `y` (0~1) |
+| input | `mouse` / `down`, `up` | `x`, `y`, `btn: left\|right\|middle`, `pointerBarrier` |
+| input | `mouse` / `wheel` | `x`, `y`, `d` (-12000~12000), `pointerBarrier` |
+| input | `key` / `down`, `up` | `vk` (Windows 가상 키 1~254), 선택적 `mods` |
+| input | `key` / `text` | `text` (1~4096 UTF-16 문자, NUL 금지), 선택적 `mods` |
+| input | `reset` / `all` | 증가시킨 `inputEpoch` |
+
+`mods`는 중복 없는 `ctrl`, `alt`, `shift`, `win` 배열이다. `pointerBarrier`는 마지막으로 보낸 move 순번이며 move 전이면 0이다.
 
 - 입력 `seq`는 `input`과 `pointer` 채널마다 독립적으로 증가한다.
 - 모든 입력은 `inputEpoch`, monitor identity, `topologyGeneration`을 포함한다. 초기 epoch는 1이다. `reset/all`은 epoch를 정확히 1 올리고 원격 키·버튼을 뗀다. Host는 `input-reset-ack`로 응답하며 Viewer는 ACK 전 새 입력을 보내지 않는다(1초 timeout은 연결 종료).
@@ -109,11 +122,11 @@ JSON: `file-offer`(name,size,hash), `file-accept`, `file-reject`(code), `file-pr
 
 ## chat / clipboard
 
-chat 채널의 `chat`은 1~4096 UTF-16 문자, 최대 5건/초다. clipboard는 `clipboard-get`, `clipboard-set`, `clipboard-text`, `clipboard-applied`, `clipboard-rejected`(code: `clipboard-busy|too-large|unavailable`). set/text의 text는 UTF-16 8192·UTF-8 16KiB 이하, `hash`는 UTF-8 SHA-256 소문자 hex다. 최대 2건/초, 응답 2초. 자동 동기화는 없다.
+chat 채널의 `chat`은 1~4096 UTF-16 문자, 최대 5건/초다. clipboard는 `clipboard-get`, `clipboard-set`, `clipboard-text`, `clipboard-applied`, `clipboard-rejected`(code: `clipboard-busy|too-large|unavailable`). set/text의 text는 UTF-16 8192·UTF-8 16KiB 이하, `hash`는 UTF-8 SHA-256 소문자 hex다. `clipboard-applied`에도 적용한 텍스트의 `hash`를 넣는다. 최대 2건/초, 응답 2초. 자동 동기화는 없다.
 
 ## telemetry
 
-2초 주기 `telemetry`의 `snapshot:{utc,cpuPercent,memory,disks,network,errors,startup,services}`(null도 생략하지 않음). memory `totalBytes,availableBytes`, disks `name,totalBytes,freeBytes`, network `receivedBytes,sentBytes`, errors `provider,eventId,utc,level`, services `name,state`. 계정·호스트 이름·IP/MAC·명령줄·파일 경로는 넣지 않는다. 목록 각 128개, 이벤트 20개.
+2초 주기 `telemetry`의 `snapshot:{utc,cpuPercent,memory,disks,network,errors,startup,services}`(null도 생략하지 않음). memory `totalBytes,availableBytes`, disks `name,totalBytes,freeBytes`, network `receivedBytes,sentBytes`, errors `provider,eventId,utc,level`, services `name,state`. 계정·호스트 이름·IP/MAC·명령줄·파일 경로는 넣지 않는다. 목록 각 128개, 이벤트 20개. 진단 수집 오류·2초 기한 초과에서는 해당 수집 루프만 중단한다. 화면·입력·파일 세션은 유지되므로 마지막 진단값을 새 측정으로 취급하지 않는다.
 
 ## runbook
 
