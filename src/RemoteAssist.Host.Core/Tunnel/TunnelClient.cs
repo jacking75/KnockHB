@@ -10,7 +10,7 @@ namespace RemoteAssist.Host.Core.Tunnel;
 /// <summary>
 /// Host 쪽 터널링 서버 클라이언트. Go 터널링 서버와 말한다.
 ///
-/// 와이어 포맷의 기준은 <c>docs/protocol.md</c> 다. 이 코드가 아니다.
+/// 와이어 포맷의 기준은 <c>docs/README.md#protocol</c> 다. 이 코드가 아니다.
 /// </summary>
 public sealed class TunnelClient : IAsyncDisposable
 {

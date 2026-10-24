@@ -15,7 +15,7 @@ namespace RemoteAssist.Host.Core.Capture;
 /// Windows Graphics Capture(WGC) 기반 화면 캡처. <b>기본 경로다.</b>
 ///
 /// <para>
-/// WGC를 우선하는 배경은 docs/technical-specification.md에 정리한다. 하이브리드 GPU 노트북
+/// WGC를 우선하는 배경은 docs/README.md#technical-specification에 정리한다. 하이브리드 GPU 노트북
 /// (내장 + 외장, 예: Intel UHD + NVIDIA Max-Q)에서는 DXGI Desktop Duplication이
 /// 어떤 어댑터 조합으로도 <c>DXGI_ERROR_UNSUPPORTED</c> 로 실패할 수 있다.
 /// WGC는 컴포지터를 통해 가져오므로 이 문제를 겪지 않는다.

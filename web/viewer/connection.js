@@ -44,7 +44,7 @@ export function describeError(message) {
 /** 다시 접속해도 되는 오류다. 'replaced'는 다른 지원자 화면이 이어받은 것이므로 다시 접속하지 않는다. */
 export const retryable = code => code !== 'replaced';
 // Chrome answers H264 level 3.1 whatever it can decode, which caps the Host at 720p. The browser keeps its own
-// answer; only the copy sent to the Host advertises receive level 4.2 (1080p60) under level asymmetry (protocol.md).
+// answer; only the copy sent to the Host advertises receive level 4.2 (1080p60) under level asymmetry (docs/README.md#protocol).
 export function advertiseReceiveLevel(sdp) {
   const h264 = new Set([...sdp.matchAll(/^a=rtpmap:(\d+) H264\/90000\r?$/gmi)].map(m => m[1]));
   return sdp.replace(/^(a=fmtp:(\d+) .*profile-level-id=)([0-9a-f]{4})([0-9a-f]{2})(.*)$/gmi, (line, head, pt, profile, level, tail) =>

@@ -7,7 +7,7 @@
 // 미디어는 여기를 거치지 않는다. 협상이 끝나면 Host와 Viewer가 지정 IP로 직접 연결하고,
 // 서버는 더 이상 관여하지 않는다. STUN/TURN 서버는 쓰지 않는다.
 //
-// 와이어 포맷의 기준은 docs/protocol.md 다. 이 파일이 아니다.
+// 와이어 포맷의 기준은 docs/README.md#protocol 다. 이 파일이 아니다.
 package tunnel
 
 import (
@@ -46,7 +46,7 @@ const (
 	notifyTimeout = 3 * time.Second
 )
 
-// Msg 는 터널링 서버 메시지다. 필드명 기준은 docs/protocol.md.
+// Msg 는 터널링 서버 메시지다. 필드명 기준은 docs/README.md#protocol.
 type Msg struct {
 	Version      int    `json:"v"`
 	SessionID    string `json:"sessionId,omitempty"`
@@ -482,7 +482,7 @@ func errMsg(code, reason string) Msg {
 	return Msg{Type: "error", Code: code, Reason: reason}
 }
 
-// errCode 는 room 패키지의 에러를 docs/protocol.md 의 오류 코드로 옮긴다.
+// errCode 는 room 패키지의 에러를 docs/README.md#protocol 의 오류 코드로 옮긴다.
 func errCode(err error) string {
 	switch {
 	case errors.Is(err, room.ErrNotFound):

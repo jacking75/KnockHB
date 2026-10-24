@@ -9,7 +9,7 @@ internal static class IpcRegression
     {
         foreach(var text in new[]{"{\"v\":1,\"t\":\"heartbeat\",\"seq\":1,\"seq\":2}","{\"v\":1,\"t\":\"heartbeat\",\"seq\":1,\"extra\":0}","{\"v\":1,\"t\":\"launch-arbitrary\",\"seq\":1}","{\"v\":1,\"t\":\"start\",\"seq\":1,\"nonce\":\"not-hello\"}"})
             await Reject(()=>Task.FromResult(LocalIpcMessage.Parse(Encoding.UTF8.GetBytes(text))));
-        // Service→Tray and Helper/Service admin types from protocol.md must pass the envelope check.
+        // Service→Tray and Helper/Service admin types from docs/README.md#protocol must pass the envelope check.
         foreach(var type in new[]{"device","supporter","admin-monitor"})
             LocalIpcMessage.Parse(Encoding.UTF8.GetBytes("{\"v\":1,\"t\":\""+type+"\",\"seq\":1,\"id\":\"\"}"));
         var message=Frame("{\"v\":1,\"t\":\"state\",\"seq\":1,\"id\":\"test\",\"body\":\"한글 😀\"}");

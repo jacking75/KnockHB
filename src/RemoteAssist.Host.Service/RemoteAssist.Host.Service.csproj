@@ -3,7 +3,7 @@
   <!--
     Session 0 / SYSTEM 권한으로 도는 Windows 서비스.
     사용자 세션·계정·인증 IPC·UI/헬퍼 수명을 감독한다.
-    캡처·입력 실행 위치와 IPC 설계는 docs/architecture.md 및 T2.4를 따른다.
+    캡처·입력 실행 위치와 IPC 설계는 docs/README.md#architecture 및 T2.4를 따른다.
 
     주의: PublishSingleFile을 켜지 않는다.
     네이티브 FFmpeg의 LGPL 조건에 따라 교체 가능한 별도 DLL로 유지한다.

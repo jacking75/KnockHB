@@ -33,6 +33,6 @@ notices에는 이 commit의 COPYING.LGPLv3, LGPLv3이 참조하는 COPYING.GPLv3
 
 ## 현재 머신 검사와 과거 기록
 
-2026-10-08 로컬 synthetic 1080p 검사에서 nvenc/mf/openh264는 출력 60/60·디코딩 60/60·강제 키프레임 fresh decoder 복구를 통과했다. qsv/amf는 UNSUPPORTED였다. 실제 두 PC 수치는 [두 PC 실연결 시험](../../docs/live-e2e-test.md) §9를 따른다. 캡처·네트워크·브라우저 표시 FPS 또는 다른 GPU 성공으로 해석하지 않는다.
+2026-10-08 로컬 synthetic 1080p 검사에서 nvenc/mf/openh264는 출력 60/60·디코딩 60/60·강제 키프레임 fresh decoder 복구를 통과했다. qsv/amf는 UNSUPPORTED였다. 실제 두 PC 수치는 [두 PC 실연결 시험](../../docs/README.md#e2e-status)의 현재 상태와 남은 과제를 따른다. 캡처·네트워크·브라우저 표시 FPS 또는 다른 GPU 성공으로 해석하지 않는다.
 
 2026-08-24에 n8.1.2-44-g7c533d0f86을 사용한 기록은 과거 개발 환경 이력이다. 현재 공급본 hash와 혼용하지 않는다.

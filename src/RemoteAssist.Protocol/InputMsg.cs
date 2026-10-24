@@ -4,7 +4,7 @@ namespace RemoteAssist.Protocol;
 
 /// <summary>
 /// input 데이터채널 메시지. 좌표는 항상 0~1 정규화이며 Host가 실제 픽셀로 환산한다.
-/// 뷰어 창 크기·DPI에 의존하지 않게 하기 위한 것이다. 기준: docs/protocol.md.
+/// 뷰어 창 크기·DPI에 의존하지 않게 하기 위한 것이다. 기준: docs/README.md#protocol.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record InputMsg : DataMessage

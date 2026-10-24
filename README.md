@@ -1,101 +1,168 @@
-# KnockHB / RemoteAssist
+# RemoteAssist
 
-사내 PC 관리 운영 부서용 Windows 원격 지원 도구다. 저장소 이름은 KnockHB, 제품·네임스페이스는 RemoteAssist다.
+<p align="center">
+  <strong><a href="README_kr.md">🇰🇷 한국어 문서 · Read in Korean →</a></strong>
+</p>
 
-지원이 필요한 사람이 프로그램을 받아 **관리자 권한으로 한 번** 실행하면 끝이다. 그 뒤 지원자가 고정 9자리 지원 ID로 접속해 모든 기능을 쓴다. 대상자의 추가 승인·PIN은 없고, 끊기면 같은 지원 ID로 자동 재접속한다. 대상자 화면에는 접속 표시와 즉시 종료 버튼이 항상 남는다.
+![RemoteAssist — Windows remote support with a single launch and a fixed 9-digit support ID](docs/assets/readme/remoteassist-hero.png)
 
-## 기능
+<p align="center">
+  <strong>The remote user launches once. The technician resolves issues in a browser.</strong><br>
+  Screen control · Admin tasks · File transfer · Diagnostics · Remote commands, all in one place for internal PC support.
+</p>
 
-- 화면 보기(1080p H.264, 하드웨어 인코더 우선)와 마우스·키보드·한글 입력
-- 관리자 모드: UAC 보안 데스크톱·잠금 화면·관리자 창 조작, Ctrl+Alt+Del
-- 파일 주고받기, 텍스트 클립보드 양방향, 채팅
-- 시스템 진단, 등록된 Runbook, 원격 PowerShell 명령(사용자 또는 SYSTEM 권한)
-- 다중 모니터 전환, 적응 품질
+<p align="center">
+  <a href="#key-benefits">Key benefits</a> ·
+  <a href="#support-workflow">Support workflow</a> ·
+  <a href="#connection-architecture">Architecture</a> ·
+  <a href="#development-setup">Development setup</a> ·
+  <a href="#usage-example">Usage example</a> ·
+  <a href="docs/README.md">Developer docs</a>
+</p>
 
-## 구성
+**RemoteAssist** is a Windows remote support tool for internal PC operations teams. The person requesting support **runs the app once as administrator**, and a technician connects using a **fixed 9-digit support ID**. The technician does not need to install a separate Viewer application.
 
-```
-대상 PC                                              지원자 PC
-┌───────────────────────────────────────────┐        ┌──────────────────────┐
-│ Host.Service (SYSTEM, Session 0)          │        │ 터널링 서버 (Go, TLS) │
-│  └ 사용자 세션: Tray(WPF) · Helper         │◀──────▶│  Viewer 페이지 제공·  │
-│                 · AdminHelper(SYSTEM)     │ HTTPS  │  첫 SDP/ICE 교환      │
-│                 · RunbookWorker           │  /WSS  ├──────────────────────┤
-│                                           │◀══════▶│ 웹 Viewer (브라우저)  │
-└───────────────────────────────────────────┘ 직접 P2P└──────────────────────┘
-                                         (화면·입력·파일, DTLS-SRTP/SCTP)
-```
+The repository is named **KnockHB**; the product name and code namespace are **RemoteAssist**. The image above illustrates the product's features.
 
-- 미디어와 데이터는 두 PC 사이 **직접 P2P**로만 흐른다. STUN/TURN·릴레이는 없다.
-- 터널링 서버는 지원자 PC가 여는 접속 지점이다. 대상 PC는 설치 때 받은 주소로 여기에 접속한다.
+## Key benefits
 
-| 영역 | 기술 |
+| Benefit | What it means for your team |
 |---|---|
-| Host | C# .NET 10, WPF, SIPSorcery(WebRTC), FFmpeg 8.1 LGPL(H.264), WGC/DXGI 캡처, `SendInput` |
-| 터널링 서버 | Go, `net/http`, `coder/websocket` (TCP 25001) |
-| Viewer | 정적 HTML/CSS/바닐라 JS, 브라우저 내장 WebRTC (설치 불필요) |
+| **Launch once to enable support** | The remote user's initial administrator launch authorizes support. There is no PIN to share or additional approval for each connection. |
+| **Your browser is the support console** | Technicians connect through the web Viewer and handle input, files, chat, diagnostics, and commands while viewing the remote screen. |
+| **Reconnect with the same ID** | Each PC has a fixed 9-digit support ID. Connections recover automatically, and support authorization survives service restarts and updates. |
+| **Control administrator workflows** | Administrator mode activates automatically on connection. Technicians can interact with elevated windows, the UAC secure desktop, and the lock screen, and send Ctrl+Alt+Del. |
+| **Run routine tasks remotely** | System diagnostics, predefined Runbooks, and PowerShell commands running as the user or SYSTEM support remote investigation and remediation. |
+| **Direct P2P between the two PCs** | Screen, input, and files travel directly between the PCs at their designated IP addresses. The tunnel server serves the Viewer and handles connection setup. |
 
-## 빠른 시작
+The remote user can see the **connection indicator and the tray's Stop support button**. When the remote user stops support, support authorization is also revoked.
 
-준비물: Windows 10/11 x64, .NET 10 SDK(WindowsDesktop 포함), Go 1.27, Node 22 이상, Python(`cryptography`, TLS 시험 인증서용).
+## Support workflow
+
+| Step | Remote user | Technician |
+|---|---|---|
+| **01 · Launch** | Download the app and run it once as administrator. | Prepare the tunnel server and web Viewer on the technician's PC. |
+| **02 · Connect** | Share the fixed 9-digit support ID shown in the app. | Enter the support ID in a browser and connect. |
+| **03 · Resolve** | Receive support without further interaction. | Control the screen, perform admin tasks, transfer files, run diagnostics, and execute commands. |
+
+Support authorization is tied to the current Windows logon. After a **reboot, logoff, Windows user change, Stop support action, or tray exit**, the remote user must run the app as administrator again. See the [product contract](docs/README.md#product-contract) and [workflows](docs/README.md#workflows) for details.
+
+## Features
+
+| Area | Capabilities |
+|---|---|
+| **Screen** | H.264 streaming, hardware encoding with a software fallback, WGC/DXGI capture, adaptive quality, and multi-monitor switching |
+| **Input and admin control** | Mouse, keyboard, and Korean text input; interaction with elevated windows, UAC, and the lock screen; Ctrl+Alt+Del |
+| **Files and clipboard** | Bidirectional file transfer with SHA-256 integrity verification; send and read clipboard text |
+| **Communication** | Bidirectional chat, a visible connection indicator, and immediate support termination |
+| **Diagnostics and automation** | System diagnostics, predefined Runbooks, and remote PowerShell commands running as the user or SYSTEM |
+| **Connection management** | Fixed support IDs, automatic reconnection, and Viewer handoff when another technician connects |
+
+Clipboard text is sent or read explicitly through the Viewer. It is not synchronized automatically.
+
+## Connection architecture
+
+![RemoteAssist architecture — SYSTEM service and user-session helpers on the remote PC, tunnel server and web Viewer on the technician's PC, with separate connection setup and direct P2P data paths](docs/assets/readme/remoteassist-architecture.png)
+
+**Connection setup** uses the Go tunnel server on the technician's PC over HTTPS/WSS. The remote PC connects to the server address provided during installation. The server serves the Viewer page, manages support ID rooms, and handles the initial SDP/ICE exchange.
+
+**Screen and data** travel over a direct WebRTC P2P connection between Host.Helper and the web Viewer. Media uses DTLS-SRTP; data channels use SCTP over DTLS. There is no STUN, TURN, or relay.
+
+**Inside the remote PC**, the SYSTEM service manages support authorization and helper lifetimes. Helper and SYSTEM AdminHelper handle capture and input in the target user's session. The tray provides the connection indicator and Stop support control. RunbookWorker executes predefined tasks and remote commands. See the [architecture](docs/README.md#architecture) for responsibilities and process boundaries.
+
+### Technology stack
+
+| Area | Technology |
+|---|---|
+| **Host** | C# · .NET 10 LTS · WPF · Windows 10/11 x64 |
+| **Screen and media** | SIPSorcery 10.0.x · FFmpeg 8.1 LGPL · H.264 · WGC with DXGI fallback |
+| **Admin control** | SYSTEM AdminHelper · Win32 `SendInput` · `SendSAS` |
+| **Tunnel server** | Go · `net/http` · `coder/websocket` · TCP 25001 |
+| **Viewer** | Static HTML/CSS/vanilla JavaScript · Browser-native WebRTC · No Node.js build step |
+| **Connection protection** | HTTPS/WSS · Self-signed certificates with Host certificate pinning on private networks (`RA_MODE=lan`) |
+
+## Development setup
+
+Run the following commands in PowerShell from the repository root.
+
+| Prerequisite | Purpose |
+|---|---|
+| Windows 10/11 x64 + .NET 10 SDK, including WindowsDesktop | Host builds and tests |
+| Go 1.27 | Tunnel server builds and tests |
+| Node.js 22 or later | Viewer tests |
+| Python + `cryptography` | TLS test certificate generation |
+
+### 1. Prepare FFmpeg
+
+Download and place the pinned LGPL DLLs. Do not commit the binaries to the repository.
 
 ```powershell
-# FFmpeg LGPL DLL 배치 (저장소에 커밋하지 않는다)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1
+```
 
-# 빌드와 테스트
+### 2. Build and run regression tests
+
+```powershell
 dotnet restore RemoteAssist.slnx --locked-mode
 dotnet build RemoteAssist.slnx --no-restore
 dotnet run --project tests/RemoteAssist.Host.Core.Tests --no-build
-cd server/tunnel; go vet ./...; go test ./...; cd ../..
-node --test web/viewer/tests/*.test.js
 
-# 한 PC 통합 검사 (실제 터널링 서버 + Host 세션 + 가짜 Viewer)
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/loopback-check.ps1
+Push-Location server/tunnel
+try {
+    go build ./...
+    go vet ./...
+    go test ./...
+} finally {
+    Pop-Location
+}
+
+node --test web/viewer/tests/*.test.js
 ```
 
-- 두 PC 실연결 시험은 [두 PC 실연결 시험](docs/live-e2e-test.md)을 따른다.
+Use `scripts/verify-local.ps1` for batch verification and evidence collection. For Host deployment and first launch, see [installation and updates](deploy/installation.md), [initial administrator launch](docs/README.md#startup-preparation), and [tunnel server operations](deploy/tunnel/README.md).
 
-## 저장소 구조
+Single-PC loopback checks involving screen capture and live two-PC tests require a separate plan, preparation, and explicit approval before execution. See the [live two-PC test guide](docs/README.md#live-e2e-test) for procedures and acceptance criteria.
 
-| 경로 | 내용 |
+## Repository structure
+
+| Path | Contents |
 |---|---|
 | `src/` | Host.Service · Host.Tray · Host.Helper · Host.AdminHelper · Host.RunbookWorker · Host.Core · Protocol · Update |
-| `server/tunnel/` | 터널링 서버(Go 모듈, 별도 빌드) |
-| `web/viewer/` | 지원자 웹 Viewer |
-| `tests/` | Host.Core 회귀 테스트, 설치·준비 스크립트 계약 테스트, 공유 fixture |
-| `tools/` | 개발용 진단 도구(HostRun, CaptureDump, LoopbackCheck 등). 배포본에 들어가지 않는다 |
-| `scripts/` | 빌드·패키징·개발 설치·실연결 준비/측정 스크립트 |
-| `deploy/` | 설치·준비 스크립트, Runbook, 터널링 서버 컨테이너 |
-| `third_party/ffmpeg/` | FFmpeg 공급 기준·고지(바이너리는 커밋하지 않는다) |
-| `docs/` | 기준 문서 |
-| `docs_working/` | 개발 중 임시 계획·조사·리뷰를 두는 디렉터리(필요할 때만 만든다) |
+| `server/tunnel/` | Go tunnel server, built separately from the .NET solution |
+| `web/viewer/` | Web Viewer for technicians |
+| `tests/` | Host.Core regression tests, installation and preparation script contract tests, and shared fixtures |
+| `tools/` | Development diagnostics such as HostRun, CaptureDump, and LoopbackCheck |
+| `scripts/` | Build, packaging, development installation, and live-test preparation and measurement scripts |
+| `deploy/` | Installation and preparation scripts, Runbooks, and the tunnel server container |
+| `third_party/ffmpeg/` | FFmpeg supply specifications and LGPL notices; binaries are not committed |
+| `docs/` | Maintained reference documentation and documentation images |
+| `docs_working/` | Temporary plans, investigations, reviews, and work records |
 
-## 문서
+## Documentation
 
-[개발자 문서 안내](docs/README.md)에서 시작한다.
+Start with the [developer guide](docs/README.md). The consolidated guide and linked deployment documents are in Korean.
 
-| 문서 | 내용 |
+| Document | What it covers |
 |---|---|
-| [제품 계약](docs/product-contract.md) | 신뢰 모델, 기능 범위, 수용 기준 |
-| [아키텍처](docs/architecture.md) | 프로세스 구조, 허가·세션 수명, 권한 경계 |
-| [기술 사양](docs/technical-specification.md) | 설정, 상한, 의존성 |
-| [프로토콜](docs/protocol.md) | 와이어 포맷의 단일 기준 |
-| [워크플로우](docs/workflows.md) | 시작·연결·기능·재접속 흐름 |
-| [최초 관리자 실행](docs/startup-preparation.md) | 지원 허가, 방화벽·SAS·GPU 준비 |
-| [두 PC 실연결 시험](docs/live-e2e-test.md) | E2E 방법, 현재 상태, 남은 과제 |
-| [설치/업데이트](deploy/installation.md) | 서명·보호 설치·롤백 |
-| [터널링 서버 운영](deploy/tunnel/README.md) | TLS·감사·컨테이너 |
+| [Product contract](docs/README.md#product-contract) | Trust model, feature scope, and acceptance criteria |
+| [Architecture](docs/README.md#architecture) | Process structure, support authorization and session lifetimes, and privilege boundaries |
+| [Technical specification](docs/README.md#technical-specification) | Configuration, limits, and dependencies |
+| [Protocol](docs/README.md#protocol) | Single source of truth for the wire format |
+| [Workflows](docs/README.md#workflows) | Startup, connection, features, and reconnection |
+| [Initial administrator launch](docs/README.md#startup-preparation) | Support authorization, firewall, SAS, and GPU preparation |
+| [Live two-PC tests](docs/README.md#live-e2e-test) | Test procedures, measurements, and remaining work |
+| [Installation and updates](deploy/installation.md) | Signing, protected installation, and rollback |
+| [Tunnel server operations](deploy/tunnel/README.md) | TLS, auditing, and containers |
 
-## 상태 (2026-10-24)
+## Licensing and operations
 
-두 PC 실연결에서 화면, 입력, 관리자/UAC, 재접속, 즉시 종료, 원격 명령, Runbook, 클립보드, 채팅, 파일 양방향, 1080p 30fps 송신을 확인했다.
-- 입력-표시 지연은 기준(p95 150ms)에 못 미쳐 보류 중이다.
-- 모니터 전환은 아직 실연결로 확인하지 못했다.
+- Bundle only **LGPL builds of FFmpeg through dynamic linking**. GPL components such as `libx264` are not used. See the [FFmpeg guide](third_party/ffmpeg/README.md) for supply specifications and notices.
+- Operation assumes controlled internal distribution, a visible connection indicator, immediate support termination, and audit records. Review organizational security policies and applicable laws before deployment.
 
-자세한 내용은 [현재 상태와 남은 과제](docs/live-e2e-test.md#9-현재-상태와-남은-과제)에 있다.
+## Usage example
 
-## 라이선스·주의
+An employee requests help from the internal support team after encountering an issue on their work PC. The employee launches the app and shares the support ID; the technician connects in a browser and resolves the issue. This example assumes the tunnel server is already running on the technician's PC.
 
-- FFmpeg는 LGPL 빌드만 동적 링크로 동봉한다. GPL 구성 요소(`libx264` 등)는 쓰지 않는다. 고지는 `third_party/ffmpeg/`에 있다.
-- 원격 제어 도구는 오남용 소지가 크다. 사내 배포 통제, 접속 표시·즉시 종료 유지, 감사 기록을 전제로 하며 배포 전 조직 보안 정책과 관련 법규를 검토한다.
+![RemoteAssist usage example — 1. Run the app as administrator. 2. Share the 9-digit support ID. 3. The technician enters the ID in a browser and connects. 4. Resolve the issue with screen control, admin tasks, file transfer, and diagnostics. 5. The remote user ends support with the tray's Stop support button.](docs/assets/readme/remoteassist-usage-en.png)
+
+The ID `418-207-935` in the illustration is an example. Use the support ID displayed on the remote PC for an actual connection.
