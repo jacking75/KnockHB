@@ -271,6 +271,7 @@ EndSession은 최종 송신과 직렬화해 권한·큐를 먼저 폐기하고 C
 - [터널링 서버 환경](#technical-specification-터널링-서버-환경)
 - [미디어·데이터](#technical-specification-미디어데이터)
 - [개발 진단 도구](#technical-specification-개발-진단-도구)
+- [개발 스크립트와 도구 유지 기준](#development-scripts-and-tools)
 
 </details>
 
@@ -357,6 +358,44 @@ FFmpeg 8.1 ABI의 7개 shared DLL은 고정 SHA256 검사 후 명시 경로에�
 ### 개발 진단 도구
 
 HostRun은 화면만 보내는 개발 진단이다(입력·관리자·파일·Runbook은 서비스 설치본에서만 동작). `--encoder-check`는 화면·네트워크 없이 합성 1080p 60프레임으로 후보별 출력·디코딩·처리량(30fps 이상)·IDR 복구를 검사한다. CaptureDump·SessionProcess 진단·BoundaryProbe·InputTarget은 실제 화면/입력을 쓰므로 계획을 세운 뒤 실행한다.
+
+<a id="development-scripts-and-tools"></a>
+
+### 개발 스크립트와 도구 유지 기준
+
+`scripts/`는 재현 가능한 빌드·검증·배포 절차를 위해 유지한다. `tools/`는 제품 내부 경로의 진단과 장애 분석을 위해 핵심 도구를 유지한다. 두 디렉터리는 개발 저장소에서 관리하며, 사용자 배포본에 디렉터리 전체를 포함할 필요는 없다. 패키징은 필요한 Host·updater·FFmpeg·Runbook·설치 스크립트 등을 골라 담는다.
+
+| 디렉터리 | 역할 | 유지 기준 |
+|---|---|---|
+| `scripts/` | 의존성 준비, 빌드·검증, 패키징·설치, 운영 설정, 실연결 준비·측정 자동화 | 빌드·배포·시험에서 사용하는 스크립트는 유지하고, 특정 환경에 종속된 일회성 작업과 중복 검사는 개별 검토한다 |
+| `tools/` | 캡처·인코더·WebRTC·Windows 세션·입력의 개발용 진단 실행 프로그램 | 핵심 진단·통합 검사 도구를 유지하고, 수동 진단 도구는 사용 빈도와 대체 가능성을 검토한다 |
+
+#### scripts/의 주요 용도와 정리 후보
+
+- `prepare-ffmpeg.ps1`: 공급본을 내려받아 hash·ABI·옵션을 확인하고 FFmpeg DLL을 배치한다.
+- `verify-local.ps1`: 빌드와 회귀 테스트를 일괄 실행하고 결과 증거를 수집한다. `-Native`는 HostRun 인코더 검사와 MediaProbe도 실행한다.
+- `package-host.ps1`, `package-host-dev.ps1`, `install-host-dev.ps1`: 정식 패키징과 개발 후보 생성·설치에 사용한다.
+- `prepare-ffmpeg-sources.ps1`, `prepare-managed-notices.ps1`: 대응소스와 의존성 라이선스 고지를 준비한다.
+- `e2e-*`, `prepare-e2e-tls.py`, `browser-*-measure.js`, `loopback-check.ps1`: 실연결 준비·성능 측정과 한 PC 통합 검사를 재현하는 데 사용한다. 실행에는 해당 시험의 계획·승인 기준을 적용한다.
+- `test-pc-inventory.py`: 특정 PC의 인증 환경과 `.artifacts/python-ssh`에 의존하는 조사 스크립트다. 범용화하거나, 현재 시험 절차에서 대체 가능한지 확인해 정리할 후보로 분류한다.
+
+#### tools/의 주요 용도와 유지 판단
+
+아래 이름은 `tools/RemoteAssist.*` 프로젝트를 뜻한다.
+
+| 도구 | 용도 | 유지 판단 |
+|---|---|---|
+| HostRun | 하드웨어 인코더 검사와 화면 송신 파이프라인 진단 | 핵심 진단 도구로 유지한다 |
+| MediaProbe | 합성 프레임을 사용한 실제 코덱·WebRTC 미디어 경로와 RTCP 피드백 검사 | 핵심 진단 도구로 유지한다 |
+| LoopbackCheck | 실제 Host 세션·터널링 서버와 가짜 Viewer를 사용하는 한 PC 통합 검사 | 통합 검사 도구로 유지한다 |
+| CaptureDump | WGC/DXGI 캡처 결과 덤프와 GPU·모니터 출력 문제 분석 | 핵심 진단 도구로 유지한다 |
+| SessionProbe | Windows 세션·데스크톱·GPU 출력의 읽기 전용 사전 조사 | 사용 빈도와 대체 가능성을 검토한다 |
+| BoundaryProbe | 사용자/SYSTEM 권한·데스크톱 경계와 캡처·입력 진단 | 사용 빈도와 대체 가능성을 검토한다 |
+| InputTarget | 원격 입력 결과를 기록하는 시험 대상 창 | 사용 빈도와 DesktopTestDriver의 대체 가능성을 검토한다 |
+
+수동 진단 도구의 정리는 동일한 검증을 다른 도구가 대신하는지 확인한 뒤 결정한다. DesktopTestDriver는 별도 저장소이며, 해당 도구를 사용한다는 이유만으로 RemoteAssist의 캡처·코덱·WebRTC 진단을 모두 대체한 것으로 보지 않는다.
+
+`tools/`의 프로젝트는 `RemoteAssist.slnx`에 등록되어 있고, 검증·시험 스크립트에서도 참조한다. 도구나 스크립트를 제거할 때는 솔루션·호출 스크립트·문서의 참조를 함께 갱신한다. 디렉터리를 통째로 삭제하면 현재 빌드·검증 절차의 참조가 깨진다.
 
 [목차로 돌아가기](#contents)
 
